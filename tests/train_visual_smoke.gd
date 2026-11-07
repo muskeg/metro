@@ -68,9 +68,14 @@ func _run() -> void:
 		_check(_difference(door, window) > 0.1 and door.get_luminance() > seam.get_luminance() + 0.05, "Side glazing must alternate with paired doors and a visible center seam (door %s, window %s, seam %s)." % [door, window, seam])
 		if phase > 0.1:
 			var undercarriage := center + Vector2i(19, 23)
-			_check(_difference(image.get_pixelv(undercarriage), empty.get_pixelv(undercarriage)) < 0.025, "Covered wheels must not appear as decorative circles alongside the roof.")
+			_check(_difference(image.get_pixelv(undercarriage), empty.get_pixelv(undercarriage)) < 0.3, "Daytime undercarriage must have only a restrained solar shadow, not dark decorative wheels.")
 		var shadow := center + Vector2i(0, 30)
-		_check(_difference(image.get_pixelv(shadow), empty.get_pixelv(shadow)) < 0.025, "Cars must not draw an offset drop shadow.")
+		var shadow_difference := _difference(image.get_pixelv(shadow), empty.get_pixelv(shadow))
+		_check(shadow_difference < (0.3 if phase > 0.1 else 0.025), "Car solar shadows must be restrained by day and disappear at midnight.")
+		if phase > 0.1:
+			_check(shadow_difference > 0.02, "Daytime cars must cast a measurable subtle sun shadow.")
+		var far_shadow := center + Vector2i(0, 54)
+		_check(_difference(image.get_pixelv(far_shadow), empty.get_pixelv(far_shadow)) < 0.025, "Noon car shadows must stay short, not wash out neighboring lanes.")
 		var beam := center + Vector2i(120, 0)
 		var light_difference := _difference(image.get_pixelv(beam), empty.get_pixelv(beam))
 		if phase == 0.0:
@@ -208,7 +213,7 @@ func _run() -> void:
 	var fill := station_image.get_pixelv(station_center + Vector2i(-50, 0))
 	var border := station_image.get_pixelv(station_center + Vector2i(-66, 0))
 	var cap := station_image.get_pixelv(station_center + Vector2i(-79, 0))
-	var outside := station_image.get_pixelv(station_center + Vector2i(-90, 0))
+	var outside := station_image.get_pixelv(station_center + Vector2i(-108, 0))
 	_check(fill.get_luminance() > 0.9 and _difference(border, line.color.darkened(0.3)) < 0.08, "Station outlines must retain their sharp darkened line-color border at follow zoom.")
 	_check(_difference(cap, line.color) < 0.08 and outside.get_luminance() > 0.95, "The normal rounded terminal cap must end at the station without exposing simulation extensions.")
 	_check(station_image.save_png("/tmp/metro-terminal.png") == OK, "Could not capture close-up terminal rendering.")
@@ -354,6 +359,89 @@ func _run() -> void:
 	await process_frame
 	await RenderingServer.frame_post_draw
 	_check(root.get_texture().get_image().save_png("/tmp/metro-glow-s-bend.png") == OK, "Could not capture uniform merged S-bend halos.")
+	var station_graph := TransitGraph.new()
+	for position: Vector2 in [Vector2(0, 576), Vector2.ZERO, Vector2(576, 0)]:
+		station_graph.add_station(position)
+	var station_line := TransitLine.new(0, Color("#58b8bd"))
+	for id: int in [0, 1, 2]:
+		station_line.append_station(station_graph, id)
+	var station_lines: Array[TransitLine] = [station_line]
+	var station_route := TrackGeometry.circuit(station_graph, station_line, station_lines)
+	view.set_network(station_graph, station_lines, {0: station_route})
+	camera.position = Vector2.ZERO
+	camera.zoom = Vector2.ONE * 10.0
+	camera.reset_smoothing()
+	for phase: float in [0.5, 0.0, 0.25, 0.75]:
+		view.set_dynamic_state([], camera.position, camera.zoom, phase)
+		await process_frame
+		await RenderingServer.frame_post_draw
+		var centered_image := root.get_texture().get_image()
+		_check(centered_image.save_png("/tmp/metro-centered-station-%s.png" % phase) == OK, "Could not capture the centered corner station and solar lighting.")
+		var center := Vector2i(view.get_global_transform_with_canvas() * Vector2.ZERO)
+		_check(centered_image.get_pixelv(center).get_luminance() > 0.5, "Centered corner station must retain its opaque center.")
+		var station_centerline: PackedVector2Array = station_route["centerline"]
+		_check(TrackGeometry.closest_point(station_centerline, Vector2.ZERO).length() < 4.3, "Rendered station must retain original tight rounding without a broad outward sweep.")
+		for point: Vector2 in station_centerline:
+			if point.length() < 16.0 or point.length() > 35.0:
+				continue
+			var pixel := Vector2i(view.get_global_transform_with_canvas() * point)
+			_check(_difference(centered_image.get_pixelv(pixel), station_line.color) < 0.025, "Station ground shadows must not darken the track surface, including dawn and sunset.")
+	camera.position = Vector2(300, 0)
+	camera.zoom = Vector2.ONE * 6.0
+	camera.reset_smoothing()
+	view.set_dynamic_state([], camera.position, camera.zoom, 0.5)
+	await process_frame
+	await RenderingServer.frame_post_draw
+	var track_image := root.get_texture().get_image()
+	view.set_network(TransitGraph.new(), [])
+	await process_frame
+	await RenderingServer.frame_post_draw
+	var bare_surface := root.get_texture().get_image()
+	var shadow_pixel := Vector2i(view.get_global_transform_with_canvas() * Vector2(300, 16))
+	var shadow_delta := _difference(track_image.get_pixelv(shadow_pixel), bare_surface.get_pixelv(shadow_pixel))
+	_check(shadow_delta > 0.005 and shadow_delta < 0.2, "Whole-track shadow must be visible but light on the background.")
+	var shadow_graph := TransitGraph.new()
+	shadow_graph.add_station(Vector2(0, -576))
+	shadow_graph.add_station(Vector2(0, 576))
+	var shadow_line := TransitLine.new(0, Color("#58b8bd"))
+	shadow_line.append_station(shadow_graph, 0)
+	shadow_line.append_station(shadow_graph, 1)
+	var shadow_lines: Array[TransitLine] = [shadow_line]
+	var shadow_route := TrackGeometry.circuit(shadow_graph, shadow_line, shadow_lines)
+	camera.position = Vector2.ZERO
+	camera.reset_smoothing()
+	for phase: float in [0.25, 0.75, 0.0]:
+		view.set_network(TransitGraph.new(), [])
+		view.set_dynamic_state([], camera.position, camera.zoom, phase)
+		await process_frame
+		await RenderingServer.frame_post_draw
+		var bare := root.get_texture().get_image()
+		view.set_network(shadow_graph, shadow_lines, {0: shadow_route})
+		for halo: Polygon2D in view.get("_rail_halos"):
+			halo.hide()
+		await process_frame
+		await RenderingServer.frame_post_draw
+		var shaded := root.get_texture().get_image()
+		var right := Vector2i(view.get_global_transform_with_canvas() * Vector2(18, 0))
+		var left := Vector2i(view.get_global_transform_with_canvas() * Vector2(-18, 0))
+		var right_difference := _difference(shaded.get_pixelv(right), bare.get_pixelv(right))
+		var left_difference := _difference(shaded.get_pixelv(left), bare.get_pixelv(left))
+		if phase == 0.25:
+			_check(right_difference > 0.05 and left_difference < 0.005, "A left-side sunrise must cast the stronger track shadow to the right (%.4f / %.4f)." % [right_difference, left_difference])
+		elif phase == 0.75:
+			_check(left_difference > 0.05 and right_difference < 0.005, "A right-side sunset must cast the stronger track shadow to the left (%.4f / %.4f)." % [left_difference, right_difference])
+	view.set_network(shadow_graph, shadow_lines, {0: shadow_route})
+	var isolated := shadow_graph.add_station(Vector2(72, 0))
+	view.set_dynamic_state([], camera.position, camera.zoom, 0.75)
+	await process_frame
+	await RenderingServer.frame_post_draw
+	var isolated_image := root.get_texture().get_image()
+	var former_shadow := Vector2i(view.get_global_transform_with_canvas() * (isolated.position + Vector2(-18, 3)))
+	shadow_graph.stations.remove_at(2)
+	view.queue_redraw()
+	await process_frame
+	await RenderingServer.frame_post_draw
+	_check(_difference(isolated_image.get_pixelv(former_shadow), root.get_texture().get_image().get_pixelv(former_shadow)) < 0.005, "Stations must not cast any shadow on the surrounding surface.")
 	world.queue_free()
 	await process_frame
 	if failed:

@@ -130,7 +130,13 @@ func _run_test() -> void:
 	dispatcher.lines.assign(shared_lines)
 	dispatcher.rebuild_routes()
 	dispatcher.process(0.2, false)
-	_check(dispatcher.metros.is_empty(), "Deleting an intermediate station must remove trains from the disconnected fragments.")
+	_check(not dispatcher.metros.is_empty() and shared_lines.size() == 2, "Deleting an intermediate station must redispatch on reconnected routes, without fragments.")
+	previous_arrivals = dispatcher.arrival_count
+	for step in range(600):
+		dispatcher.process(0.05, false)
+		if step % 20 == 0:
+			_check_station_blocks(dispatcher)
+	_check(dispatcher.arrival_count >= previous_arrivals + 4, "Both shared lines must continue serving stations after shape-preserving deletion.")
 
 	var main: Node = load("res://scenes/main.tscn").instantiate()
 	root.add_child(main)

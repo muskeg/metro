@@ -23,7 +23,7 @@ satisfaire, aucun compte a rebours. Le nom du jeu devient **Metro**.
   complete, pas seulement du point representant sa tete.
 - Les trains suivent un circuit aller/retour avec retournement aux terminus,
   au lieu de se teleporter sur la voie inverse.
-- Carte minimaliste sans decor, blanche le jour et sombre la nuit.
+- Carte minimaliste sans decor, blanc casse mat le jour et sombre la nuit.
   La grille de construction reste orthogonale mais invisible.
 - Le fond est dessine dans le monde et change de palette au fil de la journee.
   Les voies, trains et controles ne subissent pas la modulation sombre du
@@ -133,11 +133,28 @@ hors de cette iteration ; les correspondances se font aux stations.
   a jour d'un seul reglage.
 - La carte reste minimaliste, sans decor procedural ni grille visible. Un
   fond couvre la vue pendant le zoom, le deplacement et le resize.
-- Le fond passe doucement du blanc pur a midi a un degrade bleu presque noir,
-  avec une teinte chaude au crepuscule. La grille invisible, le dessin aimante
-  et les controles contextuels sont conserves.
+- Le fond passe doucement du blanc casse a midi a un degrade bleu presque noir.
+  Des etapes distinctes donnent une aube bleutee, un coucher peche et une heure
+  bleue. Un shader Compatibility ajoute un grain mat ancre dans le monde et
+  des variations lentes tres faibles, sans decor, grille ni reflets de verre.
+  Le grain est attenue lors du dezoom pour eviter le scintillement. Une lueur
+  chaude vient du cote du soleil au lever/coucher. La grille invisible reste.
+- Les voies et trains ont des ombres solaires discretes. La direction change
+  d'est en ouest, les ombres sont plus longues a l'aube/au coucher, courtes a midi
+  et s'effacent la nuit. Les stations ne projettent plus d'ombre. Une source
+  partagee parcourt un arc de gauche a droite entre l'aube et le coucher ;
+  la lumiere chaude et les ombres suivent cette meme position, sans saut a midi.
+  Le corridor complet projette
+  une ombre legere sur le fond, a partir de contours arrondis caches (largeurs
+  29/31px), avec seulement 45 % du decalage solaire et 36 % de son opacite
+  par couche. Les trous de boucles sont preserves. Les ombres des trains restent
+  au-dessus des voies, sous les voitures.
+- Le monde n'a pas de bord fixe. Molette et pincement partagent le zoom
+  0,08-6x, contre 0,45-6x auparavant, pour les grandes cartes. Pas d'import
+  geographique ni de certification de performances pour un reseau JR East complet.
 - Les trains sont des miniatures vectorielles a voitures rectangulaires
-  rapprochees et passages souples, sans roues decoratives ni ombre portee.
+  rapprochees et passages souples, sans roues decoratives ; seules les ombres
+  solaires discretes les ancrent sur la surface mate.
   Les deux extremites portent des cabines assorties, nez adouci et pare-brise
   sombre ; phares blancs en tete, feux rouges en queue. Le toit metal clair
   reste neutre lors d'une recoloration, la couleur de ligne borde les caisses.
@@ -192,12 +209,21 @@ hors de cette iteration ; les correspondances se font aux stations.
   reconvertie avec le canvas courant pour suivre le zoom et le deplacement.
 - Un clic ajoute sur le vide ou insere sur un rail, sans outil Station.
   Le + au survol d'un rail permet egalement l'insertion.
-- Decision utilisateur : supprimer une station supprime ses rails incidents,
-  sans reconnecter ses voisins. Supprimer un rail separe aussi les lignes.
+- Decision utilisateur : supprimer une station reconnecte les voisins de chaque
+  ligne en concatenant les chemins orientes et en conservant les anciens ancrages.
+  Les branches d'un carrefour ne sont pas reliees arbitrairement entre elles.
+  Une voie deja presente entre les voisins est reutilisee sans la redessiner.
+  Les boucles restent fermees avec au moins trois stations ; a deux stations,
+  elles deviennent ouvertes sur la voie survivante (pas de rails paralleles).
+  Supprimer un rail avec son x de survol separe les lignes ; ce controle reste
+  visible au survol d'un coude, pas seulement au milieu d'un segment.
   Chaque fragment reste selectionnable et conserve couleur, wagons et
   reglages. La premiere partie garde la ligne existante ; les autres
   obtiennent de nouveaux onglets. Une ligne vide reste reutilisable.
-- Les suppressions demandent confirmation. Les IDs restent des indices
+- Les suppressions demandent confirmation avec un texte propre a l'action.
+  La carte de confirmation est sans chrome de fenetre, avec des angles droits
+  pour son corps et ses boutons, sans melange carre/capsule.
+  Les IDs restent des indices
   compacts : stations, rails, lookup des paires et toutes les listes de
   lignes sont remis en coherence avant de reconstruire les circuits.
   Le dispatcher integre egalement les nouveaux fragments.
@@ -271,8 +297,9 @@ hors de cette iteration ; les correspondances se font aux stations.
   Les deplacements sous-pixel conservent leur vitesse et leur acceleration.
   Les boucles isolent les sens ; une ligne ouverte conserve son circuit continu
   aller/retour. Aucun test geometrique ne couple deux lignes.
-- Les angles dessines restent des coudes serres : arrondi local de 12px aux
-  stations, 24px ailleurs, sans zones droites imposees ni suppression de coudes.
+- L'utilisateur a rejete les grandes courbes aux stations : retour aux arrondis
+  quadratiques serres d'origine, 12px aux stations et 24px ailleurs, limites a
+  35 % du segment adjacent. Pas de zones droites imposees ni suppression des ancrages.
   Les arrets retrouvent leur projection sur la station ; les plateformes
   s'adaptent a la rame, jamais l'inverse. Les terminus gardent leurs caps normaux
   et un raccord vers une voie terminale commune. Toutes les voitures restent
@@ -322,7 +349,11 @@ hors de cette iteration ; les correspondances se font aux stations.
   Le + partage le style souligne des onglets et suit immediatement la derniere
   ligne dans leur conteneur defilant, sans grand vide entre les actions.
   Le repli reste fixe a droite ; onglets et + gardent des largeurs minimales.
-  Replier laisse une poignee discrete au bord inferieur, qui rouvre le rail
+  Le repli montre une icone de panneau avec fleche descendante,
+  et laisse la meme icone avec la fleche inverse au meme endroit, en bas a droite.
+  Les rectangles de clic restent identiques, meme quand les onglets defilent.
+  Les deux sont sans texte, avec infobulle traduite et cible de 44px.
+  L'icone inferieure rouvre le rail
   sans changer de ligne ni mettre les trains en pause.
 - Apres huit secondes d'inactivite, les commandes passent progressivement a
   28 % d'opacite le jour, 70 % la nuit sombre, en 0,6 seconde. Le seuil suit
@@ -330,6 +361,14 @@ hors de cette iteration ; les correspondances se font aux stations.
   lisibles. Mouvement, touche ou toucher les restaure
   immediatement, sans consommer l'action. Feuilles, dialogues, picker et gestes
   en cours empechent l'estompage. Aucun etat de repli n'est persiste.
+- Aide et reglages sont centres sur la taille reelle de la vue, independamment
+  du rail inferieur. Les reglages utilisent une pile directe sans ScrollContainer,
+  avec hauteur adaptee au contenu et aux traductions ; l'aide garde son defilement
+  sur petit ecran. Le titre Metro utilise 48px logiques en haut a gauche,
+  reste opaque dix secondes, puis suit une
+  courbe smoothstep jusqu'a disparaitre a trente secondes. Ce delai reel continue
+  pendant la pause et le mode contemplation ; ni l'activite, ni les changements
+  de langue ou de taille ne le font revenir. Son opacite est independante du HUD.
 - Cliquer une ligne deplie ses cinq reglages dans le meme rail, au-dessus
   des onglets, sans panneau flottant ni bordure coloree. La hauteur suit le
   contenu, plafonnee a 300 pixels ; les colonnes s'adaptent (une sur telephone,
@@ -407,7 +446,8 @@ ne sont pas appliquees directement a un portable vu de pres.
 - Les voies physiques passent a +/-8 pixels du centre, au lieu de +/-11 :
   16 pixels entre les rames, pour des voitures de 7 pixels de large.
   Le rendu, l'apercu et la simulation partagent toujours le meme offset.
-- Stations : centre blanc de rayon 10 pixels, sans ombre ni halo.
+- Stations : centre blanc de rayon 10 pixels, sans halo. Leur ombre solaire
+  discrete suit le cycle du jour, contrairement a une ombre fixe de bouton.
   Chaque ligne desservie ajoute un anneau de 2 pixels dans sa couleur assombrie
   de 30 %. Ordre stable des lignes : anciennes a l'exterieur, nouvelles dedans.
   Le rayon total est 10 + 2 x nombre de lignes (minimum 12). Les correspondances
@@ -423,6 +463,13 @@ ne sont pas appliquees directement a un portable vu de pres.
 ## Courbes aux stations et fins de ligne
 
 - Le chemin central complet est arrondi avant la separation des deux voies.
+  Les marqueurs restent sur la grille ; les courbes quadratiques coupent
+  legerement le coin, comme auparavant. La preference pour les coudes serres
+  remplace les essais de courbes centrees/elargies. Tous les arrondis gardent
+  une subdivision adaptative de Casteljau : deviation
+  du segment sous 0,01px monde, ecart tangente/segment sous 1 degre, profondeur
+  maximale 12. Les tests imposent moins de 3 degres entre segments consecutifs
+  sur 45/90/135 degres et huit orientations. Pas de geometrie dependante du zoom.
   L'ancien raccord quadratique entre voies deja decalees pincait les voies
   au centre des stations en virage, causant un blocage face a face.
 - Les arrets sont projetes sur les segments du circuit, et pas uniquement

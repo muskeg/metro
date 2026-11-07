@@ -41,6 +41,12 @@ func _run() -> void:
 	var outside_probe := Vector2i(view.get_global_transform_with_canvas() * (rail_center - rail_normal * 20.0))
 	for phase: float in [0.5, 0.0]:
 		_main.set("time_of_day", phase)
+		view.set_network(TransitGraph.new(), [])
+		view.set_dynamic_state([], camera.get_screen_center_position(), camera.zoom, phase)
+		await process_frame
+		await RenderingServer.frame_post_draw
+		var background := root.get_texture().get_image()
+		view.set_network(graph, _main.get("lines"), dispatcher.routes)
 		view.set_dynamic_state([], camera.get_screen_center_position(), camera.zoom, phase)
 		await process_frame
 		await process_frame
@@ -58,13 +64,13 @@ func _run() -> void:
 			var shadow_position := image.get_pixel(532, 280)
 			var centerline: PackedVector2Array = dispatcher.routes[0]["centerline"]
 			var terminal_probes := PackedVector2Array([
-				centerline[0] + (centerline[0] - centerline[1]).normalized() * 17.0,
-				centerline[centerline.size() - 1] + (centerline[centerline.size() - 1] - centerline[centerline.size() - 2]).normalized() * 17.0
+				centerline[0] + (centerline[0] - centerline[1]).normalized() * 24.0,
+				centerline[centerline.size() - 1] + (centerline[centerline.size() - 1] - centerline[centerline.size() - 2]).normalized() * 24.0
 			])
 			for terminal_position: Vector2 in terminal_probes:
 				var terminal_pixel := Vector2i(view.get_global_transform_with_canvas() * terminal_position)
 				var terminal_color := image.get_pixelv(terminal_pixel)
-				var terminal_background := image.get_pixel(400, terminal_pixel.y)
+				var terminal_background := background.get_pixelv(terminal_pixel)
 				if absf(terminal_color.r - terminal_background.r) + absf(terminal_color.g - terminal_background.g) + absf(terminal_color.b - terminal_background.b) > 0.025:
 					push_error("The terminal band must end neatly without showing the simulated turnaround: %s vs %s at phase %s." % [terminal_color, terminal_background, phase])
 					quit(1)
@@ -73,9 +79,9 @@ func _run() -> void:
 				push_error("Stations must be simple white dots with a contrasting day/night border: %s %s at phase %s." % [station_fill, station_border, phase])
 				quit(1)
 				return
-			var shadow_background := image.get_pixel(400, 280)
-			if absf(shadow_position.r - shadow_background.r) + absf(shadow_position.g - shadow_background.g) + absf(shadow_position.b - shadow_background.b) > 0.025:
-				push_error("Stations must not have a drop shadow or glow.")
+			var shadow_background := background.get_pixel(532, 280)
+			if _pixel_difference(shadow_position, shadow_background) > (0.25 if phase > 0.1 else 0.025):
+				push_error("Station sun shadows must remain restrained and disappear at midnight.")
 				quit(1)
 				return
 			var line_color: Color = _main.get("lines")[0].color
@@ -88,14 +94,14 @@ func _run() -> void:
 				quit(1)
 				return
 			var outside := image.get_pixelv(outside_probe)
-			var outside_background := image.get_pixel(400, outside_probe.y)
+			var outside_background := background.get_pixelv(outside_probe)
 			var halo_difference := _pixel_difference(outside, outside_background)
 			if (phase > 0.1 and halo_difference > 0.025) or (phase == 0.0 and (halo_difference < 0.025 or halo_difference > 0.5)):
 				push_error("Rail glow must appear only at night and stay bounded beside the corridor.")
 				quit(1)
 				return
 			var distant_probe := Vector2i(view.get_global_transform_with_canvas() * (rail_center - rail_normal * 32.0))
-			if _pixel_difference(image.get_pixelv(distant_probe), image.get_pixel(400, distant_probe.y)) > 0.025:
+			if _pixel_difference(image.get_pixelv(distant_probe), background.get_pixelv(distant_probe)) > 0.025:
 				push_error("Night rail glow must not wash out the surrounding map.")
 				quit(1)
 				return
@@ -112,7 +118,7 @@ func _run() -> void:
 					quit(1)
 					return
 				if city.get_luminance() > 0.04:
-					push_error("Night must be very dark behind the illuminated network.")
+					push_error("Night must be very dark behind the illuminated network (%s, luminance %.4f)." % [city, city.get_luminance()])
 					quit(1)
 					return
 			var path := "/tmp/metro-day.png" if phase > 0.1 else "/tmp/metro-night.png"

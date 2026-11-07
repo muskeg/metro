@@ -37,6 +37,7 @@ var _routes: Dictionary = {}
 var _illuminated_paths: Dictionary = {}
 var _illumination_strengths: Dictionary = {}
 var _rail_halos: Array[Polygon2D] = []
+var _track_shadows: Array[PackedVector2Array] = []
 var _preview := PackedVector2Array()
 var _preview_color := Color.WHITE
 var _preview_error := ""
@@ -89,6 +90,7 @@ func _draw() -> void:
 		return
 	# The Compatibility renderer's line fringe scales in world units; omit it at close zoom.
 	var night := _night_strength()
+	_draw_ground_shadows()
 	for line: TransitLine in lines:
 		if not _routes.has(line.id):
 			continue
@@ -107,6 +109,7 @@ func _draw() -> void:
 			draw_polyline(lane, line.color.darkened(0.3), RUNNING_LANE_WIDTH, view_zoom.x < 1.5)
 		if night > 0.001:
 			_draw_rail_illumination(line, night)
+	_draw_sun_shadows()
 	if view_zoom.x > 1.5:
 		for visit: StationVisit in station_visits:
 			_draw_station_visit(visit)
@@ -139,6 +142,14 @@ func refresh_illumination() -> void:
 	_refresh_illumination()
 
 func _refresh_illumination() -> void:
+	_track_shadows.clear()
+	for line: TransitLine in lines:
+		if not _routes.has(line.id):
+			continue
+		var centerline: PackedVector2Array = _routes[line.id]["centerline"]
+		if centerline.size() >= 2:
+			for width: float in [CORRIDOR_WIDTH + 1.0, CORRIDOR_WIDTH + 3.0]:
+				_track_shadows.append_array(_halo_polygons(centerline, width))
 	for halo: Polygon2D in _rail_halos:
 		remove_child(halo)
 		halo.queue_free()
@@ -353,10 +364,11 @@ func _draw_gizmos() -> void:
 		var anchors := TrackGeometry.anchors(graph, graph.tracks[hovered_track_id])
 		for index in range(1, anchors.size() - 1):
 			_draw_handle(anchors[index], ink, "diamond", scale)
+		draw_line(rail_anchor, rail_delete_position(), Color(ink, 0.25), scale, true)
+		_draw_handle(rail_delete_position(), danger, "x", scale)
 		if hovered_bend_index < 0:
-			draw_line(rail_delete_position(), rail_move_position(), Color(ink, 0.25), scale, true)
+			draw_line(rail_anchor, rail_move_position(), Color(ink, 0.25), scale, true)
 			_draw_handle(rail_anchor, accent, "+", scale)
-			_draw_handle(rail_delete_position(), danger, "x", scale)
 			_draw_handle(rail_move_position(), ink, "diamond", scale)
 		caption_position = rail_anchor + Vector2(18.0, 54.0) * scale
 	if not hover_caption.is_empty():
@@ -444,6 +456,7 @@ func _draw_train(metro: Metro, route: Dictionary, color: Color) -> void:
 		return
 	for car in range(1, metro.wagon_count + 1):
 		draw_set_transform(Vector2.ZERO)
+
 		var edges := _gangway_edges(points, total, metro.distance, car)
 		# A compressed connector can fold across itself on a tight bend.
 		for triangle: PackedVector2Array in [PackedVector2Array([edges[0], edges[1], edges[2]]), PackedVector2Array([edges[0], edges[2], edges[3]])]:
@@ -460,6 +473,40 @@ func _draw_train(metro: Metro, route: Dictionary, color: Color) -> void:
 		var angle := TrackGeometry.car_axis(points, total, distance, metro.distance).angle()
 		draw_set_transform(position, angle, Vector2(TrackGeometry.CAR_SCALE, 1.0))
 		_draw_car(color, car == 0, car == metro.wagon_count, metro.at_station and metro.visit != null and metro.visit.elapsed >= metro.visit.opening_duration)
+	draw_set_transform(Vector2.ZERO)
+
+func _draw_ground_shadows() -> void:
+	var opacity := BACKDROP.shadow_opacity(time_of_day)
+	if opacity < 0.001:
+		return
+	var offset := BACKDROP.shadow_offset(time_of_day)
+	var color := Color(0.12, 0.17, 0.23, opacity * 0.5)
+	draw_set_transform(offset * 0.45)
+	for polygon: PackedVector2Array in _track_shadows:
+		draw_colored_polygon(polygon, Color(color, opacity * 0.36))
+	draw_set_transform(Vector2.ZERO)
+
+func _draw_sun_shadows() -> void:
+	var opacity := BACKDROP.shadow_opacity(time_of_day)
+	if opacity < 0.001:
+		return
+	var offset := BACKDROP.shadow_offset(time_of_day)
+	var color := Color(0.12, 0.17, 0.23, opacity * 0.5)
+	for metro: Metro in metros:
+		if not _routes.has(metro.line_id):
+			continue
+		var route := TrackGeometry.route_for_direction(_routes[metro.line_id], metro.travel_direction)
+		var points: PackedVector2Array = route["points"]
+		var total: float = route["length"]
+		if total < 1.0:
+			continue
+		for car in range(metro.wagon_count + 1):
+			var distance := metro.distance - car * TrackGeometry.CAR_PITCH
+			var position := TrackGeometry.point_at_distance(points, fposmod(distance, total))
+			var angle := TrackGeometry.car_axis(points, total, distance, metro.distance).angle()
+			draw_set_transform(position + offset * 0.65, angle, Vector2(TrackGeometry.CAR_SCALE, 1.0))
+			for spread: float in [0.15, 0.45]:
+				_draw_car_shell(5.9 + spread, 3.3 + spread, color, 1 if car == 0 else (-1 if car == metro.wagon_count else 0))
 	draw_set_transform(Vector2.ZERO)
 
 func _gangway_edges(points: PackedVector2Array, total: float, distance: float, car: int) -> PackedVector2Array:

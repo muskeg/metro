@@ -30,6 +30,12 @@ func _service(graph: TransitGraph, ids: Array[int], id: int) -> TransitLine:
 	return line
 
 func _run() -> void:
+	if OS.get_cmdline_user_args().has("--platforms-only"):
+		_test_continuous_platforms()
+		if not _failed:
+			print("Continuous platform smoke passed.")
+		quit(1 if _failed else 0)
+		return
 	_test_independent_lines()
 	_test_service(false)
 	_test_service(true)
@@ -352,12 +358,14 @@ func _test_continuous_platforms() -> void:
 						for passenger in range(visit.boarding if entering else visit.alighting):
 							var timing := visit._passenger_walk_timing(passenger, entering)
 							var previous := Vector2.ZERO
+							var boundary := visit.platform.duplicate()
+							boundary.append(boundary[0])
 							for sample in range(5):
 								visit.elapsed = timing.x + timing.y * sample / 4.0
 								var position := visit.passenger_position(passenger, entering)
-								_check(Geometry2D.is_point_in_polygon(position, visit.platform), "Passengers must remain on the platform throughout boarding, alighting and waiting.")
-								for radial: Vector2 in [Vector2.RIGHT, Vector2.LEFT, Vector2.UP, Vector2.DOWN]:
-									_check(Geometry2D.is_point_in_polygon(position + radial * StationVisit.PASSENGER_RADIUS, visit.platform), "Whole passenger silhouettes must remain inside curved platform edges (wagons %d, loop %s, stop %d, passenger %d)." % [wagons, loop, stop_index, passenger])
+								_check(_platform_contains(position, visit.platform), "Passengers must remain on the platform throughout boarding, alighting and waiting.")
+								var clearance := position.distance_to(TrackGeometry.closest_point(boundary, position))
+								_check(clearance >= StationVisit.PASSENGER_RADIUS - 0.001, "Whole passenger circles must clear every platform edge (wagons %d, loop %s, stop %d, passenger %d, clearance %.4f)." % [wagons, loop, stop_index, passenger, clearance])
 								if sample > 0:
 									var speed := position.distance_to(previous) / (timing.y / 4.0)
 									_check(speed <= StationVisit.PASSENGER_SPEED + 0.02, "Passengers must walk at no more than four world units per second, even at short dwells.")
@@ -366,6 +374,18 @@ func _test_continuous_platforms() -> void:
 							_check(visit.passenger_position(passenger, entering).is_equal_approx(previous), "Alighting passengers must fade in place rather than continue escaping off the platform.")
 			if _failed:
 				return
+
+static func _platform_contains(point: Vector2, polygon: PackedVector2Array) -> bool:
+	# Scalar ray crossings avoid float32 segment-intersection degeneracy at dense vertices.
+	var inside := false
+	for index in range(polygon.size()):
+		var a := polygon[index]
+		var b := polygon[(index + 1) % polygon.size()]
+		if (a.y > point.y) != (b.y > point.y):
+			var intersection := a.x + (float(b.x) - a.x) * (float(point.y) - a.y) / (float(b.y) - a.y)
+			if point.x < intersection:
+				inside = not inside
+	return inside
 
 func _test_regulation() -> void:
 	var graph := TransitGraph.new()

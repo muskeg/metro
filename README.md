@@ -29,10 +29,17 @@ aussi les volumes, le plein écran et la sortie du jeu.
 Les commandes restent lisibles sur écran Retina et dans le navigateur.
 Les réglages et l'aide s'ouvrent à la demande ; **Close / Échap** les referme
 sans interrompre le réseau.
+Ces panneaux sont centrés sur l'écran ; tous les réglages restent visibles
+sans barre de défilement. Le titre Metro commence à disparaître après
+10 secondes et s'efface complètement à 30 secondes, sans revenir.
+Son grand format évoque un titre d'ouverture plutôt qu'un élément du menu.
 Les lignes occupent un rail fin sur toute la largeur du bas. Leurs réglages
 se déplient directement dans ce rail ; toucher à nouveau la ligne les referme.
-Le bouton de repli laisse seulement une petite poignée au bord inférieur ;
-touchez cette poignée pour rouvrir le rail. Après huit secondes sans activité,
+Le bouton de repli utilise une icône de panneau avec une flèche descendante,
+sans texte. Une fois replié, la même icône avec une flèche montante permet
+de rouvrir le rail au même endroit, en bas à droite, pour pouvoir cliquer
+deux fois sans déplacer le pointeur.
+Après huit secondes sans activité,
 les commandes s'estompent doucement. Un mouvement ou un toucher les réveille ;
 les menus ouverts et les gestes en cours restent visibles.
 
@@ -61,12 +68,21 @@ déplacé suit la grille ; un aperçu rouge explique le blocage près du curseur
 
 Sans interface, le réseau continue de vivre : déplacez la vue, zoomez ou suivez
 une rame sans risquer de modifier la carte. La pause existante est conservée.
+La carte n'a pas de bord fixe. Le dézoom descend à **0,08×** (molette ou pincement),
+soit environ 5,6 fois plus de largeur visible qu'avant, pour construire de grands
+réseaux. Les tracés réels restent à reproduire manuellement : aucun import géographique.
 La poignée discrète conserve une grande zone tactile, même sans clavier sur téléphone.
 Le suivi d'une rame masque aussi les aperçus et poignées d'édition ; les clics
 sur la carte ne la modifient pas. Échap ou déplacer la vue rend l'édition.
 
-**Aide** dans le jeu rappelle les gestes. Les suppressions séparent les lignes
-sans reconnecter les rails. Les croisements hors station ne sont pas pris en
+**Aide** dans le jeu rappelle les gestes. Supprimer une station reconnecte ses
+voisins sur chaque ligne en conservant le tracé. Le **×** au survol d'un rail
+(même près d'un coude) supprime la voie et sépare les lignes. Les suppressions
+demandent confirmation. Une voie déjà présente entre les voisins est réutilisée ;
+une boucle reste fermée tant qu'il reste au moins trois stations.
+Les virages conservent leurs coudes serrés d'origine, avec un arrondi local ;
+les stations restent sur la grille, sans élargir les courbes pour les centrer.
+Les croisements hors station ne sont pas pris en
 charge ; utilisez une station commune.
 L'aide est une fiche courte. Les actions réussies restent silencieuses :
 la carte montre le résultat. Avant la première liaison, un **+** discret
@@ -96,6 +112,13 @@ Les rames ont des cabines aux deux extrémités et des toits métalliques clairs
 Les voitures sont plus élancées : 50 % plus longues, sans élargir les caisses.
 Leur longueur réelle détermine les espacements et la capacité de la ligne.
 La nuit devient très sombre ; rails lumineux et halos de phares guident le regard.
+Le fond évoque une surface mate légèrement texturée, plutôt qu'une table en verre.
+L'aube bleutée, le coucher pêche et l'heure bleue encadrent un midi blanc cassé.
+Les voies et les rames projettent des ombres discrètes : courtes à midi,
+plus longues et de directions opposées au lever/coucher, absentes au milieu de la nuit.
+Les stations ne projettent pas d'ombre. Une source lumineuse traverse la vue
+de gauche à droite ; l'ombre du tracé complet passe du côté droit au côté gauche.
+Les courbes sont subdivisées selon leur courbure pour rester lisses en gros plan.
 Aux stations partagées, l'illumination des rails s'interrompt autour du raccord
 pour ne pas souligner les superpositions en croix.
 Les contrôles restent contrastés et s'estompent moins qu'en plein jour.

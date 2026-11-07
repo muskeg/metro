@@ -118,11 +118,25 @@ static func round_corners_preserving(points: PackedVector2Array, protected_point
 		var entry := corner - incoming.normalized() * radius
 		var exit := corner + outgoing.normalized() * radius
 		result.append(entry)
-		for step in range(1, 9):
-			var t := float(step) / 8.0
-			result.append(entry.lerp(corner, t).lerp(corner.lerp(exit, t), t))
+		_append_curve(result, entry, entry.lerp(corner, 2.0 / 3.0), exit.lerp(corner, 2.0 / 3.0), exit)
 	result.append(anchors[anchors.size() - 1])
 	return result
+
+static func _append_curve(result: PackedVector2Array, start: Vector2, first: Vector2, second: Vector2, finish: Vector2, depth: int = 0) -> void:
+	var chord := finish - start
+	var flatness := maxf(Geometry2D.get_closest_point_to_segment(first, start, finish).distance_to(first), Geometry2D.get_closest_point_to_segment(second, start, finish).distance_to(second))
+	var turn := maxf(absf((first - start).angle_to(chord)), absf(chord.angle_to(finish - second)))
+	if (flatness <= 0.01 and turn <= deg_to_rad(1.0)) or depth >= 12:
+		result.append(finish)
+		return
+	var a := start.lerp(first, 0.5)
+	var b := first.lerp(second, 0.5)
+	var c := second.lerp(finish, 0.5)
+	var d := a.lerp(b, 0.5)
+	var e := b.lerp(c, 0.5)
+	var midpoint := d.lerp(e, 0.5)
+	_append_curve(result, start, a, d, midpoint, depth + 1)
+	_append_curve(result, midpoint, e, c, finish, depth + 1)
 
 static func length(points: PackedVector2Array) -> float:
 	var total := 0.0

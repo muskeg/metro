@@ -19,8 +19,13 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
   hosted on GitHub Pages.
 - English default; French can be selected live in Menu. Language is persisted
   through ConfigFile. Add all new UI messages to [ui.csv](./translations/ui.csv).
-- Minimalist map: pure white at noon, a very dark blue night gradient and warm
-  twilight, smoothly transitioning. No scenery or visible grid; the 48-pixel
+- Minimalist map: off-white matte noon, cool dawn, peach sunset, blue hour and
+  a very dark blue night gradient. World-anchored subtle procedural grain is
+  filtered at overview zoom; no glass reflections. No station shadows.
+  Track/car shadows follow a shared left-to-right solar arc, lengthen/change
+  direction at dawn/dusk and vanish at midnight. Whole-corridor shadows render beneath all tracks;
+  only train shadows may land on rails. Corridor outlines are cached at refresh.
+  No scenery or visible grid; the 48-pixel
   construction grid remains active.
   Earlier procedural-city iterations were deliberately removed, not unfinished.
 - Elastic station-to-station drawing from one neutral + handle; no Draw/Move
@@ -40,15 +45,18 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
   Live wrapped feedback follows the dragged point and explains grid snapping or
   rejected geometry; unchanged releases do not restart trains.
 - Connect the endpoints of a line with at least three stations to close a loop.
-  Both directions run continuously around it; deleting a station or rail opens
-  the loop into one continuous line without reconnecting removed rails.
+  Both directions run continuously around it; deleting a station reconnects
+  the loop until fewer than three stations remain. Deleting a rail opens it.
 - No Station tool/mode: clicking empty space places a station; clicking rails
   or their + inserts one. A translucent ghost previews the exact grid-snapped
   empty-space position, hidden over existing objects/UI or during gestures.
   Insertion updates every shared line, including reversed station order.
-- Deletion requires confirmation. Removing a station removes incident rails;
-  lines split into selectable fragments, retaining settings and color. Do not
-  automatically reconnect neighboring stations.
+- Deletion requires confirmation in a borderless paper card with consistent
+  rectangular body/buttons and action-specific text. Removing a station joins
+  its neighbors per serving line, preserving oriented paths and anchors.
+  Existing neighbor rails are reused; a two-station loop becomes open.
+  Track deletion via the hovered rail's x (also visible beside bends) splits
+  lines into selectable fragments, retaining settings and color.
 - Two running lanes, simultaneous independent directions, locomotive plus
   1-6 wagons. Cars follow curves. Moving authority preserves full-train gaps on
   each independent circuit; multiple trains can share an interstation section.
@@ -74,6 +82,8 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
   restoring HUD during follow must not re-enable overlays.
 - Mouse-wheel zoom and middle/Space-drag pan are supported, as are native
   trackpad two-finger pan and pinch zoom gestures.
+  World panning is unbounded; wheel/pinch share 0.08-6x zoom for larger networks.
+  Real-world layouts are built manually, without geographic import.
 - Watch mode: H or Menu > Hide interface hides HUD and editing overlays;
   a faint bottom-center grip (36 x 3px) with a 96 x 44px touch target restores
   them, alongside H/Escape. No text or filled button; grip contrast adapts to
@@ -89,7 +99,8 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
   2-pixel ring in its color darkened by 30%, matching running lanes. Older lines
   (array order) sit outside newer lines; repeated loop endpoints count once.
   Interchanges grow to radius 10 + 2 x line count (minimum 12), preserving center
-  and ring widths. No shadow/glow. Unconnected/ghost stations keep neutral
+  and ring widths. No station glow or station shadows.
+  Unconnected/ghost stations keep neutral
   borders; night softens fills and lightens only neutral borders.
   Radius-aware picking, handles, selection/hover and route-target rings keep
   interaction geometry outside the marker. Membership/recolor updates are live.
@@ -105,8 +116,15 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
   Line controls expand inside the same rail above the tabs, height based on
   content (max 300px), with 1/2/3/5 columns at <620/620/760/1366px. Same-tab
   click folds controls; switching lines keeps them open. Redundant Line settings
-  button removed. Menu/help remain separate, mutually exclusive sheets.
-  Collapsing the rail leaves the same faint grip used for watch restoration.
+  button removed. Menu/help remain separate, mutually exclusive centered sheets.
+  Settings use a direct content-sized stack, without scrolling. Help may scroll
+  on narrow displays. Top-left launch title is 48px, stays opaque for 10s, fades smoothly until 30s,
+  then never returns during that launch. Its timer runs independently of pause,
+  watch mode and HUD idle opacity; resizing/waking never restores it.
+  Collapse/restore use icon-only 44px buttons: outlined bottom panel with a
+  down/up arrow and translated tooltips at the identical bottom-right position.
+  Vertical shrink-end and upward panel growth keep that target fixed even with
+  overflowing tabs. Watch restoration keeps its centered faint grip.
   Controls fade to 28% opacity by day, 70% in dark night, over 0.6s after eight
   idle seconds; the threshold follows day/night continuously. Movement,
   touch, keys and action feedback immediately wake them without consuming input.
@@ -128,7 +146,8 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
 - Trains are top-down metro trainsets with matching cab ends, pale neutral roofs,
   line-colored body edges and articulated accordion gangways. Doors/windows,
   ventilation and folds fade in at zoom 1.5-3; fine seams/grilles at 3-4.5.
-  Running gear is hidden; no decorative wheels or offset drop shadows.
+  Running gear is hidden; no decorative wheels or fixed offset drop shadows.
+  Restrained solar shadows follow the day/night cycle.
   All cars/cabs gained another 10%: length 19.8px, pitch 20.8px, width 7px.
   `CAR_SCALE` shares longitudinal proportions and preserves the one-pixel gap.
   Body rendering,
@@ -208,8 +227,12 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
   original path, keeping distant bends fixed. Off-station crossings are rejected.
 - [track_geometry.gd](./scripts/render/track_geometry.gd): canonical grid guides,
   elastic_path, preview rounding, shared-corridor offsets and route circuits.
-  Original geometry restored: local corner rounding of 12px at stations,
-  24px elsewhere, capped at 35% of adjacent segment lengths, before lane offsets.
+  Original tight quadratic bends restored everywhere: 12px at stations,
+  24px elsewhere, capped at 35% of adjacent lengths. User rejected broad
+  station curves and chose original bends over exact grid-marker centering.
+  Station markers stay on the grid; curves cut slightly inside the corner.
+  Rounding precedes lane offsets and uses adaptive de Casteljau subdivision (0.01 world-unit flatness,
+  1-degree tangent/chord tolerance, depth 12) for smooth close-up corners.
   No forced straight berths, removed elbows, expanded terminal paths or special
   effective picking paths. Preserve sharper user-drawn bends and normal caps.
   `anchors` retains explicit collinear waypoints; `simplify` accepts protected
@@ -352,10 +375,10 @@ godot --headless --path . --export-release "Web" dist/web/index.html
   Seeded irregular loop departures compare regulated/unregulated headway
   standard deviation, requiring at least 25% improvement. Geometric collision
   assertions between different lines/directions intentionally no longer apply.
-- Native graphical tests need a display. They verify actual pixels: white noon
-  and smooth night background, dark lanes, opaque colors, white station centers,
-  darkened concentric line rings, no
-  station shadow, rounded terminal band, recoloring and hover anchors. The visual test
+- Native graphical tests need a display. They verify actual pixels: matte noon,
+  cool dawn/warm sunset, bounded texture and dark night gradient, solar shadows,
+  dark lanes, opaque colors, white station centers, darkened concentric line
+  rings, rounded terminal bands, recoloring and hover anchors. The visual test
   disables incidental mouse-hover state before measurements to avoid highlights
   corrupting sampled colors. Clean its named temporary screenshots afterward.
 - llvmpipe's unsupported VSync warning occurred during successful graphical
@@ -372,6 +395,310 @@ godot --headless --path . --export-release "Web" dist/web/index.html
   Windows log-file path if specifying one.
 
 ## Recent work and verification record
+
+### Committing accumulated lighting, editing and menu refinements (2026-11-07)
+
+- User requested committing all accumulated changes since the previous commit:
+  shape-preserving station reconnection and rail deletion controls, consistent
+  confirmation dialog, original tight adaptively smooth bends, larger overview,
+  matte day/night surface and shared moving sunlight/track shadows, centered
+  menus without settings scrolling, permanent larger launch-title fade and
+  fixed-location icon-only dock toggle. Includes related regression tests,
+  translations and documentation. Earlier "not committed" entries describe
+  their state at the time; this commit captures them together. No push requested.
+- Fresh exports completed with clean logs using
+  `/Applications/Godot.app/Contents/MacOS/Godot --headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  the same command for `"macOS" dist/Metro-macOS.zip` and `"Web" dist/web/index.html`.
+  Verified macOS ZIP integrity, universal x86_64/arm64 binary, strict deep
+  codesign and exported Apple Silicon startup (`--headless --quit-after 10 --audio-driver Dummy`),
+  Windows PE x86_64, nonempty Web assets and `git --no-pager diff --check`.
+  No tests rerun for this commit-only task; prior targeted results recorded
+  below. Windows/Intel runtime/browser checks remain unrun. Release files are
+  ignored build outputs, not committed.
+
+### Larger launch title and fixed dock toggle location (2026-11-07)
+
+- Increased Metro launch title from 26 to 48 logical pixels; preserved independent
+  10–30s fade and permanent disappearance. Collapse and restore now share the
+  same bottom-right 44px rectangle (16px right, 8px bottom), so repeated clicks
+  toggle without pointer movement. Watch restore stays centered.
+  [main.gd](./scripts/main.gd) uses vertical shrink-end for the dock button and
+  upward panel growth to preserve bottom alignment during scrollbar overflow.
+  README/DESIGN updated.
+- Native interface smoke passed:
+  `/Applications/Godot.app/Contents/MacOS/Godot --path . --script res://tests/interface_smoke.gd --audio-driver Dummy`.
+  Added exact rectangle equality before/after real collapse/restore clicks
+  across phone/laptop resize and title font-size assertion. Inspected native
+  menu capture. Initial test caught real overflow displacement, fixed by upward
+  panel growth; stale pre-layout measurement corrected by awaiting layout.
+- Fresh releases succeeded with clean logs using
+  `/Applications/Godot.app/Contents/MacOS/Godot --headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  the same command for `"macOS" dist/Metro-macOS.zip` and `"Web" dist/web/index.html`.
+  Verified ZIP integrity, PE x86_64, universal Mac binary, strict deep codesign,
+  exported Apple Silicon startup (`--headless --quit-after 10 --audio-driver Dummy`),
+  Web assets and `git --no-pager diff --check`. Windows/Intel runtime/browser
+  checks and simulation suites unrun for UI-only changes. Not committed.
+
+### Centered panels and permanent launch-title fade (2026-11-07)
+
+- [main.gd](./scripts/main.gd) centers help/settings on the actual viewport,
+  rather than above the bottom dock. Settings use a direct VBox instead of a
+  ScrollContainer and take their content's minimum height. Minimum-size changes
+  schedule fresh layout for wrapping/localization. Help keeps its bounded
+  scrollable reference on narrow screens; line-control layout unchanged.
+- Metro title remains opaque through 10s, smoothstep fades over the next 20s,
+  and hides permanently at 30s. Separate CanvasLayer child prevents idle HUD
+  fading from starting the title fade prematurely. Watch mode/narrow view hides
+  it without resetting the launch timer; it ignores input wake and pause.
+  README/DESIGN/current-state memory updated.
+- Native interface and headless localization smoke passed with
+  `/Applications/Godot.app/Contents/MacOS/Godot --path . --script res://tests/interface_smoke.gd --audio-driver Dummy`
+  and `/Applications/Godot.app/Contents/MacOS/Godot --headless --path . --script res://tests/localization_smoke.gd --audio-driver Dummy`.
+  Checks cover exact panel centers, full settings bounds without scrolling in
+  both languages at phone/laptop sizes, title alpha 1/0.5/0 at 10/20/30 seconds,
+  and permanent disappearance after wake/resize. Native settings capture inspected.
+  Initial centering assertions used requested 4K window size, which macOS clamps;
+  corrected them to assert against the actual rendered viewport, not a proxy.
+- Fresh release exports succeeded with clean logs using
+  `/Applications/Godot.app/Contents/MacOS/Godot --headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  the same command for `"macOS" dist/Metro-macOS.zip` and `"Web" dist/web/index.html`.
+  Verified ZIP integrity, Windows PE x86_64, universal Mac binary, strict deep
+  codesign, exported Apple Silicon startup (`--headless --quit-after 10 --audio-driver Dummy`),
+  Web assets and `git --no-pager diff --check`. Windows/Intel runtime/browser
+  checks and simulation suites unrun for UI-only changes. Not committed.
+
+### Icon-only dock collapse and restore (2026-11-07)
+
+- User rejected the isolated v and then rejected visible text. Replaced dock
+  collapse/restore with an antialiased outlined bottom-panel icon and down/up
+  arrow in [main.gd](./scripts/main.gd), using the existing button theme,
+  translated tooltips and 44px targets. Shrink sizing preserves tab space.
+  Watch-mode grip and simulation/pause/line selection behavior unchanged.
+  README/DESIGN and interface regressions updated. No new translation keys.
+- Initial text-button attempt caused a narrow viewport dock overflow; removed
+  labels and temporary sizing workaround after the user's correction.
+  Final native interface and headless localization smoke passed:
+  `/Applications/Godot.app/Contents/MacOS/Godot --headless --editor --path . --quit`,
+  `/Applications/Godot.app/Contents/MacOS/Godot --path . --script res://tests/interface_smoke.gd --audio-driver Dummy`,
+  `/Applications/Godot.app/Contents/MacOS/Godot --headless --path . --script res://tests/localization_smoke.gd --audio-driver Dummy`.
+  Logs checked for script errors; native menu capture inspected for icon output.
+- Fresh release exports succeeded with clean logs using
+  `/Applications/Godot.app/Contents/MacOS/Godot --headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  the same command for `"macOS" dist/Metro-macOS.zip` and `"Web" dist/web/index.html`.
+  Verified ZIP integrity, PE x86_64, universal Mac binary, strict deep codesign,
+  exported Apple Silicon startup (`--headless --quit-after 10 --audio-driver Dummy`),
+  Web assets and `git --no-pager diff --check`. Windows/Intel runtime/browser
+  checks and simulation suites unrun for this UI-only change. Not committed.
+
+### Removing station shadows and sharing a moving sun (2026-11-07)
+
+- Removed station shadow drawing entirely in [world_view.gd](./scripts/render/world_view.gd).
+  Increased cached whole-track shadow opacity multiplier from 0.22 to 0.36
+  per layer; keeps ground-only layering, rounded outlines and loop holes.
+  [urban_backdrop.gd](./scripts/render/urban_backdrop.gd) supplies a shared
+  `sun_position`: continuous left-to-right arc between dawn and sunset.
+  Shadow horizontal offset opposes that source; the matte shader's warm light
+  follows the same position rather than switching sides at noon. Train shadows
+  follow the shared source as before. README/DESIGN/current-state memory updated.
+- Native train_visual, urban and visual smoke passed with
+  `/Applications/Godot.app/Contents/MacOS/Godot --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy`
+  and the same command separately for `urban_smoke.gd` and `visual_smoke.gd`.
+  Pixel tests isolate halos and measure shadow on right at dawn/left at sunset
+  (>0.05 RGB difference), no shadow on opposite side (<0.005), and no isolated
+  station shadow (<0.005). Sun/shadow movement is monotonic over 100 daylight samples.
+  Initial duplicate test variable fixed; cap probe moved outside the intentional
+  stronger shadow and dawn/dusk halo interference excluded from shadow probes.
+- Fresh Windows/macOS/Web releases succeeded with clean logs. Verified Windows
+  PE x86_64, macOS ZIP integrity/universal x86_64+arm64, strict deep codesign,
+  exported Apple Silicon startup (`--headless --quit-after 10 --audio-driver Dummy`),
+  nonempty Web HTML/JS/WASM/PCK and `git --no-pager diff --check`. Simulation
+  suites not rerun for rendering-only changes; Windows/Intel runtime/browser
+  checks unrun. Pending changes preserved, not committed.
+
+### Restoring original tight bends everywhere (2026-11-07)
+
+- User rejected the broad station sweeps and explicitly chose restoring tight
+  bends everywhere. [track_geometry.gd](./scripts/render/track_geometry.gd)
+  returns to original quadratic 12px station/24px ordinary rounding, capped at
+  35% adjacent lengths. Adaptive sampling remains smooth; no centered cubic or
+  widened 96px transition remains. Grid markers retain their original slight
+  cut-corner offset. Matte day/night, shadows, large overview and deletion changes
+  are preserved. README/DESIGN/current-state memory supersede widening claims.
+- Editing tests measure original 12px footprint/entry/exit, reverse equivalence,
+  and less than 3-degree sample turns. Native train/visual, headless editing,
+  simulation, schedule and loop tests all passed with
+  `/Applications/Godot.app/Contents/MacOS/Godot --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy`,
+  the same native command for `visual_smoke.gd`, and `--headless --path .
+  --script res://tests/{editing,simulation,schedule,loop}_smoke.gd --audio-driver Dummy`
+  (each script run separately). Headway deviation 0.181s versus 6.864s.
+- Fresh Windows/macOS/Web exports using documented commands succeeded with
+  clean logs. Verified Windows PE x86_64, macOS ZIP/universal x86_64+arm64,
+  strict deep codesign and Apple Silicon exported startup
+  (`--headless --quit-after 10 --audio-driver Dummy`), nonempty Web assets,
+  and `git --no-pager diff --check`. Windows/Intel runtime and browser unrun;
+  terminal/intersection suites not rerun for this restoration. Not committed.
+
+### Ground-only station shadows and subtle track shadow (2026-11-07)
+
+- User requested station shadows not land on tracks, and a light shadow under
+  the whole track instead. [world_view.gd](./scripts/render/world_view.gd)
+  draws ground shadows before all corridors/lanes, preserving opaque rail colors.
+  Train shadows remain above tracks. Cached rounded centerline offset polygons
+  (29/31px) provide faint corridor shadows at 45% solar displacement and 22%
+  opacity per layer; existing hole-preserving geometry avoids filled loop interiors
+  and folded joins. Station shadows remain visible only on exposed background.
+- Native tests passed:
+  ```
+  /Applications/Godot.app/Contents/MacOS/Godot --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy
+  /Applications/Godot.app/Contents/MacOS/Godot --path . --script res://tests/visual_smoke.gd --audio-driver Dummy
+  ```
+  Corner corridor pixels stay within 0.025 total RGB difference of line color
+  at noon/night/dawn/sunset; whole-track noon shadow difference is 0.005-0.2
+  versus the exact bare-surface pixel. Native sunset capture inspected.
+  README/DESIGN/current-state memory updated.
+- Fresh Windows/macOS/Web exports succeeded using documented commands; logs
+  had no errors/warnings. Verified PE x86_64, ZIP integrity, universal macOS
+  x86_64/arm64, strict deep codesign, exported Apple Silicon startup
+  (`--headless --quit-after 10 --audio-driver Dummy`), nonempty Web assets,
+  and `git --no-pager diff --check`. No dispatch suites rerun for layering-only
+  changes; Windows/Intel runtime, browser and large-network profiling unrun.
+  Pending work preserved; not committed or pushed.
+
+### Smooth station curves, matte daylight and larger overview (2026-11-07)
+
+- User chose matte texture, sunrise/sunset palettes and subtle sun shadows,
+  not glass reflections. [urban_backdrop.gd](./scripts/render/urban_backdrop.gd)
+  and [matte_surface.gdshader](./scripts/render/matte_surface.gdshader) provide
+  cool dawn, peach sunset, blue hour, off-white noon and a dark midnight gradient.
+  World-anchored grain is filtered at dezoom; surface variation fades in darkness.
+  [world_view.gd](./scripts/render/world_view.gd) draws restrained solar station/
+  car shadows: short at noon, longer/opposite directions at dawn/dusk, no night
+  shadow. Rail glow and opaque route/marker colors remain.
+- Finer sampling exposed inward lane folds in the prior tight centered cubic.
+  User explicitly accepted wider station curves to retain grid-centered markers.
+  [track_geometry.gd](./scripts/render/track_geometry.gd) uses two broad cubic
+  halves sharing a bisecting station tangent, capped at 96px/45% adjacent length.
+  Ordinary 24px bends keep their quadratic shape. Both use adaptive de Casteljau
+  sampling (0.01px flatness, 1-degree tangent tolerance, depth 12). Editing tests
+  require less than 3 degrees between samples and at least 10px opposing lane
+  clearance across 45/90/135-degree turns and 96/144/384px approaches.
+- Map is already unbounded; [main.gd](./scripts/main.gd) lowers wheel/pinch minimum
+  zoom from 0.45 to 0.08 through the same helper, retaining 6x close zoom.
+  1440px now spans 18000 world units. UI tests exercise both controls and far-world
+  pan scaling. Loop regression simulates an 80-station/30000+px circuit with
+  actual arrivals in both directions, fleet ceiling and full-train gaps.
+  This is manual map building, not geographic import or full JR East certification.
+- Passed with `/Applications/Godot.app/Contents/MacOS/Godot`:
+  ```
+  --headless --path . --script res://tests/editing_smoke.gd --audio-driver Dummy
+  --headless --path . --script res://tests/interface_smoke.gd --audio-driver Dummy
+  --headless --path . --script res://tests/localization_smoke.gd --audio-driver Dummy
+  --headless --path . --script res://tests/simulation_smoke.gd --audio-driver Dummy
+  --headless --path . --script res://tests/loop_smoke.gd --audio-driver Dummy
+  --headless --path . --script res://tests/terminal_smoke.gd --audio-driver Dummy
+  --headless --path . --script res://tests/schedule_smoke.gd --audio-driver Dummy
+  --headless --path . --script res://tests/schedule_smoke.gd --audio-driver Dummy -- --platforms-only
+  --headless --path . --script res://tests/intersection_smoke.gd --audio-driver Dummy
+  --path . --script res://tests/urban_smoke.gd --audio-driver Dummy
+  --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy
+  --path . --script res://tests/visual_smoke.gd --audio-driver Dummy
+  ```
+  Native captures inspected for smooth curves, texture and dawn/dusk shadows.
+  Texture anchoring and bounded contrast measured in pixels. Headway deviation
+  0.184s regulated versus 6.931s unregulated; all intersection scenarios passed.
+- Initial failures corrected: misplaced drawing helper/untyped test span; fixed
+  sampling failed measured angle limits, replaced by adaptive sampling; excessive
+  texture/midnight contrast reduced; old no-shadow probes updated for intentional
+  solar shadows. Dense platform vertices caused Godot float32 ray false negatives
+  even 2px inside an edge (0.001px vertical shifts both returned inside). Platform
+  tests now use scalar ray crossings plus exact nearest-boundary distance for the
+  complete passenger circle, stronger than four radial probes. Passenger runtime
+  behavior was not changed. Large-loop fixture now respects gradual fleet ramp-up.
+- Fresh Windows/macOS/Web exports succeeded with no errors/warnings. Verified
+  Windows PE x86_64, macOS ZIP integrity, universal x86_64/arm64, strict deep
+  codesign, exported Apple Silicon startup (`--headless --quit-after 10
+  --audio-driver Dummy`), nonempty Web HTML/JS/WASM/PCK and `git --no-pager diff --check`.
+  README/DESIGN/current-state memory updated. No Windows/Intel runtime, browser,
+  full native interface or full-network frame-time profiling run. Not committed.
+
+### Centering corner stations on their running curves (2026-11-07)
+
+- Screenshot showed the grid-positioned marker outside the quadratic curve.
+  User explicitly chose keeping stations on the grid and moving the curve
+  through their centers, rather than moving markers away from interaction data.
+  [track_geometry.gd](./scripts/render/track_geometry.gd) now uses station-only
+  cubic corner interpolation: 4/3-radius handles preserve approach tangents
+  and place the midpoint exactly on the station. Existing 12px station rounding
+  footprint, 35% short-segment limit, neighboring endpoints, ordinary 24px
+  quadratic bends, lane separation and station markers remain unchanged.
+- [editing_smoke.gd](./tests/editing_smoke.gd) measures centering below 0.0001
+  world units across 45/90/135-degree turns, eight orientations, reversed paths,
+  and actual open/loop circuits. Ordinary bend rounding is explicitly unchanged.
+  [train_visual_smoke.gd](./tests/train_visual_smoke.gd) adds day/night corner
+  captures, inspected natively for centered opaque markers.
+- Passed with `/Applications/Godot.app/Contents/MacOS/Godot`:
+  ```
+  --headless --path . --script res://tests/editing_smoke.gd --audio-driver Dummy
+  --headless --path . --script res://tests/schedule_smoke.gd --audio-driver Dummy
+  --headless --path . --script res://tests/loop_smoke.gd --audio-driver Dummy
+  --headless --path . --script res://tests/simulation_smoke.gd --audio-driver Dummy
+  --headless --path . --script res://tests/terminal_smoke.gd --audio-driver Dummy
+  --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy
+  --path . --script res://tests/visual_smoke.gd --audio-driver Dummy
+  ```
+  Stop/platform clearance, passenger containment/speed, terminal reversals and
+  sustained circulation remain valid. Headway deviation 0.193s regulated versus
+  7.166s unregulated. README/DESIGN/current-state memory updated.
+- Fresh Windows/macOS/Web exports succeeded using the documented commands;
+  logs contained no errors/warnings. Verified Windows PE x86_64, macOS ZIP,
+  universal x86_64/arm64 binary, strict deep codesign, exported Apple Silicon
+  startup (`--headless --quit-after 10 --audio-driver Dummy`), nonempty Web
+  HTML/JS/WASM/PCK and `git --no-pager diff --check`.
+  Windows/Intel runtime, browser and frame-time profiling were not run.
+  Pending station-deletion changes preserved; no commit or push requested.
+
+### Reconnecting station deletion and consistent confirmation (2026-11-07)
+
+- User chose shape-preserving automatic reconnection and identified the delete
+  confirmation (not the temporary warning toast) as visually inconsistent.
+  [transit_graph.gd](./scripts/sim/transit_graph.gd) joins oriented incident
+  anchors per serving line before removal/remapping, without creating fragments
+  or arbitrary connections between interchange branches. Existing neighbor
+  tracks are reused without altering other lines. Terminals trim their line;
+  loops stay closed with three or more stations, otherwise use the surviving
+  open track. Physical track deletion still splits lines and preserves settings.
+- [world_view.gd](./scripts/render/world_view.gd) now shows the existing rail
+  delete x even when hovering a bend. Pointer-approach/cancel tests cover
+  zoom 0.5/1/2/5. [main.gd](./scripts/main.gd) uses action-specific confirmation
+  text, wrapped to fit a 360px viewport, in a borderless rectangular paper card
+  with matching rectangular buttons. AcceptDialog theme constants preserve
+  112px minimum button width and 44px height. Temporary warning styling unchanged.
+  README, DESIGN and English/French translations updated.
+- Validation passed with `/Applications/Godot.app/Contents/MacOS/Godot`:
+  ```
+  --headless --path . --script res://tests/editing_smoke.gd --audio-driver Dummy
+  --path . --script res://tests/editing_smoke.gd --audio-driver Dummy
+  --headless --path . --script res://tests/loop_smoke.gd --audio-driver Dummy
+  --headless --path . --script res://tests/interface_smoke.gd --audio-driver Dummy
+  --headless --path . --script res://tests/localization_smoke.gd --audio-driver Dummy
+  --headless --path . --script res://tests/simulation_smoke.gd --audio-driver Dummy
+  ```
+  Editing covers shared/reversed reconnections, retained bend anchors, branching
+  interchanges, endpoints, existing rails and minimum loop size. Simulation
+  verifies resumed service/full-train spacing after deleting an inserted stop.
+  Native confirmation capture inspected: no mixed window chrome/pill corners.
+- Initial import/test found an inferred untyped array parse error; explicitly
+  typed station order fixed it. A geometry assertion needed the retained former
+  station anchor. Narrow-screen testing found AcceptDialog overwrites button
+  minimum sizes; theme constants fixed the measured 44px height. Final tests
+  above passed after these corrections.
+- Fresh Windows/macOS/Web releases succeeded with the documented export
+  commands, no log errors/warnings. Verified `file dist/Metro.exe`,
+  `unzip -t dist/Metro-macOS.zip`, nonempty Web HTML/JS/WASM/PCK, universal
+  x86_64/arm64 macOS binary, `codesign --verify --deep --strict`, and exported
+  Apple Silicon startup (`--headless --quit-after 10 --audio-driver Dummy`).
+  `git --no-pager diff --check` passed. No Windows/Intel runtime, browser,
+  full native interface suite or profiling run. Changes not committed or pushed.
 
 ### Committing accumulated train, platform and interaction refinements (2026-11-07)
 

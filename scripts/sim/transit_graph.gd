@@ -48,7 +48,30 @@ func remove_track(track_id: int, lines: Array[TransitLine]) -> void:
 
 func remove_station(station_id: int, lines: Array[TransitLine]) -> void:
 	assert(station_id >= 0 and station_id < stations.size())
-	_split_lines(lines, station_id, -1)
+	for line: TransitLine in lines:
+		var closed := line.is_loop()
+		var ordered: Array[int] = line.stations.slice(0, line.stations.size() - 1) if closed else line.stations.duplicate()
+		var index := ordered.find(station_id)
+		if index < 0:
+			continue
+		if (closed and ordered.size() > 3) or (not closed and index > 0 and index < ordered.size() - 1):
+			var before := ordered[posmod(index - 1, ordered.size())]
+			var after := ordered[(index + 1) % ordered.size()]
+			if track_between(before, after) == null:
+				var incoming := track_between(before, station_id)
+				var outgoing := track_between(station_id, after)
+				var path := TrackGeometry.anchors(self, incoming)
+				if incoming.a != before:
+					path.reverse()
+				var tail := TrackGeometry.anchors(self, outgoing)
+				if outgoing.a != station_id:
+					tail.reverse()
+				path.append_array(tail.slice(1))
+				add_track(before, after).waypoints = path
+		ordered.remove_at(index)
+		if closed and ordered.size() >= 3:
+			ordered.append(ordered[0])
+		line.stations = ordered
 	for index in range(tracks.size() - 1, -1, -1):
 		var track := tracks[index]
 		if track.a == station_id or track.b == station_id:

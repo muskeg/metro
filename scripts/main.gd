@@ -84,6 +84,7 @@ var _collapse_dock_button: Button
 var _collapsed_dock_button: Button
 var _dock_collapsed := false
 var _ui_idle_seconds := 0.0
+var _title_seconds := 0.0
 var _first_connection_completed := false
 var _help_label: Label
 var _navigation_help: Label
@@ -152,6 +153,7 @@ func _update_display_density() -> void:
 		get_window().min_size = Vector2i(Vector2(760.0, 520.0) * scale)
 
 func _process(delta: float) -> void:
+	_update_title_fade(delta)
 	_update_ui_idle(delta)
 	_restore_ui_button.queue_redraw()
 	_collapsed_dock_button.queue_redraw()
@@ -282,7 +284,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventMagnifyGesture:
 		var magnify_event := event as InputEventMagnifyGesture
 		if magnify_event.factor > 0.0:
-			camera.zoom = (camera.zoom * magnify_event.factor).clamp(Vector2(0.45, 0.45), Vector2(6.0, 6.0))
+			_zoom_camera(magnify_event.factor)
 		get_viewport().set_input_as_handled()
 	elif event is InputEventMouseButton:
 		var mouse_event := event as InputEventMouseButton
@@ -330,9 +332,11 @@ func _create_interface() -> void:
 	_toolbar.add_theme_constant_override("separation", 12)
 	_toolbar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ui_root.add_child(_toolbar)
-	_brand = _label("METRO", 26, UI_INK)
+	_brand = _label("METRO", 48, UI_INK)
+	_brand.theme = ui_root.theme
+	_brand.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_brand.add_theme_stylebox_override("normal", _button_style(UI_PAPER))
-	_toolbar.add_child(_brand)
+	layer.add_child(_brand)
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -351,6 +355,7 @@ func _create_interface() -> void:
 
 	var panel := PanelContainer.new()
 	_main_panel = panel
+	panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	var rail_style := StyleBoxFlat.new()
 	rail_style.bg_color = UI_PAPER
 	rail_style.border_color = UI_EDGE
@@ -382,12 +387,11 @@ func _create_interface() -> void:
 	_line_selector.add_theme_constant_override("separation", 8)
 	_line_scroll.add_child(_line_selector)
 	_line_button_group = ButtonGroup.new()
-	_collapse_dock_button = _button("v", _toggle_dock)
+	_collapse_dock_button = _dock_button(false)
 	_collapse_dock_button.tooltip_text = "Replier les lignes"
-	_collapse_dock_button.custom_minimum_size.x = 44.0
-	_collapse_dock_button.size_flags_horizontal = Control.SIZE_SHRINK_END
 	dock.add_child(_collapse_dock_button)
-	_collapsed_dock_button = _edge_handle("Afficher les lignes", _toggle_dock)
+	_collapsed_dock_button = _dock_button(true)
+	_collapsed_dock_button.tooltip_text = "Afficher les lignes"
 	_collapsed_dock_button.hide()
 	ui_root.add_child(_collapsed_dock_button)
 
@@ -449,6 +453,7 @@ func _create_interface() -> void:
 	_status_panel.add_child(_panel_status)
 
 	_help_popup = _make_sheet(ui_root)
+	_help_popup.minimum_size_changed.connect(_resize_interface.call_deferred)
 	var help_stack := _sheet_stack(_help_popup)
 	help_stack.add_theme_constant_override("separation", 8)
 	_sheet_heading(help_stack, "Aide")
@@ -464,7 +469,8 @@ func _create_interface() -> void:
 	help_stack.add_child(watch_help)
 
 	_settings_popup = _make_sheet(ui_root)
-	var settings_stack := _sheet_stack(_settings_popup)
+	var settings_stack := _sheet_stack(_settings_popup, false)
+	_settings_popup.minimum_size_changed.connect(_resize_interface.call_deferred)
 	_sheet_heading(settings_stack, "RÉGLAGES")
 	_settings_grid = GridContainer.new()
 	_settings_grid.columns = 2
@@ -507,10 +513,10 @@ func _create_interface() -> void:
 	ui_root.add_child(_quit_dialog)
 	_delete_dialog = ConfirmationDialog.new()
 	_delete_dialog.title = "Supprimer du réseau"
-	_delete_dialog.dialog_text = "Supprimer cet élément ? Les lignes touchées seront séparées, sans reconnecter les rails."
 	_delete_dialog.ok_button_text = "Supprimer"
 	_delete_dialog.cancel_button_text = "Annuler"
 	_delete_dialog.confirmed.connect(_apply_delete)
+	_style_delete_dialog()
 	ui_root.add_child(_delete_dialog)
 	_resize_interface()
 
@@ -523,7 +529,9 @@ func _resize_interface() -> void:
 	var viewport_size := get_viewport_rect().size
 	var width := maxf(0.0, viewport_size.x - 32.0)
 	var narrow := viewport_size.x < 620.0
-	_brand.visible = not narrow
+	_brand.visible = not narrow and not _ui_hidden and _title_seconds < 30.0
+	_brand.position = Vector2(16.0, 16.0)
+	_brand.size = Vector2(_brand.get_combined_minimum_size().x, 44.0)
 	_toolbar.position = Vector2(16.0, 16.0)
 	_toolbar.size = Vector2(width, 44.0)
 	_line_grid.columns = 1 if narrow else (5 if viewport_size.x >= 1366.0 else (3 if viewport_size.x >= 760.0 else 2))
@@ -535,13 +543,20 @@ func _resize_interface() -> void:
 	_main_panel.position = Vector2(0.0, viewport_size.y - _main_panel.size.y)
 	for handle: Button in [_collapsed_dock_button, _restore_ui_button]:
 		handle.size = handle.get_combined_minimum_size()
-		handle.position = Vector2((viewport_size.x - handle.size.x) * 0.5, viewport_size.y - handle.size.y - 8.0)
+		var x := viewport_size.x - handle.size.x - 16.0 if handle == _collapsed_dock_button else (viewport_size.x - handle.size.x) * 0.5
+		handle.position = Vector2(x, viewport_size.y - handle.size.y - 8.0)
 	var sheet_width := minf(640.0, width)
-	var sheet_height := minf(340.0, maxf(0.0, _main_panel.position.y - 84.0))
 	for sheet: PanelContainer in [_settings_popup, _help_popup]:
+		var sheet_height := sheet.get_combined_minimum_size().y if sheet == _settings_popup else minf(340.0, maxf(0.0, viewport_size.y - 32.0))
 		sheet.size = Vector2(sheet_width, sheet_height)
-		sheet.position = Vector2((viewport_size.x - sheet_width) * 0.5, _main_panel.position.y - sheet_height - 12.0)
+		sheet.position = (viewport_size - sheet.size) * 0.5
 	_resize_notification()
+
+func _update_title_fade(delta: float) -> void:
+	_title_seconds = minf(30.0, _title_seconds + delta)
+	_brand.modulate.a = 1.0 - smoothstep(10.0, 30.0, _title_seconds)
+	if _title_seconds >= 30.0:
+		_brand.hide()
 
 func _resize_notification() -> void:
 	var font := _panel_status.get_theme_font("normal_font")
@@ -621,14 +636,17 @@ func _make_sheet(parent: Control) -> PanelContainer:
 	sheet.hide()
 	return sheet
 
-func _sheet_stack(sheet: PanelContainer) -> VBoxContainer:
-	var scroll := ScrollContainer.new()
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	sheet.add_child(scroll)
+func _sheet_stack(sheet: PanelContainer, scrollable: bool = true) -> VBoxContainer:
+	var parent: Control = sheet
+	if scrollable:
+		var scroll := ScrollContainer.new()
+		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		sheet.add_child(scroll)
+		parent = scroll
 	var stack := VBoxContainer.new()
 	stack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	stack.add_theme_constant_override("separation", 16)
-	scroll.add_child(stack)
+	parent.add_child(stack)
 	return stack
 
 func _sheet_heading(stack: VBoxContainer, title: String) -> void:
@@ -694,6 +712,22 @@ func _button(text: String, callback: Callable) -> Button:
 	button.pressed.connect(callback)
 	return button
 
+func _style_delete_dialog() -> void:
+	var theme := _interface_theme()
+	var panel := _panel_style()
+	panel.set_corner_radius_all(0)
+	panel.shadow_size = 0
+	theme.set_stylebox("panel", "AcceptDialog", panel)
+	theme.set_constant("buttons_min_height", "AcceptDialog", 44)
+	theme.set_constant("buttons_min_width", "AcceptDialog", 112)
+	_delete_dialog.borderless = true
+	for state: String in ["normal", "hover", "pressed", "hover_pressed", "focus"]:
+		var button := theme.get_stylebox(state, "Button").duplicate() as StyleBoxFlat
+		button.set_corner_radius_all(0)
+		theme.set_stylebox(state, "Button", button)
+	_delete_dialog.theme = theme
+	_delete_dialog.get_label().autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+
 func _edge_handle(tooltip: String, callback: Callable) -> Button:
 	var handle := _button("", callback)
 	handle.tooltip_text = tooltip
@@ -702,6 +736,30 @@ func _edge_handle(tooltip: String, callback: Callable) -> Button:
 		handle.add_theme_stylebox_override(state, StyleBoxEmpty.new())
 	handle.draw.connect(_draw_edge_handle.bind(handle))
 	return handle
+
+func _dock_button(collapsed: bool) -> Button:
+	var button := _button("", _toggle_dock)
+	button.size_flags_horizontal = Control.SIZE_SHRINK_END
+	button.size_flags_vertical = Control.SIZE_SHRINK_END
+	button.custom_minimum_size = Vector2(44.0, 44.0)
+	button.draw.connect(_draw_dock_icon.bind(button, collapsed))
+	return button
+
+func _draw_dock_icon(button: Button, collapsed: bool) -> void:
+	var color := button.get_theme_color("font_color")
+	var center := button.size * 0.5
+	button.draw_polyline(PackedVector2Array([
+		center + Vector2(-8, -8), center + Vector2(8, -8),
+		center + Vector2(8, 8), center + Vector2(-8, 8),
+		center + Vector2(-8, -8),
+	]), color, 1.5, true)
+	button.draw_line(center + Vector2(-8, 4), center + Vector2(8, 4), color, 1.5, true)
+	var direction := -1.0 if collapsed else 1.0
+	button.draw_line(center + Vector2(0, -2 - 3 * direction), center + Vector2(0, -2 + 3 * direction), color, 1.5, true)
+	button.draw_polyline(PackedVector2Array([
+		center + Vector2(-3, -2), center + Vector2(0, -2 + 3 * direction),
+		center + Vector2(3, -2),
+	]), color, 1.5, true)
 
 func _draw_edge_handle(handle: Button) -> void:
 	var color := UI_INK.lerp(Color("#dce5e4"), _night_strength(time_of_day))
@@ -867,6 +925,7 @@ func _toggle_ui() -> void:
 	_clear_hover()
 	_ui_hidden = not _ui_hidden
 	_ui_root.visible = not _ui_hidden
+	_resize_interface()
 	_restore_ui_button.visible = _ui_hidden
 	_update_connection_guidance()
 	_update_interaction_overlays()
@@ -1336,7 +1395,8 @@ func _request_delete(station_id: int, track_id: int) -> void:
 	_cancel_gesture()
 	_delete_station_id = station_id
 	_delete_track_id = track_id if station_id < 0 else -1
-	_delete_dialog.popup_centered(Vector2i(430, 180))
+	_delete_dialog.dialog_text = "Supprimer cette station ? Les voies voisines seront reconnectées en conservant leur tracé." if station_id >= 0 else "Supprimer ce rail ? Les lignes touchées seront séparées."
+	_delete_dialog.popup_centered(Vector2i(mini(430, int(get_viewport_rect().size.x) - 32), 180))
 
 func _apply_delete() -> void:
 	if _delete_station_id >= 0:
@@ -1526,7 +1586,7 @@ func _toggle_settings() -> void:
 	_toggle_sheet(_settings_popup)
 
 func _zoom_camera(factor: float) -> void:
-	camera.zoom = (camera.zoom * factor).clamp(Vector2(0.45, 0.45), Vector2(6.0, 6.0))
+	camera.zoom = (camera.zoom * factor).clamp(Vector2(0.08, 0.08), Vector2(6.0, 6.0))
 
 func _toggle_fullscreen() -> void:
 	var is_fullscreen := DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN

@@ -21,6 +21,8 @@ func _run() -> void:
 	await process_frame
 	_check(TranslationServer.get_locale() == "en", "English must be the default for new players.")
 	_check(main.tr("Supprimer la station") == "Delete station", "Context actions must have English translations.")
+	_check(main.tr("Supprimer cette station ? Les voies voisines seront reconnectées en conservant leur tracé.").contains("keeping their shape"), "Station deletion must explain shape-preserving reconnection in English.")
+	_check(main.tr("Supprimer ce rail ? Les lignes touchées seront séparées.") == "Delete this track? Affected lines will split.", "Track deletion must explain line splitting in English.")
 	_check(main.tr("Quitter le jeu") == "Quit game", "Quit controls must be translated.")
 	_check(main.tr("Couleur de la ligne") == "Line color" and main.tr("Aide") == "Help", "Color picker and compact help must be translated.")
 	_check(main.tr("Fermer") == "Close" and main.tr("Réglages de ligne") == "Line settings", "Sheet actions must have English translations.")

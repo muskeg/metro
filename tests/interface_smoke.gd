@@ -13,6 +13,7 @@ func _check(condition: bool, message: String) -> void:
 func _run() -> void:
 	await _test_quiet_guidance()
 	await _test_interchange_input()
+	await _test_large_map_navigation()
 	var main: Node = load("res://scenes/main.tscn").instantiate()
 	root.add_child(main)
 	_check(is_equal_approx(root.content_scale_factor, maxf(1.0, DisplayServer.screen_get_scale())), "UI density must match Retina/browser device scale.")
@@ -33,6 +34,16 @@ func _run() -> void:
 	var graph: TransitGraph = main.get("graph")
 	graph.add_station(Vector2.ZERO)
 	graph.add_station(Vector2(576, 0))
+	root.size = Vector2i(360, 760)
+	await process_frame
+	main.call("_request_delete", 0, -1)
+	await process_frame
+	var delete_dialog: ConfirmationDialog = main.get("_delete_dialog")
+	_check(delete_dialog.size.x <= 328 and delete_dialog.position.x >= 0, "Wrapped deletion confirmation must fit a narrow viewport.")
+	_check(delete_dialog.get_ok_button().size.y >= 44 and delete_dialog.get_cancel_button().size.y >= 44, "Deletion actions must retain accessible touch targets.")
+	delete_dialog.hide()
+	root.size = Vector2i(1440, 900)
+	await process_frame
 	main.call("_connect_stations", 0, 1)
 	var dispatcher: TransitDispatcher = main.get("dispatcher")
 	dispatcher.process(1.0, false)
@@ -158,6 +169,37 @@ func _test_interchange_input() -> void:
 	main.queue_free()
 	await process_frame
 
+func _test_large_map_navigation() -> void:
+	var main: Node = load("res://scenes/main.tscn").instantiate()
+	root.add_child(main)
+	var density := root.content_scale_factor
+	var window_size := root.size
+	root.content_scale_factor = 1.0
+	root.size = Vector2i(1440, 900)
+	await process_frame
+	main.set_process(false)
+	var camera: Camera2D = main.get("camera")
+	main.call("_zoom_camera", 0.001)
+	_check(camera.zoom.is_equal_approx(Vector2.ONE * 0.08), "Mouse-wheel zoom must allow a 0.08x large-network overview.")
+	camera.zoom = Vector2.ONE
+	var pinch := InputEventMagnifyGesture.new()
+	pinch.factor = 0.001
+	main.call("_unhandled_input", pinch)
+	_check(camera.zoom.is_equal_approx(Vector2.ONE * 0.08), "Trackpad pinch must share the same large-map zoom limit.")
+	var span: Vector2 = main.get_viewport_rect().size / camera.zoom
+	_check(span.x >= 14000.0 and span.y >= 9000.0, "Overview must expose a genuinely larger world area, not just change a nominal setting.")
+	camera.position = Vector2(48000, -48000)
+	var pan := InputEventPanGesture.new()
+	pan.delta = Vector2(80, -40)
+	main.call("_unhandled_input", pan)
+	_check(camera.position.is_equal_approx(Vector2(47000, -47500)), "Panning must remain unbounded and zoom-scaled far beyond the initial map.")
+	main.call("_zoom_camera", 1000.0)
+	_check(camera.zoom.is_equal_approx(Vector2.ONE * 6.0), "Expanded overview must preserve existing close-up zoom.")
+	main.queue_free()
+	root.content_scale_factor = density
+	root.size = window_size
+	await process_frame
+
 func _test_responsive_layout(main: Node) -> void:
 	for viewport_size: Vector2i in [Vector2i(3840, 2160), Vector2i(1366, 768), Vector2i(1180, 740), Vector2i(1024, 600), Vector2i(760, 520), Vector2i(390, 640)]:
 		root.size = viewport_size
@@ -182,7 +224,11 @@ func _test_responsive_layout(main: Node) -> void:
 				_check(main.get("_main_panel").get_global_rect().encloses(sheet.get_global_rect()), "Line controls must be inside the bottom rail, not in a floating popup.")
 				_check(sheet.get_global_rect().end.y <= main.get("_dock_row").get_global_rect().position.y, "Integrated controls must leave the line tabs accessible.")
 			else:
-				_check(sheet.position.y >= 72.0 and sheet.get_global_rect().end.y < main.get("_main_panel").position.y, "Sheets must not overlap toolbar or route dock.")
+				_check(sheet.get_global_rect().get_center().is_equal_approx(main.get_viewport_rect().size * 0.5), "%s must be centered on the actual viewport: %s." % [name, sheet.get_global_rect()])
+				if name == "_settings_popup":
+					_check(sheet.get_child(0) is VBoxContainer, "Settings must contain its full contents directly, without a scroll container.")
+					var stack: VBoxContainer = sheet.get_child(0)
+					_check(sheet.get_global_rect().encloses(stack.get_global_rect()), "Every settings control must fit inside the panel without scrolling.")
 		var slider: HSlider = main.get("_dispatch_slider")
 		_check(slider.size.y >= 32.0, "Sliders need a usable pointer target.")
 		_check(main.get("_dispatch_value").get_theme_font_size("font_size") >= 16, "Values must not shrink on small viewports.")
@@ -259,7 +305,9 @@ func _check_dock_overflow(main: Node) -> void:
 	_check(scroll.get_h_scroll_bar().visible == overflow, "The dock scrollbar must appear only for genuine overflow, not expanding action buttons (lines=%d, tabs=%s, available=%s)." % [main.get("lines").size(), tabs_width, scroll.size.x])
 	if not overflow:
 		_check(scroll.size.x + 0.5 >= tabs_width and scroll.scroll_horizontal == 0, "All tabs must fit unclipped and unscrolled when the dock has enough space.")
-	_check(main.get("_collapse_dock_button").size.x <= 48.0, "The collapse action must never expand at the expense of line tabs.")
+	var collapse: Button = main.get("_collapse_dock_button")
+	_check(collapse.text.is_empty() and collapse.size_flags_horizontal == Control.SIZE_SHRINK_END, "The collapse action must remain icon-only and never expand at the expense of line tabs.")
+	_check(collapse.size.x <= 48.0 and collapse.size.y >= 44.0, "The panel icon must remain compact with a touch-sized target.")
 
 func _check_contrast(foreground: Color, background: Color, minimum: float, label: String) -> void:
 	var first := foreground.srgb_to_linear().get_luminance()
@@ -407,20 +455,43 @@ func _test_station_preview_and_watch(main: Node) -> void:
 
 func _test_quiet_interface(main: Node) -> void:
 	main.set_process(false)
+	main.set("_title_seconds", 0.0)
+	main.call("_update_title_fade", 10.0)
+	var brand: Label = main.get("_brand")
+	_check(is_equal_approx(brand.modulate.a, 1.0), "Metro title must remain opaque for the first ten seconds.")
+	_check(brand.get_parent() != main.get("_ui_root"), "Title fade must remain independent of the HUD idle fade.")
+	_check(brand.get_theme_font_size("font_size") == 48, "Launch title must use a prominent 48px size.")
+	main.call("_update_title_fade", 10.0)
+	_check(is_equal_approx(brand.modulate.a, 0.5), "Metro title must be halfway faded at twenty seconds.")
+	main.call("_update_title_fade", 10.0)
+	main.call("_wake_interface")
+	main.call("_resize_interface")
+	_check(not brand.visible and is_zero_approx(brand.modulate.a), "Metro title must disappear permanently after thirty seconds despite HUD wake or resize.")
 	main.call("_close_sheets")
 	var graph: TransitGraph = main.get("graph")
 	var count := graph.stations.size()
 	var active: TransitLine = main.get("active_line")
 	var paused: bool = main.get("paused")
-	await _click_control(main.get("_collapse_dock_button"))
+	await process_frame
+	await process_frame
+	var collapse: Button = main.get("_collapse_dock_button")
+	var collapse_rect := collapse.get_global_rect()
+	await _click_control(collapse)
 	_check(main.get("_dock_collapsed") and not main.get("_main_panel").visible, "The bottom dock must collapse using its actual button.")
 	var handle: Button = main.get("_collapsed_dock_button")
-	_check(handle.is_visible_in_tree() and handle.text.is_empty(), "Collapsed rail must leave only a subtle bottom handle, not a text pill.")
+	_check(handle.get_global_rect() == collapse_rect, "Collapse and restore must occupy exactly the same click target: %s / %s." % [collapse_rect, handle.get_global_rect()])
+	_check(handle.is_visible_in_tree() and handle.text.is_empty() and handle.draw.is_connected(Callable(main, "_draw_dock_icon").bind(handle, true)), "Collapsed rail must leave an icon-only panel restore button.")
 	for viewport_size: Vector2i in [Vector2i(390, 640), Vector2i(760, 520), Vector2i(1024, 600)]:
 		root.size = viewport_size
 		main.call("_resize_interface")
 		await process_frame
 		_check(Rect2(Vector2.ZERO, Vector2(viewport_size)).encloses(handle.get_global_rect()) and handle.size.y >= 44, "Collapsed rail handle must stay touch-sized and onscreen.")
+		var restore_rect := handle.get_global_rect()
+		await _click_control(handle)
+		await process_frame
+		_check(collapse.get_global_rect() == restore_rect, "Restoring lines must keep the button at the same position after viewport resizing: %s / %s." % [collapse.get_global_rect(), restore_rect])
+		await _click_control(collapse)
+		_check(handle.get_global_rect() == restore_rect, "Collapsing lines must preserve the exact second-click target.")
 	main.call("_wake_interface")
 	main.set("time_of_day", 0.5)
 	main.call("_update_ui_idle", 7.9)
@@ -486,6 +557,15 @@ func _test_help_feedback_layout(main: Node) -> void:
 		main.call("_refresh_line_selector")
 		for viewport: Vector2i in [Vector2i(1024, 640), Vector2i(760, 520), Vector2i(390, 640)]:
 			root.size = viewport
+			main.call("_close_sheets")
+			main.call("_toggle_settings")
+			await process_frame
+			await process_frame
+			var settings: PanelContainer = main.get("_settings_popup")
+			var settings_stack: VBoxContainer = settings.get_child(0)
+			_check(Rect2(Vector2.ZERO, Vector2(viewport)).encloses(settings.get_global_rect()), "All settings must fit onscreen in both languages.")
+			_check(settings.get_global_rect().encloses(settings_stack.get_global_rect()), "Translated settings must be fully visible without scrolling.")
+			_check(settings.get_global_rect().get_center().is_equal_approx(main.get_viewport_rect().size * 0.5), "Translated settings must remain centered.")
 			main.call("_close_sheets")
 			main.call("_toggle_line_settings")
 			main.call("_set_status", "Cette rame serait trop longue pour un segment. Allongez le tracé.")
