@@ -62,10 +62,7 @@ func _run() -> void:
 	close_dispatcher.add_line(across)
 	close_dispatcher.add_line(branching)
 	close_dispatcher.rebuild_routes()
-	var merged_junctions := false
-	for zone: Dictionary in close_dispatcher._junction_zones:
-		merged_junctions = merged_junctions or (zone["centers"].has(Vector2.ZERO) and zone["centers"].has(Vector2(192, 0)))
-	_check(merged_junctions, "Adjacent junctions must use one reservation to avoid hold-and-wait deadlocks.")
+	_check(close_dispatcher._last_departures.is_empty(), "Rebuilt lines must start without stale departure regulation.")
 	_exercise(close_dispatcher, "Nearby junctions with shared segment")
 
 	var third := TransitLine.new(2, Color.GOLD)
@@ -77,7 +74,7 @@ func _run() -> void:
 	third.dwell_time = 3.0
 	dispatcher.add_line(third)
 	dispatcher.rebuild_routes()
-	_check(dispatcher._junction_owners.is_empty() and dispatcher._junction_queues.is_empty(), "Geometry edits must clear all crossing ownership and wait queues.")
+	_check(dispatcher.metros.is_empty() and dispatcher._last_departures.is_empty(), "Geometry edits must clear trains and departure schedules.")
 	_exercise(dispatcher, "Three lines and unequal speeds")
 	var single := TransitGraph.new()
 	single.add_station(Vector2.ZERO)
@@ -116,7 +113,7 @@ func _run() -> void:
 	if _failed:
 		quit(1)
 	else:
-		print("Intersection smoke passed: sustained service and full-body collision safety.")
+		print("Intersection smoke passed: independent lanes, sustained service and safe moving-block gaps.")
 		quit()
 
 func _exercise(dispatcher: TransitDispatcher, label: String) -> void:
@@ -135,7 +132,7 @@ func _exercise(dispatcher: TransitDispatcher, label: String) -> void:
 	for tick in range(7200):
 		dispatcher.process(0.05, false)
 		if tick % 20 == 0:
-			_check_bodies(dispatcher)
+			_check_blocks(dispatcher)
 		if tick == 3600:
 			for metro: Metro in dispatcher.metros:
 				first_half[metro.line_id] += metro.arrival_count
@@ -149,20 +146,16 @@ func _exercise(dispatcher: TransitDispatcher, label: String) -> void:
 		_check(final[line_id] >= first_half[line_id] + 6, "Shared-station traffic must keep making progress instead of deadlocking.")
 	for served: bool in directions:
 		_check(served, "Crossing service must operate in both directions on both lines.")
-	var before_pause := dispatcher._junction_owners.duplicate(true)
+	var before_pause := dispatcher._last_departures.duplicate(true)
 	dispatcher.process(10.0, true)
-	_check(dispatcher._junction_owners == before_pause, "Pause must preserve crossing reservations.")
+	_check(dispatcher._last_departures == before_pause, "Pause must freeze departure regulation.")
 	print("%s arrivals: first half %s, final %s" % [label, first_half, final])
 
-func _check_bodies(dispatcher: TransitDispatcher) -> void:
-	for first in range(dispatcher.metros.size()):
-		var a := dispatcher.metros[first]
-		var route_a: Dictionary = dispatcher.routes[a.line_id]
-		var body_a := dispatcher._body_points(route_a["points"], route_a["length"], a.distance, a.wagon_count)
-		for second in range(first + 1, dispatcher.metros.size()):
-			var b := dispatcher.metros[second]
-			var route_b: Dictionary = dispatcher.routes[b.line_id]
-			var body_b := dispatcher._body_points(route_b["points"], route_b["length"], b.distance, b.wagon_count)
-			for point: Vector2 in body_a:
-				for other: Vector2 in body_b:
-					_check(point.distance_squared_to(other) >= 99.9, "Crossing trains must never overlap, including all six wagons.")
+func _check_blocks(dispatcher: TransitDispatcher) -> void:
+	for a: Metro in dispatcher.metros:
+		var total: float = TrackGeometry.route_for_direction(dispatcher.routes[a.line_id], a.travel_direction)["length"]
+		for b: Metro in dispatcher.metros:
+			if a.id == b.id or not dispatcher._same_circuit(b, a.line_id, a.travel_direction):
+				continue
+			var gap := fposmod(b.distance - a.distance, total)
+			_check(gap >= TrackGeometry.train_length(b.wagon_count) + TrackGeometry.SAFETY_GAP - 0.01, "Moving authority must preserve full-train rear clearance in each independent circuit.")

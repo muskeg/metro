@@ -15,6 +15,7 @@ func _run() -> void:
 	root.add_child(main)
 	root.size = Vector2i(1440, 900)
 	await process_frame
+	_check(not main.get("_max_trains_slider").editable and main.get("_max_trains_value").text == "0", "An empty line must show zero service and disable its train limit.")
 	var graph: TransitGraph = main.get("graph")
 	for position: Vector2 in [Vector2.ZERO, Vector2(1152, 0), Vector2(0, 576), Vector2(1152, 576)]:
 		graph.add_station(position)
@@ -32,19 +33,26 @@ func _run() -> void:
 	second.dispatch_rate = 8.0
 	second.dwell_time = 0.1
 	dispatcher.process(100.0, false)
-	_check(_count(dispatcher, 0) == 4 and _count(dispatcher, 1) == 2, "Each line must enforce its own exact maximum over sustained dispatch.")
+	_check(dispatcher.route_capacity(first) > 2 and dispatcher.train_limit(first) == 4, "Long two-station routes must support more than two trains.")
+	_check(_count(dispatcher, 0) == 4 and _count(dispatcher, 1) == 2, "Independent lines must respect their manual service caps.")
 	main.call("_select_line", 0)
 	var slider: HSlider = main.get("_max_trains_slider")
-	_check(slider.value == 4.0, "The selected line's maximum must be shown.")
+	_check(slider.value == 4.0 and slider.max_value == dispatcher.route_capacity(first), "The selected line's manual limit and route capacity must be shown.")
+	_check(main.get("_max_trains_value").tooltip_text.contains(str(dispatcher.recommended_fleet(first))), "Fleet guidance must show the cycle-time recommendation.")
+	var independent_train: Metro
+	for candidate: Metro in dispatcher.metros:
+		if candidate.line_id == 1:
+			independent_train = candidate
+			break
 	slider.value = 1.0
-	_check(first.max_trains == 1 and dispatcher.metros.is_empty(), "Reducing a limit below occupancy must redispatch immediately.")
+	_check(first.max_trains == 1 and _count(dispatcher, 0) == 4 and dispatcher.metros.has(independent_train), "Reducing a limit must leave running and independent trains undisturbed.")
 	dispatcher.process(80.0, false)
-	_check(_count(dispatcher, 0) == 1 and _count(dispatcher, 1) == 2, "Lowered and independent limits must persist after redispatch.")
+	_check(_count(dispatcher, 0) == 1 and _count(dispatcher, 1) == 2 and dispatcher.metros.has(independent_train), "Surplus trains must retire at termini without redispatching independent lines.")
 	var kept := dispatcher.metros[0]
 	slider.value = 3.0
 	_check(dispatcher.metros.has(kept), "Raising a limit must not interrupt existing trains.")
 	dispatcher.process(80.0, false)
-	_check(_count(dispatcher, 0) == 3 and _count(dispatcher, 1) == 2, "Raising the limit must allow further dispatch up to the new cap.")
+	_check(_count(dispatcher, 0) == 3 and _count(dispatcher, 1) == 2, "Raising the manual limit must allow further service.")
 	main.call("_select_line", 1)
 	_check(slider.value == 2.0, "Switching lines must restore their independent limit.")
 	main.call("_select_line", 0)
@@ -105,14 +113,16 @@ func _run() -> void:
 	first.max_trains = 7
 	var typed_lines: Array[TransitLine] = [first]
 	graph.remove_track(first.tracks[0], typed_lines)
-	_check(typed_lines.size() == 2 and typed_lines[1].max_trains == 7, "Line fragments must inherit the train cap.")
+	dispatcher.lines.assign(typed_lines)
+	dispatcher.rebuild_routes()
+	_check(typed_lines.size() == 2 and typed_lines[1].max_trains == 7 and dispatcher.train_limit(typed_lines[1]) == 0, "Fragments inherit the preference but disconnected single stations cannot dispatch trains.")
 	_test_loop_limit()
 	main.queue_free()
 	await process_frame
 	if failed:
 		quit(1)
 	else:
-		print("Train controls smoke passed: per-line caps, redispatch and camera following.")
+		print("Train controls smoke passed: route caps, natural fleet withdrawal and camera following.")
 		quit()
 
 func _count(dispatcher: TransitDispatcher, line_id: int) -> int:
@@ -134,8 +144,9 @@ func _test_loop_limit() -> void:
 	var dispatcher := TransitDispatcher.new(graph)
 	dispatcher.add_line(line)
 	dispatcher.rebuild_routes()
-	dispatcher.process(80.0, false)
-	_check(dispatcher.metros.size() == 3, "The limit must count trains in both loop directions together.")
+	dispatcher.process(240.0, false)
+	_check(dispatcher.metros.size() == 3, "The limit must count trains in both loop directions together (actual %s)." % dispatcher.metros.size())
+	_check(dispatcher.route_capacity(line) > 3, "Loop capacity must reflect its two physical circuits.")
 
 func _mouse(view: WorldView, position: Vector2, button: MouseButton, pressed: bool) -> void:
 	var event := InputEventMouseButton.new()

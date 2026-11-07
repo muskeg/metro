@@ -14,6 +14,9 @@ var distance: float = 0.0
 var wagon_count: int = 2
 var next_stop_index: int = 0
 var blocked: bool = false
+var at_station: bool = true
+var station_arrival_time: float = 0.0
+var departure_error: float = 0.0
 
 func _init(metro_id: int, route_id: int, initial_position: Vector2) -> void:
 	id = metro_id

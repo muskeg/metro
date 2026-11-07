@@ -40,10 +40,13 @@ jobs:
       - name: Import project
         run: godot --headless --editor --path . --quit
 
-      - name: Run simulation and audio smoke tests
+      - name: Run smoke tests
         run: |
           godot --headless --path . --script res://tests/simulation_smoke.gd
+          godot --headless --path . --script res://tests/schedule_smoke.gd
           godot --headless --path . --script res://tests/audio_smoke.gd
+          godot --headless --path . --script res://tests/interface_smoke.gd
+          godot --headless --path . --script res://tests/localization_smoke.gd
 
       - name: Export Web release
         shell: bash

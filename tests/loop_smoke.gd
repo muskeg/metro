@@ -101,7 +101,7 @@ func _run() -> void:
 			for metro: Metro in dispatcher.metros:
 				arrivals[metro.line_id] += metro.arrival_count
 		if tick % 20 == 0:
-			_check_bodies(dispatcher)
+			_check_blocks(dispatcher)
 	for metro: Metro in dispatcher.metros:
 		second_half[metro.line_id] += metro.arrival_count
 	_check(directions[0] and directions[1], "Both loop directions must serve stations continuously.")
@@ -154,15 +154,10 @@ func _check_openings() -> void:
 			for index in range(line.tracks.size()):
 				_check(graph.track_between(line.stations[index], line.stations[index + 1]).id == line.tracks[index], "Opened-loop tracks must match their station order.")
 
-func _check_bodies(dispatcher: TransitDispatcher) -> void:
-	for index in range(dispatcher.metros.size()):
-		var a := dispatcher.metros[index]
-		var route_a := TrackGeometry.route_for_direction(dispatcher.routes[a.line_id], a.travel_direction)
-		var body_a := dispatcher._body_points(route_a["points"], route_a["length"], a.distance, a.wagon_count)
-		for other_index in range(index + 1, dispatcher.metros.size()):
-			var b := dispatcher.metros[other_index]
-			var route_b := TrackGeometry.route_for_direction(dispatcher.routes[b.line_id], b.travel_direction)
-			var body_b := dispatcher._body_points(route_b["points"], route_b["length"], b.distance, b.wagon_count)
-			for point: Vector2 in body_a:
-				for other: Vector2 in body_b:
-					_check(point.distance_squared_to(other) >= 99.9, "Loop trains must not overlap, including wagons.")
+func _check_blocks(dispatcher: TransitDispatcher) -> void:
+	for train: Metro in dispatcher.metros:
+		var total: float = TrackGeometry.route_for_direction(dispatcher.routes[train.line_id], train.travel_direction)["length"]
+		for other: Metro in dispatcher.metros:
+			if train.id == other.id or not dispatcher._same_circuit(other, train.line_id, train.travel_direction):
+				continue
+			_check(fposmod(other.distance - train.distance, total) >= TrackGeometry.train_length(other.wagon_count) + TrackGeometry.SAFETY_GAP - 0.01, "Loop directions must retain full-train moving-block clearance.")

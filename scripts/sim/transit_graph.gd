@@ -109,6 +109,9 @@ func _split_lines(lines: Array[TransitLine], station_id: int, track_id: int) -> 
 			extra.dispatch_rate = line.dispatch_rate
 			extra.dwell_time = line.dwell_time
 			extra.cruise_velocity = line.cruise_velocity
+			extra.acceleration = line.acceleration
+			extra.braking = line.braking
+			extra.terminal_recovery = line.terminal_recovery
 			extra.wagon_count = line.wagon_count
 			extra.max_trains = line.max_trains
 			extra.stations.assign(fragments[index])

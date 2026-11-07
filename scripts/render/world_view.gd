@@ -20,6 +20,11 @@ var route_pins := PackedVector2Array()
 var rail_anchor := Vector2.ZERO
 var hover_caption := ""
 var hover_pointer := Vector2.ZERO
+var station_preview_visible := false
+var station_preview_position := Vector2.ZERO
+var interaction_overlays_visible := true
+var connection_hint_station_id := -1
+var valid_connection_targets := PackedInt32Array()
 var view_center: Vector2 = Vector2.ZERO
 var view_zoom: Vector2 = Vector2.ONE
 var time_of_day: float = 0.5
@@ -92,22 +97,43 @@ func _draw() -> void:
 			continue
 		_draw_train(metro, TrackGeometry.route_for_direction(_routes[metro.line_id], metro.travel_direction), lines[metro.line_id].color)
 	for station: Station in graph.stations:
-		var night := _night_strength()
-		var fill := Color.WHITE.lerp(Color("#e8eff2"), night)
-		var border := Color("#34464f").lerp(Color("#819ca9"), night)
-		_draw_station(station.position, fill, border)
-		if station.id == selected_station_id:
-			draw_arc(station.position, 15.0, 0.0, TAU, 40, Color("#f9c27b"), 1.5, true)
-	if _preview.size() > 1:
+		_draw_network_station(station)
+		if interaction_overlays_visible and station.id == selected_station_id:
+			draw_arc(station.position, station_radius(station) + 3.0, 0.0, TAU, 40, Color("#f9c27b"), 1.5, true)
+	if interaction_overlays_visible and _preview.size() > 1:
 		draw_polyline(_preview, _preview_color, CORRIDOR_WIDTH, view_zoom.x < 1.5)
 		for offset: float in [-TrackGeometry.LANE_OFFSET, TrackGeometry.LANE_OFFSET]:
 			var lane := TrackGeometry.offset_points(_preview, offset)
 			draw_polyline(lane, _preview_color, LANE_EDGE_WIDTH, view_zoom.x < 1.5)
 			draw_polyline(lane, _preview_color.darkened(0.3), RUNNING_LANE_WIDTH, view_zoom.x < 1.5)
-	_draw_gizmos()
+	if interaction_overlays_visible:
+		if station_preview_visible:
+			var night := _night_strength()
+			_draw_station(station_preview_position, Color(1.0, 1.0, 1.0, 0.22), Color(Color("#34464f").lerp(Color("#c5dce5"), night), 0.38))
+		_draw_gizmos()
 
 func station_handle_position(station: Station, direction: Vector2) -> Vector2:
-	return station.position + direction * maxf(24.0, 32.0 / view_zoom.x)
+	return station.position + direction * maxf(station_radius(station) + 12.0, 32.0 / view_zoom.x)
+
+func station_line_colors(station: Station) -> PackedColorArray:
+	var colors := PackedColorArray()
+	for line: TransitLine in lines:
+		if line.stations.has(station.id):
+			colors.append(line.color)
+	return colors
+
+func station_radius(station: Station) -> float:
+	return 10.0 + 2.0 * maxi(1, station_line_colors(station).size())
+
+func _draw_network_station(station: Station) -> void:
+	var colors := station_line_colors(station)
+	var fill := Color.WHITE.lerp(Color("#e8eff2"), _night_strength())
+	if colors.is_empty():
+		_draw_station(station.position, fill, Color("#34464f").lerp(Color("#819ca9"), _night_strength()))
+		return
+	for index in range(colors.size()):
+		draw_circle(station.position, 10.0 + 2.0 * (colors.size() - index), colors[index].darkened(0.3))
+	draw_circle(station.position, 10.0, fill)
 
 func rail_delete_position() -> Vector2:
 	return rail_anchor + Vector2(0.0, -32.0) / view_zoom.x
@@ -131,9 +157,11 @@ func _draw_gizmos() -> void:
 	var danger := Color("#c9505b").lerp(Color("#f19199"), _night_strength())
 	var caption_position := Vector2.ZERO
 	if route_active:
+		for station_id: int in valid_connection_targets:
+			var station := graph.stations[station_id]
+			draw_arc(station.position, maxf(station_radius(station) + 5.0, 17.0 * scale), 0.0, TAU, 40, Color(accent, 0.5), 1.5 * scale, true)
 		if route_source_id >= 0 and route_source_id < graph.stations.size():
-			var source := graph.stations[route_source_id].position
-			_draw_station(source, Color.WHITE.lerp(Color("#e8eff2"), _night_strength()), ink)
+			_draw_network_station(graph.stations[route_source_id])
 			_draw_handle(route_flip_position(), ink, "swap", scale)
 			if hover_pointer.distance_to(route_flip_position()) <= 11.0 * scale:
 				_draw_caption(route_flip_position() + Vector2(-12.0, 28.0) * scale, "Inverser le coude", scale)
@@ -141,26 +169,32 @@ func _draw_gizmos() -> void:
 			_draw_handle(pin, ink, "diamond", scale)
 		if _preview.size() > 1:
 			var endpoint := _preview[_preview.size() - 1]
-			draw_arc(endpoint, 18.0 * scale, 0.0, TAU, 40, _preview_color, 2.0 * scale, true)
 			if route_target_id < 0:
+				draw_arc(endpoint, 18.0 * scale, 0.0, TAU, 40, _preview_color, 2.0 * scale, true)
 				for direction: Vector2 in [Vector2.RIGHT, Vector2.DOWN]:
 					draw_dashed_line(endpoint - direction * 27.0 * scale, endpoint + direction * 27.0 * scale, Color(ink, 0.35), scale, 4.0 * scale)
 			if not _preview_error.is_empty():
 				_draw_handle(endpoint + Vector2(26.0, -26.0) * scale, danger, "x", scale)
 		if route_target_id >= 0 and route_target_id < graph.stations.size():
-			var target := graph.stations[route_target_id].position
-			_draw_station(target, Color.WHITE.lerp(Color("#e8eff2"), _night_strength()), _preview_color)
+			var station := graph.stations[route_target_id]
+			_draw_network_station(station)
+			draw_arc(station.position, station_radius(station) + 3.0, 0.0, TAU, 40, _preview_color, 1.5 * scale, true)
 		if not _preview_error.is_empty() and _preview.size() > 1:
 			_draw_caption(_preview[_preview.size() - 1] + Vector2(32.0, 28.0) * scale, _preview_error, scale)
 		return
+	if connection_hint_station_id >= 0 and connection_hint_station_id < graph.stations.size() and hovered_station_id != connection_hint_station_id:
+		var station := graph.stations[connection_hint_station_id]
+		var anchor := station_handle_position(station, Vector2.RIGHT)
+		draw_line(station.position + Vector2(station_radius(station) + 3.0, 0.0), anchor, Color(ink, 0.25), scale, true)
+		_draw_handle(anchor, Color(accent, 0.65), "+", scale)
 	if hovered_station_id >= 0 and hovered_station_id < graph.stations.size():
 		var station := graph.stations[hovered_station_id]
 		var anchor := station_handle_position(station, Vector2.RIGHT)
-		draw_line(station.position + Vector2(15.0, 0.0), anchor, Color(ink, 0.25), scale, true)
+		draw_line(station.position + Vector2(station_radius(station) + 3.0, 0.0), anchor, Color(ink, 0.25), scale, true)
 		_draw_handle(anchor, accent, "+", scale)
 		_draw_handle(station_handle_position(station, Vector2(1.0, -1.0)), danger, "x", scale)
-		draw_arc(station.position, 16.0, 0.0, TAU, 40, Color(ink, 0.35), scale, true)
-		caption_position = station.position + Vector2(18.0, 30.0) * scale
+		draw_arc(station.position, station_radius(station) + 4.0, 0.0, TAU, 40, Color(ink, 0.35), scale, true)
+		caption_position = station.position + Vector2(station_radius(station) + 6.0 * scale, station_radius(station) + 18.0 * scale)
 	elif hovered_track_id >= 0 and hovered_track_id < graph.tracks.size():
 		var points := TrackGeometry.sample(graph, graph.tracks[hovered_track_id])
 		draw_polyline(points, Color(accent, 0.45), 2.0 * scale, true)

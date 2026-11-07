@@ -50,6 +50,9 @@ func _run() -> void:
 		track.waypoints = TrackGeometry.anchors(graph, track)
 	forward.wagon_count = 4
 	forward.dispatch_rate = 25.0
+	forward.acceleration = 65.0
+	forward.braking = 95.0
+	forward.terminal_recovery = 5.0
 	var shared := graph.track_between(1, 2)
 	var error := graph.insert_station(shared.id, Vector2(576.0, 0.0), lines)
 	_check(error.is_empty(), "Insertion on a shared straight rail must succeed.")
@@ -68,6 +71,7 @@ func _run() -> void:
 	_check(forward.stations == [0, 1] and reverse.stations == [4, 3, 2], "Deletion must not invent a reconnection.")
 	_check(lines[2].stations == [2, 3, 4] and lines[3].stations == [1, 0], "All surviving station sequences must be preserved.")
 	_check(lines[2].wagon_count == 4 and lines[2].dispatch_rate == 25.0 and lines[2].color == forward.color, "Fragments must inherit line settings and color.")
+	_check(lines[2].acceleration == 65.0 and lines[2].braking == 95.0 and lines[2].terminal_recovery == 5.0, "Fragments must inherit independent motion and terminal recovery settings.")
 	_assert_graph(graph, lines)
 	graph.remove_track(graph.track_between(2, 3).id, lines)
 	_check(lines.size() == 6, "Deleting another shared rail must preserve every disconnected fragment.")
@@ -150,23 +154,21 @@ func _run() -> void:
 	_check(main_graph.tracks[0].waypoints == reshaped, "Controller movement must use the reshaped endpoint path.")
 	main.call("_move_station_to", 0, Vector2(96.0, 96.0))
 	main.call("_cancel_gesture")
-	main.call("_select_station_tool")
 	main.call("_begin_world_interaction", Vector2(32.0, 0.0))
-	_check(main.get("_connect_drag_source_id") == 0, "Contextual drawing must work with empty-map station placement disabled.")
+	_check(main.get("_connect_drag_source_id") == 0, "Contextual drawing must work without a station tool mode.")
 	main.call("_cancel_gesture")
-	main.call("_select_station_tool")
 	_check(main_graph.stations[0].position == Vector2.ZERO and main_graph.tracks[0].waypoints == bend, "Cancelling movement must restore the complete original geometry.")
 	var original := main_graph.tracks[0].waypoints.duplicate()
 	_check(not main.call("_move_station_to", 0, Vector2(576.0, 192.0)), "Occupied moves must be refused.")
 	_check(main_graph.tracks[0].waypoints == original, "Invalid movement must not partially mutate rails.")
 	main.call("_update_hover", Vector2(32.0, 0.0))
 	main.call("_begin_world_interaction", Vector2(32.0, 0.0))
-	_check(main.get("_connect_drag_source_id") == 0, "Peripheral anchors must draw independently of Station mode.")
+	_check(main.get("_connect_drag_source_id") == 0, "Peripheral anchors must draw without a tool mode.")
 	main.call("_cancel_gesture")
 	main.call("_update_hover", Vector2(192.0, 96.0))
 	_check(view.hovered_track_id == 0, "Rail hit testing must follow drawn bends.")
 	main.call("_begin_world_interaction", Vector2(192.0, 96.0))
-	_check(main_graph.stations.size() == 3 and main_graph.tracks.size() == 2, "Clicking a rail with Station must insert rather than add a disconnected station.")
+	_check(main_graph.stations.size() == 3 and main_graph.tracks.size() == 2, "Clicking a rail must insert rather than add a disconnected station.")
 	main.call("_request_delete", 2, -1)
 	_check(main.get("_delete_dialog").visible and main_graph.stations.size() == 3, "Deletion must request confirmation before mutating the graph.")
 	main.get("_delete_dialog").hide()
@@ -195,11 +197,49 @@ func _run() -> void:
 	main.queue_free()
 	await process_frame
 	await _test_elastic_edits()
+	await _test_rail_gizmo_reach()
 	if _failed:
 		quit(1)
 	else:
 		print("Editing smoke passed: shared insertion, deletion, fragments, remapping, reshaping, hover anchors and cancellation.")
 		quit()
+
+func _test_rail_gizmo_reach() -> void:
+	var main: Node = load("res://scenes/main.tscn").instantiate()
+	root.add_child(main)
+	await process_frame
+	var graph: TransitGraph = main.get("graph")
+	var view: WorldView = main.get("world_view")
+	var camera: Camera2D = main.get("camera")
+	graph.add_station(Vector2.ZERO)
+	graph.add_station(Vector2(0.0, 1152.0))
+	main.call("_connect_stations", 0, 1)
+	for endpoint: Vector2 in [Vector2(0.0, 1152.0), Vector2(1152.0, 0.0), Vector2(1152.0, 1152.0)]:
+		graph.stations[1].position = endpoint
+		graph.tracks[0].waypoints = PackedVector2Array([Vector2.ZERO, endpoint])
+		main.call("_refresh_network")
+		for zoom: float in [0.5, 1.0, 2.0, 5.0]:
+			camera.zoom = Vector2.ONE * zoom
+			for sign_value: float in [-1.0, 1.0]:
+				main.call("_clear_hover")
+				main.call("_update_hover", endpoint * 0.5)
+				var anchor := view.rail_anchor
+				var target := view.rail_delete_position() if sign_value < 0.0 else view.rail_move_position()
+				for step in range(1, 33):
+					main.call("_update_hover", anchor.lerp(target, step / 32.0))
+					_check(view.hovered_track_id == 0 and view.rail_anchor == anchor, "Rail gizmos must remain anchored throughout the pointer path at every orientation and zoom.")
+				main.call("_begin_world_interaction", target)
+				if sign_value < 0.0:
+					_check(main.get("_delete_dialog").visible, "The reachable delete gizmo must request confirmation.")
+					main.get("_delete_dialog").hide()
+				else:
+					_check(main.get("_editing_track_id") == 0, "The reachable reshape gizmo must start editing rather than insert a station.")
+					main.call("_cancel_gesture")
+				_check(graph.stations.size() == 2, "Gizmo clicks must not insert stations.")
+			main.call("_update_hover", endpoint * 0.5 + Vector2(5000.0, 5000.0))
+			_check(view.hovered_track_id == -1, "Leaving the gizmo area must clear the rail hover.")
+	main.queue_free()
+	await process_frame
 
 func _test_elastic_edits() -> void:
 	var main: Node = load("res://scenes/main.tscn").instantiate()

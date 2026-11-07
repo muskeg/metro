@@ -8,6 +8,9 @@ var color: Color
 var dispatch_rate: float = 18.0
 var dwell_time: float = 3.0
 var cruise_velocity: float = 100.0
+var acceleration: float = 80.0
+var braking: float = 100.0
+var terminal_recovery: float = 4.0
 var dispatch_elapsed: float = 0.0
 var wagon_count: int = 2
 var max_trains: int = 4

@@ -73,7 +73,7 @@ func _run_test() -> void:
 		if forward_now and return_now:
 			simultaneous_ticks += 1
 		if step % 20 == 0:
-			_check_train_bodies(dispatcher)
+			_check_station_blocks(dispatcher)
 	_check(saw_forward and saw_return, "Both directions should actually move.")
 	_check(simultaneous_ticks >= 20, "Both directions must move simultaneously, not just alternate on one lane.")
 	_check(dispatcher.arrival_count >= 6, "Both directions should serve the stations without gridlock.")
@@ -108,7 +108,7 @@ func _run_test() -> void:
 			if metro.arrival_count > 0:
 				served[metro.line_id] = true
 		if step % 20 == 0:
-			_check_train_bodies(dispatcher)
+			_check_station_blocks(dispatcher)
 	_check(served[0] and served[1], "Shared-track routes with opposite station order must both serve their stations.")
 	var shared_lines: Array[TransitLine] = [line, other_line]
 	_check(graph.insert_station(0, Vector2(192.0, 96.0), shared_lines).is_empty(), "Shared curved rails must support intermediate stations.")
@@ -117,7 +117,7 @@ func _run_test() -> void:
 	for step in range(600):
 		dispatcher.process(0.05, false)
 		if step % 20 == 0:
-			_check_train_bodies(dispatcher)
+			_check_station_blocks(dispatcher)
 	_check(dispatcher.arrival_count >= previous_arrivals + 4, "Both shared lines must continue serving stations after insertion.")
 	_check(dispatcher.routes[0]["stops"].size() == 4 and dispatcher.routes[1]["stops"].size() == 4, "Inserted stations must be served in both directions on every line.")
 	graph.remove_station(4, shared_lines)
@@ -168,15 +168,7 @@ func _run_test() -> void:
 		print("Metro simulation and drawing smoke tests passed.")
 		quit()
 
-func _check_train_bodies(dispatcher: TransitDispatcher) -> void:
-	for first in range(dispatcher.metros.size()):
-		var a := dispatcher.metros[first]
-		var route_a: Dictionary = dispatcher.routes[a.line_id]
-		var body_a := dispatcher._body_points(route_a["points"], route_a["length"], a.distance, a.wagon_count)
-		for second in range(first + 1, dispatcher.metros.size()):
-			var b := dispatcher.metros[second]
-			var route_b: Dictionary = dispatcher.routes[b.line_id]
-			var body_b := dispatcher._body_points(route_b["points"], route_b["length"], b.distance, b.wagon_count)
-			for point: Vector2 in body_a:
-				for other: Vector2 in body_b:
-					_check(point.distance_squared_to(other) >= 99.9, "Trains must not overlap, including trailing wagons and turns.")
+func _check_station_blocks(dispatcher: TransitDispatcher) -> void:
+	for train: Metro in dispatcher.metros:
+		_check(dispatcher.movement_authority(train) >= 0.0, "Movement authority must remain nonnegative.")
+		_check(train.speed <= dispatcher.lines[train.line_id].cruise_velocity + 0.01, "Regulation must not exceed the maximum cruise speed.")

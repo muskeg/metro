@@ -58,10 +58,12 @@ une surcharge de modele. Les responsabilites de fichiers sont distinctes.
 - Les voies partagees sont espacees par ligne. Les croisements non connectes
   sont refuses dans cette iteration : aucune rame ne doit traverser une autre
   sur un croisement sans signalisation.
-- Aux stations communes ou les itineraires divergent, une reservation
-  exclusive et une file FIFO ordonnent le passage des rames. L'approche
-  est freinee avant la zone, et la reservation dure jusqu'a la sortie de
-  toute la rame, y compris pendant son arret en station.
+- Chaque ligne et chaque sens sont independants, meme aux stations communes.
+  L'autorisation de mouvement suit la distance jusqu'a l'arriere de la rame
+  precedente dans le meme circuit ; plusieurs trains peuvent etre entre stations.
+  Les corrections d'horaire se font surtout par de courtes attentes en station.
+  Les convergences peuvent se superposer visuellement : pas d'interlocking
+  geometrique entre lignes ou entre sens.
 
 ## Verification
 
@@ -85,17 +87,19 @@ une surcharge de modele. Les responsabilites de fichiers sont distinctes.
   Les corps rigides suivent la tangente du meme chemin utilise par le rendu.
 - Le dispatch lance un train depuis chaque terminus si l'espace est libre.
   Le nombre en circulation est limite par la longueur disponible et par un
-  maximum reglable par ligne (1 a 16, 4 par defaut). Une reduction sous le
-  nombre actuel redispatche le reseau pour appliquer la limite immediatement.
+  maximum reglable par ligne (4 souhaite par defaut), plafonne par la capacite
+  du trajet et non par son nombre de stations. La recommandation est le temps
+  de cycle / intervalle souhaite, arrondi au-dessus et plafonne par la capacite.
+  Les lignes vides/isolees ne dispatchent pas. Une reduction sous le
+  nombre actuel retire progressivement le surplus aux terminus/origines,
+  sans interrompre les autres lignes ni faire disparaitre les rames en mouvement.
 - Un clic sur une motrice ou un wagon suit ce train avec un zoom rapproche.
   Echap, un deplacement manuel de la vue ou la reconstruction du reseau
   interrompt ce suivi.
-- La distance de freinage et l'espacement incluent la longueur du train
-  precedent. Un controle geometrique des corps empeche les chevauchements
-  entre lignes et dans les retournements. Simulation subdivisee a 60 Hz.
-- Ce modele remplace la reservation unique d'un bloc bidirectionnel qui
-  empechait la circulation simultanee. Les croisements non connectes sont
-  refuses avant de modifier le graphe.
+- Le freinage respecte la station suivante et l'autorisation de mouvement.
+  La regulation de service est distincte de cette securite. Le reglage
+  d'intervalle reste un minimum souhaite ; le maximum de rames reste un plafond.
+  Simulation subdivisee a 60 Hz ; les croisements hors station restent refuses.
 - Le fond atmospherique et les rails sont deux couches independantes. Les tests
   graphiques comparent les pixels de nuit et de jour : fond sombre, rails stables.
 - Les lignes sont des bandes opaques de 28 pixels avec deux pistes sombres
@@ -138,6 +142,8 @@ hors de cette iteration ; les correspondances se font aux stations.
   directions, et une poignee de suppression. Station et rail partagent le meme
   langage visuel : disques jour/nuit, bord fin, + vert, suppression rouge et
   losange neutre pour remodeler. Taille et hit-testing restent constants a l'ecran.
+  Le survol reste ancre dans un couloir continu entre les poignees du rail :
+  traverser leur espacement ne deplace ni ne masque le popup, meme sur rail vertical.
 - Les losanges des rails permettent de deplacer un coude ; une poignee sous
   le + permet aussi de remodeler un segment droit. Les chemins adjacents sont
   reconstruits a 45 degres sans deplacer les autres points. Aucun rail ni train
@@ -149,8 +155,8 @@ hors de cette iteration ; les correspondances se font aux stations.
   modifiable, et Echap/clic droit ou relachement sur l'interface annule le geste.
 - Les positions des evenements souris sont converties par le transform du
   canvas, plutot que de relire une position globale potentiellement differente.
-- L'outil Station reste disponible pour ajouter sur le vide ou inserer sur
-  un rail. Le + au survol d'un rail permet egalement l'insertion.
+- Un clic ajoute sur le vide ou insere sur un rail, sans outil Station.
+  Le + au survol d'un rail permet egalement l'insertion.
 - Decision utilisateur : supprimer une station supprime ses rails incidents,
   sans reconnecter ses voisins. Supprimer un rail separe aussi les lignes.
   Chaque fragment reste selectionnable et conserve couleur, wagons et
@@ -174,50 +180,155 @@ hors de cette iteration ; les correspondances se font aux stations.
   mutation, suppressions successives, remappage, fragments, reextension,
   hit-testing des poignees et annulation des mouvements.
 
-## Croisements aux stations
+## Espacement mobile et regulation
 
-- Le simple refus de collision geometrique arrivait trop tard : plusieurs
-  rames pouvaient se bloquer mutuellement en entrant au centre. Le controle
-  des corps reste actif, mais un interlocking reserve maintenant l'approche
-  et la traversée avant qu'elles puissent se rencontrer.
-- Les zones couvrent les voies decalees et les retournements de terminus.
-  Les passages sont mesures sur les circuits reels, avec une marge pour
-  la motrice et le dernier wagon. Les intervalles qui se recouvrent, y
-  compris a la jonction debut/fin du circuit, sont fusionnes.
-- Les stations proches sont regroupees en un seul interlocking lorsque
-  l'espace ne permet pas a une rame de liberer la premiere avant d'approcher
-  la seconde. Cela evite de tenir une reservation en attendant une autre.
-- Les lignes parcourant exactement les memes rails incidents conservent
-  leurs voies paralleles independantes. Aux terminus, chaque couloir dispose
-  de sa propre reservation, sans bloquer les autres couloirs.
-- L'apparition d'une rame dans une zone protegee exige aussi sa reservation.
-  La pause conserve les reservations ; une edition les efface avec les rames.
+- L'interlocking global, les sections entieres reservees et l'echange atomique
+  des places en station sont retires. Ces derniers synchronisaient des vagues
+  de departs et limitaient artificiellement les longs trajets entre stations.
+- Chaque rame calcule son autorisation jusqu'a l'arriere de celle qui precede,
+  avec longueur complete, marge de 14 pixels et temps de reaction de 0.25s.
+  Le freinage prend cette autorisation et la station suivante comme limites.
+  La station connue utilise une marge d'un sous-pas, plutot que les 0.25s
+  reserves a la rame precedente, evitant une longue fin d'approche au ralenti.
+  Les deplacements sous-pixel conservent leur vitesse et leur acceleration.
+  Les boucles isolent les sens ; une ligne ouverte conserve son circuit continu
+  aller/retour. Aucun test geometrique ne couple deux lignes.
+- Acceleration 80 px/s2 et freinage 100 px/s2 sont independants de la vitesse
+  maximale. La marche nominale utilise 90% de cette vitesse, laissant une
+  marge pour rattraper un retard. Pas de nouveau curseur ni de retard aleatoire.
+- L'intervalle cible est le maximum de l'intervalle choisi, du cycle / flotte
+  et d'un intervalle minimal estime par arret et degagement de la rame.
+  Il n'est plus impose par le temps de la section interstation la plus longue.
+  Le cycle estime integre les rampes d'acceleration/freinage, les arrets et
+  une recuperation de 4s a chaque terminus (aucune recuperation sur boucle).
+- Un depart trop proche du precedent recoit une attente proportionnelle,
+  plafonnee a 3s. L'erreur d'intervalle au depart ajuste ensuite la marche,
+  au plus 10% sous la vitesse nominale et jamais au-dessus du maximum choisi.
+  La protection de mouvement reste prioritaire, y compris hors station.
+- Capacite conservatrice : minimum de la place geometrique (double espacement
+  rame+marge et une place libre) et du cycle / intervalle minimal par circuit.
+  Ce n'est pas une certification de capacite ferroviaire reelle.
+  La flotte conseillee somme les cycles / intervalle souhaite de chaque sens
+  d'une boucle. Le service utilise le minimum du plafond manuel et de cette
+  recommandation. Le tooltip du maximum montre conseil et capacite.
+- Les apparitions sont echelonnees et reessaient si l'origine est occupee.
+  Une baisse de frequence ou du plafond retire les rames excedentaires au terminus ou a
+  l'origine d'une boucle, sans couper les rames en marche. Les fragments
+  heritent des reglages de marche/recuperation et du plafond souhaite.
+  Vitesse/arret/intervalle changent en marche ; une baisse de vitesse freine
+  progressivement. La pause fige l'horloge ; une edition efface rames/historique.
 - Tests de progression sur six minutes : croisement perpendiculaire,
   terminus partage, stations proches avec segment commun, trois lignes a
-  vitesses differentes. Verification des corps de tous les wagons et de
-  la progression des deux sens, pas seulement du premier train.
+  vitesses differentes. Verification de l'espacement complet et de la progression
+  des deux sens, pas seulement du premier train. Tests d'horaires dedies :
+  independance exacte face a une ligne seule, plusieurs trains entre stations,
+  acceleration/freinage mesures, leader arrete, recommandations de flotte,
+  departs et changements de reglages en marche. Comparaison controlee avec
+  regulation desactivee : ecart-type des intervalles reduit d'au moins 25%.
   Terminus charges et reseau reproduisant la capture utilisateur inclus.
 
-## Interface compacte et couleurs
+## Interface integree a la carte
 
-- Le panneau principal devient une carte de 276 x 460 pixels maximum,
-  avec defilement si necessaire, plutot qu'une barre occupant toute la
-  hauteur. Les reglages s'ouvrent dans une carte de 240 pixels de large.
-  L'aide detaillee reste accessible a la demande.
-- Une pastille par ligne ouvre le ColorPicker Godot complet avec les six
-  couleurs initiales en presets. Pas d'alpha : les lignes restent opaques.
+
+- La carte reste le premier plan : plus de panneau lateral permanent.
+  Une barre discrete en haut regroupe Pause, Aide et Menu ; un
+  rail plat de 60 pixels logiques longe tout le bord inferieur, sans capsule,
+  ombre ni coins arrondis. Les onglets numerotes ont un trait de la couleur
+  de ligne ; la selection reste lisible quelle que soit cette couleur.
+  Les actions + et repli gardent une largeur fixe ; seules les lignes
+  defilent si elles depassent la place disponible.
+  Replier laisse une poignee discrete au bord inferieur, qui rouvre le rail
+  sans changer de ligne ni mettre les trains en pause.
+- Apres huit secondes d'inactivite, les commandes passent progressivement a
+  28 % d'opacite en 0,6 seconde. Mouvement, touche ou toucher les restaure
+  immediatement, sans consommer l'action. Feuilles, dialogues, picker et gestes
+  en cours empechent l'estompage. Aucun etat de repli n'est persiste.
+- Cliquer une ligne deplie ses cinq reglages dans le meme rail, au-dessus
+  des onglets, sans panneau flottant ni bordure coloree. La hauteur suit le
+  contenu, plafonnee a 300 pixels ; les colonnes s'adaptent (une sur telephone,
+  trois sur portable, cinq sur grand ecran). Retoucher la ligne active replie
+  les reglages ; changer de ligne garde les reglages ouverts.
+  Menu et Aide restent des feuilles, une seule surface detaillee ouverte a
+  la fois. Fermer ou Echap rend tout l'espace a la carte sans mettre en pause.
+  Sous 620 pixels, les feuilles passent a une colonne avec defilement ;
+  les lignes debordantes defilent horizontalement vers la selection.
+  Le bouton Reglages de ligne, redondant avec les onglets, est supprime.
+- Papier chaud, encre sombre, bordures fines et formes arrondies reprennent
+  le vocabulaire des stations et des plans de transport, plutot que celui
+  d'un tableau de bord logiciel. Les couleurs choisies restent originales ;
+  aucun actif tiers n'est utilise.
+- Corps de texte de 16 pixels logiques minimum, titres de 22/26 pixels,
+  boutons de 44 pixels et curseurs de 32 pixels minimum. Les contrastes sont
+  testes : 7:1 pour le texte principal, 4.5:1 pour le texte secondaire et
+  les onglets selectionnes. Un numero accompagne toujours la couleur.
+- Le facteur de densite de l'ecran pilote `Window.content_scale_factor` avec
+  rendu `canvas_items`, sans reduire l'interface pour faire entrer un panneau.
+  La fenetre native et sa taille minimale sont aussi exprimees en pixels
+  logiques. La Web conserve son canvas haute resolution et ses tailles CSS.
+- Une pastille par ligne ouvre un selecteur de teinte libre, un champ
+  hexadecimal et les presets, sans les curseurs RGB techniques ni alpha.
+  Il tient sur un petit ecran. Les retours d'action sont lisibles mais
+  temporaires, et n'interceptent pas les clics sur la carte. Aucun message de
+  succes pour placer/deplacer/sauver/supprimer/recolorer ou changer de ligne :
+  le resultat est visible. Erreurs et avertissements gardent huit secondes.
+  Le toast mesure le texte avec la police courante (largeur max 520 pixels,
+  hauteur du texte replie plus marges). Il n'utilise pas la taille minimale
+  conservee d'un PanelContainer/autowrap, et retrecit apres un message long.
+  Seule la feuille visible recoit le retour : ne jamais afficher/remplir les
+  labels de retour des feuilles cachees, dont l'autowrap peut fausser la taille.
+  L'aide est une fiche de gestes concise, pas un tutoriel en paragraphes.
+- Avant la premiere liaison de la session, un + discret reste visible sur la
+  premiere station, sans texte ni pulsation. Il disparait apres une liaison
+  reussie, meme si le reseau est ensuite supprime. Pendant le dessin, un cercle
+  discret indique les destinations compatibles avec le chemin epingle courant,
+  la geometrie et la longueur de rame. Annuler efface ces indications ;
+  feuilles ouvertes et mode observation masquent toute guidance.
 - Les couleurs des rails, rames, onglets et apercus changent immediatement.
   Aucun circuit ni train n'est reconstruit pour une modification de couleur.
   Changer de ligne ferme le picker et synchronise la pastille selectionnee.
+- Aucun mode Station : cliquer sur un espace libre place une station ; un
+  disque translucide anticipe sa position sur la grille invisible. L'apercu
+  utilise exactement le meme arrondi que le placement, sans modifier le graphe.
+  Il disparait sur les stations, rails, trains, controles, feuilles et dialogues,
+  pendant un geste, un deplacement de vue ou lorsque le pointeur sort du jeu.
+- H ou Menu masque l'interface pour regarder le reseau. Une poignee de
+  36 x 3 pixels, sans texte ni fond, reste au bord inferieur. Sa zone tactile
+  de 96 x 44 pixels est independante de l'interface masquee ; elle ne
+  s'estompe jamais et adapte son contraste au jour/nuit. H ou Echap fonctionne
+  aussi. Ce mode conserve la
+  pause existante, la musique et la circulation ;
+  deplacement, zoom et suivi des trains restent disponibles, mais les clics
+  n'editent jamais le graphe. Les gestes en cours sont annules proprement.
+  Les selections, poignees, apercus et legendes sont aussi masques.
+- Suivre un train conserve le HUD mais masque toute surcouche d'edition :
+  station fantome, selections, poignees, guidance et tracés temporaires.
+  Clics et Suppr n'editent pas la carte ; choisir une autre rame reste possible.
+  Echap/deplacement/redispatch termine le suivi et restaure les surcouches
+  seulement si le HUD n'est pas masque.
+
+References de conception consultees :
+[Mini Metro, presentation officielle](https://dinopoloclub.com/games/mini-metro/)
+pour le langage cartographique minimaliste ;
+[taille de texte](https://gameaccessibilityguidelines.com/use-an-easily-readable-default-font-size/)
+et [couleur non exclusive](https://gameaccessibilityguidelines.com/ensure-no-essential-information-is-conveyed-by-a-fixed-colour-alone/)
+pour la lisibilite ; [densite et resolutions Godot](https://docs.godotengine.org/en/stable/tutorials/rendering/multiple_resolutions.html#hidpi-support)
+pour la mise a l'echelle Retina/Web. Les recommandations TV de taille de texte
+ne sont pas appliquees directement a un portable vu de pres.
 
 ## Voies rapprochees et stations simples
 
 - Les voies physiques passent a +/-8 pixels du centre, au lieu de +/-11 :
   16 pixels entre les rames, pour des voitures de 7 pixels de large.
   Le rendu, l'apercu et la simulation partagent toujours le meme offset.
-- Les stations deviennent des disques blancs de rayon 10 avec une bordure
-  de 2 pixels, sans ombre ni halo. La nuit, le blanc est legerement adouci
-  et la bordure eclaircie. Selection et poignees restent accessibles.
+- Stations : centre blanc de rayon 10 pixels, sans ombre ni halo.
+  Chaque ligne desservie ajoute un anneau de 2 pixels dans sa couleur assombrie
+  de 30 %. Ordre stable des lignes : anciennes a l'exterieur, nouvelles dedans.
+  Le rayon total est 10 + 2 x nombre de lignes (minimum 12). Les correspondances
+  grandissent sans comprimer le centre ; poignees et selections suivent ce rayon.
+  Les boucles ne dupliquent pas l'anneau de leur station de fermeture.
+  Recolorer ou retirer une ligne met a jour les anneaux immediatement.
+  Sans ligne, la bordure reste neutre. La nuit, le blanc est legerement adouci
+  et seule cette bordure neutre est eclaircie.
 
 ## Courbes aux stations et fins de ligne
 
@@ -226,9 +337,8 @@ hors de cette iteration ; les correspondances se font aux stations.
   au centre des stations en virage, causant un blocage face a face.
 - Les arrets sont projetes sur les segments du circuit, et pas uniquement
   sur ses sommets : supprimer un sommet collineaire ne deplace pas un arret.
-- Tous les terminus protegent le retournement de la rame complete, meme
-  sur une ligne seule. Les reservations fusionnent avec les carrefours
-  proches uniquement si elles concernent au moins une ligne commune.
+- Les terminus ajoutent une recuperation au temps d'arret. Les retournements
+  continus ne creent pas de reservation geometrique partagee entre sens.
 - Le circuit de simulation conserve les retournements continus, mais le
   dessin des rails utilise seulement le centre et les deux voies ouvertes.
   Un cap arrondi de la couleur de la ligne termine la bande derriere la station
