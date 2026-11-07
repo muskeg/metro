@@ -15,6 +15,8 @@ var _next_metro_id: int = 0
 var _last_departures: Dictionary = {}
 var _next_spawn_return: Dictionary = {}
 var _clock := 0.0
+var visits: Array[StationVisit] = []
+var _terminal_owners: Dictionary = {}
 
 func _init(transit_graph: TransitGraph) -> void:
 	graph = transit_graph
@@ -24,9 +26,11 @@ func add_line(line: TransitLine) -> void:
 
 func rebuild_routes() -> void:
 	metros.clear()
+	visits.clear()
 	routes.clear()
 	_last_departures.clear()
 	_next_spawn_return.clear()
+	_terminal_owners.clear()
 	_clock = 0.0
 	for line: TransitLine in lines:
 		routes[line.id] = TrackGeometry.circuit(graph, line, lines)
@@ -40,6 +44,17 @@ func _terminal_stop(line: TransitLine, stop_index: int) -> bool:
 
 func _station_dwell(line: TransitLine, stop_index: int) -> float:
 	return line.dwell_time + (line.terminal_recovery if _terminal_stop(line, stop_index) else 0.0)
+
+func _visit_dwell(metro: Metro, line: TransitLine, stop_index: int) -> float:
+	var extra := 0.0
+	if metro.visit != null:
+		extra = clampf(metro.visit.exchange_duration - line.dwell_time, 0.0, StationVisit.MAX_EXTRA_DWELL)
+	return _station_dwell(line, stop_index) + extra
+
+func _begin_visit(metro: Metro, line: TransitLine, route: Dictionary, stop_index: int) -> void:
+	metro.visit = StationVisit.new(metro, route, line.dwell_time, _terminal_stop(line, stop_index))
+	visits.append(metro.visit)
+	metro.dwell_remaining = _visit_dwell(metro, line, stop_index)
 
 func _section_time(distance: float, line: TransitLine) -> float:
 	var velocity := line.cruise_velocity * NOMINAL_SPEED_FACTOR
@@ -56,15 +71,19 @@ func cycle_time(line: TransitLine, direction: int = 1) -> float:
 	var result := 0.0
 	for index in range(stops.size()):
 		var distance := fposmod(float(stops[index]) - float(stops[(index - 1 + stops.size()) % stops.size()]), total)
-		result += _section_time(distance, line) + _station_dwell(line, index)
+		if _terminal_stop(line, (index - 1 + stops.size()) % stops.size()):
+			distance = maxf(0.0, distance - TrackGeometry.reversal_distance(route, line.wagon_count, (index - 1 + stops.size()) % stops.size()))
+		result += _section_time(distance, line) + _station_dwell(line, index) + StationVisit.MAX_EXTRA_DWELL
 	return result
 
 func minimum_headway(line: TransitLine) -> float:
 	var clearance := TrackGeometry.train_length(line.wagon_count) + TrackGeometry.SAFETY_GAP
-	return line.dwell_time + line.terminal_recovery * (0.0 if line.is_loop() else 1.0) + sqrt(2.0 * clearance / line.acceleration) + REACTION_TIME
+	return line.dwell_time + StationVisit.MAX_EXTRA_DWELL + line.terminal_recovery * (0.0 if line.is_loop() else 1.0) + sqrt(2.0 * clearance / line.acceleration) + REACTION_TIME
 
 func route_capacity(line: TransitLine) -> int:
 	if not routes.has(line.id) or line.tracks.is_empty():
+		return 0
+	if not line.is_loop() and not routes[line.id]["terminal_ready"]:
 		return 0
 	var result := 0
 	var directions: Array[int] = [1]
@@ -75,6 +94,11 @@ func route_capacity(line: TransitLine) -> int:
 		var length: float = route["length"]
 		var spacing := TrackGeometry.train_length(line.wagon_count) + TrackGeometry.SAFETY_GAP
 		var geometric_capacity := maxi(1, floori(length / (spacing * 2.0)) - 1)
+		if not line.is_loop():
+			var exits: PackedFloat32Array = route["terminal_exits"]
+			var entries: PackedFloat32Array = route["terminal_entries"]
+			if exits[0] - length + spacing >= entries[1] or exits[1] + spacing >= entries[0]:
+				geometric_capacity = 1
 		var service_capacity := maxi(1, floori(cycle_time(line, direction) / minimum_headway(line)))
 		result += mini(geometric_capacity, service_capacity)
 	return result
@@ -111,6 +135,14 @@ func process(delta: float, paused: bool) -> void:
 
 func _tick(delta: float) -> void:
 	_clock += delta
+	_release_terminals()
+	for index in range(visits.size() - 1, -1, -1):
+		var visit := visits[index]
+		visit.elapsed += delta
+		if visit.departure_age >= 0.0:
+			visit.departure_age += delta
+			if visit.departure_age >= StationVisit.FADE_TIME:
+				visits.remove_at(index)
 	_retire_surplus()
 	for line: TransitLine in lines:
 		if not routes.has(line.id) or line.tracks.is_empty():
@@ -152,6 +184,8 @@ func _retire_surplus() -> void:
 			var eligible := source == 0 if line.is_loop() else _terminal_stop(line, source)
 			var direction_limit := (desired + (1 if metro.travel_direction == 1 else 0)) / 2 if line.is_loop() else desired
 			if eligible and (count > desired or directions[metro.travel_direction] > direction_limit):
+				if metro.visit != null:
+					metro.visit.departure_age = 0.0
 				metros.remove_at(index)
 				count -= 1
 				directions[metro.travel_direction] -= 1
@@ -176,6 +210,10 @@ func _spawn_if_clear(line: TransitLine, return_direction: bool) -> bool:
 		return false
 	var station_index := 0 if line.is_loop() else (line.stations.size() - 2 if return_direction else stops.size() - 1)
 	var spawn_distance := float(stops[station_index])
+	var terminal := 1 if return_direction else 0
+	var terminal_key := "%d:%d" % [line.id, terminal]
+	if not line.is_loop() and _terminal_owners.has(terminal_key):
+		return false
 	for other: Metro in metros:
 		if not _same_circuit(other, line.id, direction):
 			continue
@@ -189,11 +227,14 @@ func _spawn_if_clear(line: TransitLine, return_direction: bool) -> bool:
 	metro.distance = spawn_distance
 	metro.wagon_count = line.wagon_count
 	metro.next_stop_index = (station_index + 1) % stops.size()
-	metro.dwell_remaining = _station_dwell(line, station_index)
 	metro.station_arrival_time = _clock
+	metro.reverse_pending = not line.is_loop()
+	_begin_visit(metro, line, route, station_index)
 	_update_pose(metro, route)
 	_next_metro_id += 1
 	metros.append(metro)
+	if not line.is_loop():
+		_terminal_owners[terminal_key] = metro.id
 	return true
 
 func _same_circuit(other: Metro, line_id: int, direction: int) -> bool:
@@ -208,14 +249,58 @@ func movement_authority(metro: Metro) -> float:
 			continue
 		var gap := fposmod(other.distance - metro.distance, total)
 		available = minf(available, maxf(0.0, gap - TrackGeometry.train_length(other.wagon_count) - TrackGeometry.SAFETY_GAP))
+	if not lines[metro.line_id].is_loop():
+		var entries: PackedFloat32Array = route["terminal_entries"]
+		for terminal in range(entries.size()):
+			var key := "%d:%d" % [metro.line_id, terminal]
+			if _terminal_owners.has(key) and _terminal_owners[key] != metro.id:
+				available = minf(available, fposmod(entries[terminal] - metro.distance, total))
 	return available
+
+func _release_terminals() -> void:
+	for key: String in _terminal_owners.keys():
+		var owner: Metro
+		for metro: Metro in metros:
+			if metro.id == _terminal_owners[key]:
+				owner = metro
+				break
+		if owner == null:
+			_terminal_owners.erase(key)
+			continue
+		var route: Dictionary = routes[owner.line_id]
+		var terminal := int(key.get_slice(":", 1))
+		var entry: float = route["terminal_entries"][terminal]
+		var exit: float = route["terminal_exits"][terminal]
+		var span := owner.wagon_count * TrackGeometry.CAR_PITCH + TrackGeometry.CAR_LENGTH + TrackGeometry.SAFETY_GAP
+		var traveled := fposmod(owner.distance - entry, float(route["length"]))
+		var protected_length := fposmod(exit - entry, float(route["length"])) + span
+		var destination := lines[owner.line_id].stations.size() - 2 if terminal == 1 else 2 * lines[owner.line_id].stations.size() - 3
+		if not owner.at_station and owner.next_stop_index != destination and traveled > protected_length:
+			_terminal_owners.erase(key)
+
+func _reserve_terminal(metro: Metro, line: TransitLine, route: Dictionary) -> void:
+	if line.is_loop():
+		return
+	var terminal := 1 if metro.next_stop_index == line.stations.size() - 2 else 0
+	if not _terminal_stop(line, metro.next_stop_index):
+		return
+	var key := "%d:%d" % [line.id, terminal]
+	if _terminal_owners.has(key):
+		return
+	var entry: float = route["terminal_entries"][terminal]
+	var ahead := fposmod(entry - metro.distance, float(route["length"]))
+	var stop_distance := fposmod(float(route["stops"][metro.next_stop_index]) - metro.distance, float(route["length"]))
+	var approach_length := fposmod(float(route["stops"][metro.next_stop_index]) - entry, float(route["length"]))
+	var stopping_distance := metro.speed * REACTION_TIME + metro.speed * metro.speed / (2.0 * line.braking) + 12.0
+	if ahead <= stopping_distance or stop_distance <= approach_length:
+		_terminal_owners[key] = metro.id
 
 func _regulation_hold(metro: Metro, line: TransitLine, source: int) -> float:
 	var key := _stop_key(line, metro.travel_direction, source)
 	if not _last_departures.has(key):
 		return 0.0
 	var desired := float(_last_departures[key]) + departure_headway(line, metro.travel_direction)
-	var base_departure := metro.station_arrival_time + _station_dwell(line, source)
+	var base_departure := metro.station_arrival_time + _visit_dwell(metro, line, source)
 	return minf(MAX_REGULATION_HOLD, maxf(0.0, desired - base_departure) * 0.5)
 
 func _regulated_speed(metro: Metro, line: TransitLine) -> float:
@@ -232,11 +317,15 @@ func _advance_metro(metro: Metro, delta: float) -> void:
 	var stops: PackedFloat32Array = route["stops"]
 	var source := (metro.next_stop_index - 1 + stops.size()) % stops.size()
 	metro.blocked = false
+	_reserve_terminal(metro, line, route)
 	if metro.at_station:
+		if metro.visit != null:
+			metro.passenger_count = metro.visit.onboard_count()
 		metro.dwell_remaining = maxf(0.0, metro.dwell_remaining - delta)
 		var hold := _regulation_hold(metro, line, source)
-		var release := metro.station_arrival_time + _station_dwell(line, source) + hold
-		if metro.dwell_remaining > 0.0 or _clock < release or movement_authority(metro) < TrackGeometry.SAFETY_GAP:
+		var release := metro.station_arrival_time + _visit_dwell(metro, line, source) + hold
+		var reverse_span := TrackGeometry.reversal_distance(route, metro.wagon_count, source) if metro.reverse_pending else 0.0
+		if metro.dwell_remaining > 0.0 or _clock < release or movement_authority(metro) < reverse_span + TrackGeometry.SAFETY_GAP:
 			metro.speed = 0.0
 			metro.moving = false
 			metro.blocked = metro.dwell_remaining == 0.0
@@ -245,7 +334,13 @@ func _advance_metro(metro: Metro, delta: float) -> void:
 		var headway := departure_headway(line, metro.travel_direction)
 		metro.departure_error = (_clock - float(_last_departures[key]) - headway) / headway if _last_departures.has(key) else 0.0
 		_last_departures[key] = _clock
+		if metro.reverse_pending:
+			metro.distance = fposmod(metro.distance + reverse_span, total)
+			metro.reverse_pending = false
+			_update_pose(metro, route)
 		metro.at_station = false
+		if metro.visit != null:
+			metro.visit.departure_age = 0.0
 	var stop_distance := fposmod(float(stops[metro.next_stop_index]) - metro.distance, total)
 	var authority := movement_authority(metro)
 	var available := minf(stop_distance, authority)
@@ -266,8 +361,9 @@ func _advance_metro(metro: Metro, delta: float) -> void:
 	_update_pose(metro, route)
 	if advance >= stop_distance - 0.001:
 		metro.at_station = true
+		metro.reverse_pending = _terminal_stop(line, metro.next_stop_index)
 		metro.station_arrival_time = _clock
-		metro.dwell_remaining = _station_dwell(line, metro.next_stop_index)
+		_begin_visit(metro, line, route, metro.next_stop_index)
 		metro.speed = 0.0
 		metro.moving = false
 		metro.arrival_count += 1

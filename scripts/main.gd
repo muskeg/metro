@@ -50,6 +50,7 @@ var _route_press_position := Vector2.ZERO
 var _route_pointer := Vector2.ZERO
 var _editing_track_id := -1
 var _editing_bend_index := -1
+var _editing_segment_index := -1
 var _edit_original := PackedVector2Array()
 var _edit_pointer_offset := Vector2.ZERO
 var _dragging_station_id: int = -1
@@ -76,12 +77,14 @@ var _sheet_feedback: Array[Label] = []
 var _ui_root: Control
 var _ui_hidden := false
 var _pointer_inside := false
+var _pointer_position := Vector2.ZERO
 var _hide_ui_button: Button
 var _restore_ui_button: Button
 var _collapse_dock_button: Button
 var _collapsed_dock_button: Button
 var _dock_collapsed := false
 var _ui_idle_seconds := 0.0
+var _title_seconds := 0.0
 var _first_connection_completed := false
 var _help_label: Label
 var _navigation_help: Label
@@ -150,6 +153,7 @@ func _update_display_density() -> void:
 		get_window().min_size = Vector2i(Vector2(760.0, 520.0) * scale)
 
 func _process(delta: float) -> void:
+	_update_title_fade(delta)
 	_update_ui_idle(delta)
 	_restore_ui_button.queue_redraw()
 	_collapsed_dock_button.queue_redraw()
@@ -168,11 +172,11 @@ func _process(delta: float) -> void:
 		var last_line := lines[dispatcher.last_arrival_line_id]
 		audio.call("play_arrival", last_line.color.h, night_factor)
 	_update_interaction_overlays()
-	world_view.set_dynamic_state(dispatcher.metros, camera.get_screen_center_position(), camera.zoom, time_of_day)
+	world_view.set_dynamic_state(dispatcher.metros, camera.get_screen_center_position(), camera.zoom, time_of_day, dispatcher.visits)
 	_update_connection_guidance()
 	if _connect_drag_source_id < 0 and _dragging_station_id < 0 and _editing_track_id < 0:
 		if _pointer_inside and not _ui_hidden and not _any_sheet_open() and not _space_down and get_viewport().gui_get_hovered_control() == null and not _panning:
-			_update_hover(get_global_mouse_position())
+			_update_hover(world_view.get_global_transform_with_canvas().affine_inverse() * _pointer_position)
 		else:
 			_clear_hover()
 	_update_status()
@@ -190,6 +194,7 @@ func _input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 	if event is InputEventMouse:
+		_pointer_position = event.position
 		_pointer_inside = get_viewport_rect().has_point(event.position)
 		if event is InputEventMouseMotion and _connect_drag_source_id < 0 and _dragging_station_id < 0 and _editing_track_id < 0:
 			world_view.station_preview_visible = false
@@ -279,7 +284,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventMagnifyGesture:
 		var magnify_event := event as InputEventMagnifyGesture
 		if magnify_event.factor > 0.0:
-			camera.zoom = (camera.zoom * magnify_event.factor).clamp(Vector2(0.45, 0.45), Vector2(6.0, 6.0))
+			_zoom_camera(magnify_event.factor)
 		get_viewport().set_input_as_handled()
 	elif event is InputEventMouseButton:
 		var mouse_event := event as InputEventMouseButton
@@ -327,9 +332,11 @@ func _create_interface() -> void:
 	_toolbar.add_theme_constant_override("separation", 12)
 	_toolbar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ui_root.add_child(_toolbar)
-	_brand = _label("METRO", 26, UI_INK)
+	_brand = _label("METRO", 48, UI_INK)
+	_brand.theme = ui_root.theme
+	_brand.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_brand.add_theme_stylebox_override("normal", _button_style(UI_PAPER))
-	_toolbar.add_child(_brand)
+	layer.add_child(_brand)
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -348,6 +355,7 @@ func _create_interface() -> void:
 
 	var panel := PanelContainer.new()
 	_main_panel = panel
+	panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	var rail_style := StyleBoxFlat.new()
 	rail_style.bg_color = UI_PAPER
 	rail_style.border_color = UI_EDGE
@@ -379,17 +387,11 @@ func _create_interface() -> void:
 	_line_selector.add_theme_constant_override("separation", 8)
 	_line_scroll.add_child(_line_selector)
 	_line_button_group = ButtonGroup.new()
-	var new_line := _button("+", _create_line)
-	new_line.tooltip_text = "+ Nouvelle"
-	new_line.custom_minimum_size.x = 44.0
-	new_line.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	dock.add_child(new_line)
-	_collapse_dock_button = _button("v", _toggle_dock)
+	_collapse_dock_button = _dock_button(false)
 	_collapse_dock_button.tooltip_text = "Replier les lignes"
-	_collapse_dock_button.custom_minimum_size.x = 44.0
-	_collapse_dock_button.size_flags_horizontal = Control.SIZE_SHRINK_END
 	dock.add_child(_collapse_dock_button)
-	_collapsed_dock_button = _edge_handle("Afficher les lignes", _toggle_dock)
+	_collapsed_dock_button = _dock_button(true)
+	_collapsed_dock_button.tooltip_text = "Afficher les lignes"
 	_collapsed_dock_button.hide()
 	ui_root.add_child(_collapsed_dock_button)
 
@@ -451,6 +453,7 @@ func _create_interface() -> void:
 	_status_panel.add_child(_panel_status)
 
 	_help_popup = _make_sheet(ui_root)
+	_help_popup.minimum_size_changed.connect(_resize_interface.call_deferred)
 	var help_stack := _sheet_stack(_help_popup)
 	help_stack.add_theme_constant_override("separation", 8)
 	_sheet_heading(help_stack, "Aide")
@@ -466,7 +469,8 @@ func _create_interface() -> void:
 	help_stack.add_child(watch_help)
 
 	_settings_popup = _make_sheet(ui_root)
-	var settings_stack := _sheet_stack(_settings_popup)
+	var settings_stack := _sheet_stack(_settings_popup, false)
+	_settings_popup.minimum_size_changed.connect(_resize_interface.call_deferred)
 	_sheet_heading(settings_stack, "RÉGLAGES")
 	_settings_grid = GridContainer.new()
 	_settings_grid.columns = 2
@@ -509,10 +513,10 @@ func _create_interface() -> void:
 	ui_root.add_child(_quit_dialog)
 	_delete_dialog = ConfirmationDialog.new()
 	_delete_dialog.title = "Supprimer du réseau"
-	_delete_dialog.dialog_text = "Supprimer cet élément ? Les lignes touchées seront séparées, sans reconnecter les rails."
 	_delete_dialog.ok_button_text = "Supprimer"
 	_delete_dialog.cancel_button_text = "Annuler"
 	_delete_dialog.confirmed.connect(_apply_delete)
+	_style_delete_dialog()
 	ui_root.add_child(_delete_dialog)
 	_resize_interface()
 
@@ -525,7 +529,9 @@ func _resize_interface() -> void:
 	var viewport_size := get_viewport_rect().size
 	var width := maxf(0.0, viewport_size.x - 32.0)
 	var narrow := viewport_size.x < 620.0
-	_brand.visible = not narrow
+	_brand.visible = not narrow and not _ui_hidden and _title_seconds < 30.0
+	_brand.position = Vector2(16.0, 16.0)
+	_brand.size = Vector2(_brand.get_combined_minimum_size().x, 44.0)
 	_toolbar.position = Vector2(16.0, 16.0)
 	_toolbar.size = Vector2(width, 44.0)
 	_line_grid.columns = 1 if narrow else (5 if viewport_size.x >= 1366.0 else (3 if viewport_size.x >= 760.0 else 2))
@@ -537,13 +543,20 @@ func _resize_interface() -> void:
 	_main_panel.position = Vector2(0.0, viewport_size.y - _main_panel.size.y)
 	for handle: Button in [_collapsed_dock_button, _restore_ui_button]:
 		handle.size = handle.get_combined_minimum_size()
-		handle.position = Vector2((viewport_size.x - handle.size.x) * 0.5, viewport_size.y - handle.size.y - 8.0)
+		var x := viewport_size.x - handle.size.x - 16.0 if handle == _collapsed_dock_button else (viewport_size.x - handle.size.x) * 0.5
+		handle.position = Vector2(x, viewport_size.y - handle.size.y - 8.0)
 	var sheet_width := minf(640.0, width)
-	var sheet_height := minf(340.0, maxf(0.0, _main_panel.position.y - 84.0))
 	for sheet: PanelContainer in [_settings_popup, _help_popup]:
+		var sheet_height := sheet.get_combined_minimum_size().y if sheet == _settings_popup else minf(340.0, maxf(0.0, viewport_size.y - 32.0))
 		sheet.size = Vector2(sheet_width, sheet_height)
-		sheet.position = Vector2((viewport_size.x - sheet_width) * 0.5, _main_panel.position.y - sheet_height - 12.0)
+		sheet.position = (viewport_size - sheet.size) * 0.5
 	_resize_notification()
+
+func _update_title_fade(delta: float) -> void:
+	_title_seconds = minf(30.0, _title_seconds + delta)
+	_brand.modulate.a = 1.0 - smoothstep(10.0, 30.0, _title_seconds)
+	if _title_seconds >= 30.0:
+		_brand.hide()
 
 func _resize_notification() -> void:
 	var font := _panel_status.get_theme_font("normal_font")
@@ -576,7 +589,8 @@ func _update_ui_idle(delta: float) -> void:
 		return
 	var fade_delta := maxf(0.0, _ui_idle_seconds + delta - UI_IDLE_SECONDS) - maxf(0.0, _ui_idle_seconds - UI_IDLE_SECONDS)
 	_ui_idle_seconds += delta
-	_ui_root.modulate.a = move_toward(_ui_root.modulate.a, UI_IDLE_ALPHA, fade_delta * (1.0 - UI_IDLE_ALPHA) / 0.6)
+	var idle_alpha := lerpf(UI_IDLE_ALPHA, 0.7, _night_strength(time_of_day))
+	_ui_root.modulate.a = move_toward(_ui_root.modulate.a, idle_alpha, fade_delta * (1.0 - UI_IDLE_ALPHA) / 0.6)
 
 func _toggle_help() -> void:
 	_toggle_sheet(_help_popup)
@@ -622,14 +636,17 @@ func _make_sheet(parent: Control) -> PanelContainer:
 	sheet.hide()
 	return sheet
 
-func _sheet_stack(sheet: PanelContainer) -> VBoxContainer:
-	var scroll := ScrollContainer.new()
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	sheet.add_child(scroll)
+func _sheet_stack(sheet: PanelContainer, scrollable: bool = true) -> VBoxContainer:
+	var parent: Control = sheet
+	if scrollable:
+		var scroll := ScrollContainer.new()
+		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		sheet.add_child(scroll)
+		parent = scroll
 	var stack := VBoxContainer.new()
 	stack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	stack.add_theme_constant_override("separation", 16)
-	scroll.add_child(stack)
+	parent.add_child(stack)
 	return stack
 
 func _sheet_heading(stack: VBoxContainer, title: String) -> void:
@@ -695,6 +712,22 @@ func _button(text: String, callback: Callable) -> Button:
 	button.pressed.connect(callback)
 	return button
 
+func _style_delete_dialog() -> void:
+	var theme := _interface_theme()
+	var panel := _panel_style()
+	panel.set_corner_radius_all(0)
+	panel.shadow_size = 0
+	theme.set_stylebox("panel", "AcceptDialog", panel)
+	theme.set_constant("buttons_min_height", "AcceptDialog", 44)
+	theme.set_constant("buttons_min_width", "AcceptDialog", 112)
+	_delete_dialog.borderless = true
+	for state: String in ["normal", "hover", "pressed", "hover_pressed", "focus"]:
+		var button := theme.get_stylebox(state, "Button").duplicate() as StyleBoxFlat
+		button.set_corner_radius_all(0)
+		theme.set_stylebox(state, "Button", button)
+	_delete_dialog.theme = theme
+	_delete_dialog.get_label().autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+
 func _edge_handle(tooltip: String, callback: Callable) -> Button:
 	var handle := _button("", callback)
 	handle.tooltip_text = tooltip
@@ -703,6 +736,30 @@ func _edge_handle(tooltip: String, callback: Callable) -> Button:
 		handle.add_theme_stylebox_override(state, StyleBoxEmpty.new())
 	handle.draw.connect(_draw_edge_handle.bind(handle))
 	return handle
+
+func _dock_button(collapsed: bool) -> Button:
+	var button := _button("", _toggle_dock)
+	button.size_flags_horizontal = Control.SIZE_SHRINK_END
+	button.size_flags_vertical = Control.SIZE_SHRINK_END
+	button.custom_minimum_size = Vector2(44.0, 44.0)
+	button.draw.connect(_draw_dock_icon.bind(button, collapsed))
+	return button
+
+func _draw_dock_icon(button: Button, collapsed: bool) -> void:
+	var color := button.get_theme_color("font_color")
+	var center := button.size * 0.5
+	button.draw_polyline(PackedVector2Array([
+		center + Vector2(-8, -8), center + Vector2(8, -8),
+		center + Vector2(8, 8), center + Vector2(-8, 8),
+		center + Vector2(-8, -8),
+	]), color, 1.5, true)
+	button.draw_line(center + Vector2(-8, 4), center + Vector2(8, 4), color, 1.5, true)
+	var direction := -1.0 if collapsed else 1.0
+	button.draw_line(center + Vector2(0, -2 - 3 * direction), center + Vector2(0, -2 + 3 * direction), color, 1.5, true)
+	button.draw_polyline(PackedVector2Array([
+		center + Vector2(-3, -2), center + Vector2(0, -2 + 3 * direction),
+		center + Vector2(3, -2),
+	]), color, 1.5, true)
 
 func _draw_edge_handle(handle: Button) -> void:
 	var color := UI_INK.lerp(Color("#dce5e4"), _night_strength(time_of_day))
@@ -809,10 +866,18 @@ func _refresh_line_selector() -> void:
 		_style_line_tab(button, line.color)
 		button.pressed.connect(_on_line_tab_pressed.bind(line.id))
 		_line_selector.add_child(button)
+	var new_line := _button("+", _create_line)
+	new_line.tooltip_text = tr("+ Nouvelle")
+	new_line.custom_minimum_size = Vector2(44.0, 44.0)
+	new_line.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_style_line_tab(new_line, UI_INK)
+	_line_selector.add_child(new_line)
 	_reveal_active_line.call_deferred()
 	_resize_interface()
 
 func _reveal_active_line() -> void:
+	if active_line.id == lines.size() - 1:
+		_line_scroll.ensure_control_visible(_line_selector.get_child(lines.size()))
 	_line_scroll.ensure_control_visible(_line_selector.get_child(active_line.id))
 
 func _style_line_tab(button: Button, color: Color) -> void:
@@ -860,6 +925,7 @@ func _toggle_ui() -> void:
 	_clear_hover()
 	_ui_hidden = not _ui_hidden
 	_ui_root.visible = not _ui_hidden
+	_resize_interface()
 	_restore_ui_button.visible = _ui_hidden
 	_update_connection_guidance()
 	_update_interaction_overlays()
@@ -920,6 +986,7 @@ func _begin_world_interaction(world_position: Vector2) -> void:
 		elif world_view.hovered_bend_index >= 0 or _near_handle(world_position, world_view.rail_move_position()):
 			_editing_track_id = world_view.hovered_track_id
 			_editing_bend_index = world_view.hovered_bend_index
+			_editing_segment_index = world_view.rail_segment_index
 			_edit_original = TrackGeometry.anchors(graph, graph.tracks[_editing_track_id])
 			_edit_pointer_offset = Vector2.ZERO if _editing_bend_index >= 0 else world_position - world_view.rail_anchor
 			world_view.route_active = true
@@ -934,8 +1001,9 @@ func _end_world_interaction(world_position: Vector2) -> void:
 		_update_track_edit(world_position - _edit_pointer_offset)
 		var error := _track_edit_error()
 		if error.is_empty():
-			graph.tracks[_editing_track_id].waypoints = _drawn_points.duplicate()
-			_refresh_network()
+			if _drawn_points != _edit_original:
+				graph.tracks[_editing_track_id].waypoints = _drawn_points.duplicate()
+				_refresh_network()
 		else:
 			_set_status(error)
 		_cancel_gesture()
@@ -970,6 +1038,7 @@ func _cancel_gesture() -> void:
 	_connect_drag_source_id = -1
 	_editing_track_id = -1
 	_editing_bend_index = -1
+	_editing_segment_index = -1
 	_edit_original.clear()
 	_route_pins.clear()
 	_route_history.clear()
@@ -984,6 +1053,7 @@ func _cancel_gesture() -> void:
 		world_view.route_source_id = -1
 		world_view.route_target_id = -1
 		world_view.route_pins.clear()
+		world_view.reshape_anchors.clear()
 		world_view.valid_connection_targets.clear()
 		world_view.set_stroke_preview(_drawn_points, Color.WHITE)
 
@@ -1040,15 +1110,19 @@ func _connection_error(from_id: int, to_id: int, points: PackedVector2Array, ope
 
 func _update_track_edit(position: Vector2) -> void:
 	var bend := (position / GRID_SIZE).round() * GRID_SIZE
-	var before := _editing_bend_index - 1 if _editing_bend_index >= 0 else 0
-	var after := _editing_bend_index + 1 if _editing_bend_index >= 0 else _edit_original.size() - 1
+	var before := _editing_bend_index - 1 if _editing_bend_index >= 0 else _editing_segment_index
+	var after := _editing_bend_index + 1 if _editing_bend_index >= 0 else _editing_segment_index + 1
 	_drawn_points = _edit_original.slice(0, before)
 	_drawn_points.append_array(TrackGeometry.elastic_path(_edit_original[before], bend))
 	_drawn_points.append_array(TrackGeometry.elastic_path(bend, _edit_original[after], false).slice(1))
 	_drawn_points.append_array(_edit_original.slice(after + 1))
-	_drawn_points = TrackGeometry.simplify(_drawn_points)
+	_drawn_points = TrackGeometry.simplify(_drawn_points, _edit_original)
+	world_view.hover_pointer = position
 	world_view.route_pins = PackedVector2Array([bend])
-	world_view.set_stroke_preview(_drawn_points, active_line.color, _track_edit_error())
+	world_view.reshape_anchors = PackedVector2Array([_edit_original[before], _edit_original[after]])
+	var error := _track_edit_error()
+	var hint := "Glissez vers une autre case de la grille." if error.is_empty() and _drawn_points == _edit_original else ""
+	world_view.set_stroke_preview(_drawn_points, active_line.color, error, hint)
 
 func _track_edit_error() -> String:
 	var track := graph.tracks[_editing_track_id]
@@ -1227,22 +1301,24 @@ func _update_hover(position: Vector2) -> void:
 			if _near_handle(position, world_view.station_handle_position(previous, direction)):
 				station = previous
 				break
-	if station != null:
-		world_view.hovered_station_id = station.id
-		world_view.hovered_track_id = -1
-		world_view.hover_caption = "Relier une station" if _near_handle(position, world_view.station_handle_position(station, Vector2.RIGHT)) else ""
-		if _near_handle(position, world_view.station_handle_position(station, Vector2(1.0, -1.0))):
-			world_view.hover_caption = "Supprimer la station"
-		elif station.position.distance_to(position) <= maxf(world_view.station_radius(station) + 3.0, 12.0 / camera.zoom.x):
-			world_view.hover_caption = "Glissez le centre pour déplacer"
+	if station != null and station.position.distance_to(position) <= maxf(world_view.station_radius(station) + 3.0, 12.0 / camera.zoom.x):
+		_set_station_hover(station, position)
 		return
-	world_view.hovered_station_id = -1
+	if station != null and (world_view.hovered_station_id == station.id or world_view.connection_hint_station_id == station.id):
+		for direction: Vector2 in [Vector2.RIGHT, Vector2(1.0, -1.0)]:
+			var handle := world_view.station_handle_position(station, direction)
+			var approach := Geometry2D.get_closest_point_to_segment(position, station.position, handle)
+			if _near_handle(position, approach):
+				_set_station_hover(station, position)
+				return
 	for track: Track in graph.tracks:
 		var anchors := TrackGeometry.anchors(graph, track)
 		for index in range(1, anchors.size() - 1):
 			if _near_handle(position, anchors[index]):
+				world_view.hovered_station_id = -1
 				world_view.hovered_track_id = track.id
 				world_view.hovered_bend_index = index
+				world_view.set_rail_anchor(anchors, position)
 				world_view.rail_anchor = anchors[index]
 				world_view.hover_caption = "Remodeler le tracé"
 				return
@@ -1261,6 +1337,19 @@ func _update_hover(position: Vector2) -> void:
 		if _near_handle(position, spine):
 			world_view.hover_caption = ""
 			return
+	if station != null:
+		var handles_visible := world_view.hovered_station_id == station.id or world_view.connection_hint_station_id == station.id
+		var rail_distance := INF
+		if not handles_visible:
+			for track: Track in graph.tracks:
+				var anchor := TrackGeometry.insertion_point(TrackGeometry.anchors(graph, track), position)
+				rail_distance = minf(rail_distance, anchor.distance_squared_to(position))
+		for direction: Vector2 in [Vector2.RIGHT, Vector2(1.0, -1.0)]:
+			var handle := world_view.station_handle_position(station, direction)
+			if _near_handle(position, handle) and (handles_visible or handle.distance_squared_to(position) < rail_distance):
+				_set_station_hover(station, position)
+				return
+	world_view.hovered_station_id = -1
 	world_view.hovered_track_id = -1
 	world_view.hover_caption = ""
 	var best_distance := 20.0 / camera.zoom.x + TrackGeometry.LANE_OFFSET
@@ -1271,12 +1360,24 @@ func _update_hover(position: Vector2) -> void:
 		if distance < best_distance:
 			best_distance = distance
 			world_view.hovered_track_id = track.id
-			world_view.rail_anchor = TrackGeometry.insertion_point(TrackGeometry.anchors(graph, track), position)
+			world_view.set_rail_anchor(TrackGeometry.anchors(graph, track), position)
 			world_view.hover_caption = "Insérer une station"
+	if world_view.hovered_track_id < 0 and station != null:
+		_set_station_hover(station, position)
+		return
 	var snapped := _station_placement_position(position)
 	if world_view.hovered_track_id < 0 and _station_near(snapped, 20.0) == null and _train_near(position) == null:
 		world_view.station_preview_position = snapped
 		world_view.station_preview_visible = true
+
+func _set_station_hover(station: Station, position: Vector2) -> void:
+	world_view.hovered_station_id = station.id
+	world_view.hovered_track_id = -1
+	world_view.hover_caption = "Relier une station" if _near_handle(position, world_view.station_handle_position(station, Vector2.RIGHT)) else ""
+	if _near_handle(position, world_view.station_handle_position(station, Vector2(1.0, -1.0))):
+		world_view.hover_caption = "Supprimer la station"
+	elif station.position.distance_to(position) <= maxf(world_view.station_radius(station) + 3.0, 12.0 / camera.zoom.x):
+		world_view.hover_caption = "Glissez le centre pour déplacer"
 
 func _insert_station(track_id: int, position: Vector2) -> void:
 	var error := graph.insert_station(track_id, position, lines)
@@ -1294,7 +1395,8 @@ func _request_delete(station_id: int, track_id: int) -> void:
 	_cancel_gesture()
 	_delete_station_id = station_id
 	_delete_track_id = track_id if station_id < 0 else -1
-	_delete_dialog.popup_centered(Vector2i(430, 180))
+	_delete_dialog.dialog_text = "Supprimer cette station ? Les voies voisines seront reconnectées en conservant leur tracé." if station_id >= 0 else "Supprimer ce rail ? Les lignes touchées seront séparées."
+	_delete_dialog.popup_centered(Vector2i(mini(430, int(get_viewport_rect().size.x) - 32), 180))
 
 func _apply_delete() -> void:
 	if _delete_station_id >= 0:
@@ -1316,6 +1418,10 @@ func _refresh_network() -> void:
 	_stop_following()
 	dispatcher.rebuild_routes()
 	world_view.set_network(graph, lines, dispatcher.routes)
+	for line: TransitLine in lines:
+		if not line.tracks.is_empty() and not line.is_loop() and not dispatcher.routes[line.id]["terminal_ready"]:
+			_set_status("Pas assez de place aux terminus. Allongez la ligne ou réduisez les wagons.")
+			break
 	_update_connection_guidance()
 	_update_configuration_ui()
 
@@ -1352,7 +1458,13 @@ func _on_wagon_changed(value: float) -> void:
 			_set_status("Cette rame serait trop longue pour un segment. Allongez le tracé.")
 			_update_configuration_ui()
 			return
+	var previous := active_line.wagon_count
 	active_line.wagon_count = count
+	if not active_line.tracks.is_empty() and not active_line.is_loop() and not TrackGeometry.circuit(graph, active_line, lines)["terminal_ready"]:
+		active_line.wagon_count = previous
+		_set_status("Pas assez de place aux terminus. Allongez la ligne ou réduisez les wagons.")
+		_update_configuration_ui()
+		return
 	_refresh_network()
 	_update_configuration_ui()
 
@@ -1367,6 +1479,7 @@ func _update_configuration_ui() -> void:
 	_max_trains_slider.editable = dispatcher.route_capacity(active_line) > 0
 	_max_trains_slider.value = maxi(1, dispatcher.train_limit(active_line))
 	_dwell_slider.value = active_line.dwell_time
+	_dwell_slider.tooltip_text = tr("Arrêt minimum ; embarquement : jusqu'à 2 s de plus.")
 	_velocity_slider.value = active_line.cruise_velocity
 	_wagon_slider.value = active_line.wagon_count
 	_dispatch_value.text = "%.0f s" % active_line.dispatch_rate
@@ -1393,6 +1506,7 @@ func _on_line_color_changed(color: Color) -> void:
 		var button := child as Button
 		if button.button_pressed:
 			_style_line_tab(button, active_line.color)
+	world_view.refresh_illumination()
 	world_view.queue_redraw()
 	if _connect_drag_source_id >= 0:
 		_extend_stroke(_route_pointer)
@@ -1472,7 +1586,7 @@ func _toggle_settings() -> void:
 	_toggle_sheet(_settings_popup)
 
 func _zoom_camera(factor: float) -> void:
-	camera.zoom = (camera.zoom * factor).clamp(Vector2(0.45, 0.45), Vector2(6.0, 6.0))
+	camera.zoom = (camera.zoom * factor).clamp(Vector2(0.08, 0.08), Vector2(6.0, 6.0))
 
 func _toggle_fullscreen() -> void:
 	var is_fullscreen := DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN

@@ -66,6 +66,7 @@ func _run() -> void:
 			var station_id: int = [0, 1, 2, 3][index] if direction == 1 else [3, 2, 1, 0][index]
 			var stop := TrackGeometry.point_at_distance(points, stops[index])
 			_check(stop.distance_to(graph.stations[station_id].position) < 30.0, "Loop stops must remain near their stations.")
+			_check(stop.distance_to(graph.stations[station_id].position) >= TrackGeometry.station_stop_clearance(station_id, view.lines) - 0.02, "Both loop directions must stop outside the station, not beneath its marker.")
 	var other := TransitLine.new(1, Color.CORAL)
 	other.append_station(graph, 4)
 	other.append_station(graph, 0)
@@ -89,6 +90,7 @@ func _run() -> void:
 				_check(stops[index] > stops[index - 1], "Shared-track loop stops must remain ordered.")
 			var station_id: int = [0, 1, 2, 3][index] if direction == 1 else [3, 2, 1, 0][index]
 			_check(TrackGeometry.point_at_distance(points, stops[index]).distance_to(graph.stations[station_id].position) < 50.0, "Shared-track stops must remain near their stations.")
+			_check(TrackGeometry.point_at_distance(points, stops[index]).distance_to(graph.stations[station_id].position) >= TrackGeometry.station_stop_clearance(station_id, dispatcher.lines) - 0.02, "Shared loop stops must account for the larger interchange radius.")
 	var arrivals := [0, 0]
 	var second_half := [0, 0]
 	var directions := [false, false]
@@ -127,8 +129,9 @@ func _run() -> void:
 		ring.append_station(deleted, id)
 	var rings: Array[TransitLine] = [ring]
 	deleted.remove_station(1, rings)
-	_check(rings.size() == 1 and ring.stations == [1, 2, 0] and ring.tracks.size() == 2, "Deleting a loop station must preserve all remaining connected rails.")
+	_check(rings.size() == 1 and ring.stations == [0, 1, 2, 0] and ring.tracks.size() == 3, "Deleting a loop station must reconnect the loop through its existing path.")
 	_check_openings()
+	_check_large_loop()
 	if failed:
 		quit(1)
 	else:
@@ -149,8 +152,8 @@ func _check_openings() -> void:
 				graph.remove_station(target, lines)
 			else:
 				graph.remove_track(graph.track_between(target, (target + 1) % 4).id, lines)
-			_check(lines.size() == 1 and not line.is_loop(), "Removing any station or rail must open exactly one line.")
-			_check(line.stations.size() == (3 if delete_station else 4) and line.tracks.size() == line.stations.size() - 1, "Opening a loop must preserve every surviving station and rail.")
+			_check(lines.size() == 1 and line.is_loop() == delete_station, "Station deletion must preserve the loop; rail deletion must open it.")
+			_check(line.stations.size() == 4 and line.tracks.size() == 3, "Loop edits must preserve every surviving station and connection.")
 			for index in range(line.tracks.size()):
 				_check(graph.track_between(line.stations[index], line.stations[index + 1]).id == line.tracks[index], "Opened-loop tracks must match their station order.")
 
@@ -161,3 +164,33 @@ func _check_blocks(dispatcher: TransitDispatcher) -> void:
 			if train.id == other.id or not dispatcher._same_circuit(other, train.line_id, train.travel_direction):
 				continue
 			_check(fposmod(other.distance - train.distance, total) >= TrackGeometry.train_length(other.wagon_count) + TrackGeometry.SAFETY_GAP - 0.01, "Loop directions must retain full-train moving-block clearance.")
+
+func _check_large_loop() -> void:
+	var graph := TransitGraph.new()
+	var origin := Vector2(-3840, -3840)
+	for direction: Vector2 in [Vector2.RIGHT, Vector2.DOWN, Vector2.LEFT, Vector2.UP]:
+		for step in range(20):
+			graph.add_station(origin + direction * step * 384.0)
+		origin += direction * 7680.0
+	var line := TransitLine.new(0, Color.CYAN)
+	for id in range(graph.stations.size()):
+		line.append_station(graph, id)
+	line.append_station(graph, 0)
+	line.max_trains = 8
+	line.dispatch_rate = 8.0
+	line.cruise_velocity = 150.0
+	line.dwell_time = 1.0
+	var dispatcher := TransitDispatcher.new(graph)
+	dispatcher.add_line(line)
+	dispatcher.rebuild_routes()
+	_check(line.is_loop() and line.stations.size() == 81, "Large maps must support a continuous 80-station loop without station-count caps.")
+	_check(dispatcher.routes[0]["centerline"].size() > 100 and dispatcher.routes[0]["length"] > 30000.0, "Large loops must retain their full world extent and rounded corners.")
+	for tick in range(1200):
+		dispatcher.process(0.05, false)
+		if tick % 20 == 0:
+			_check_blocks(dispatcher)
+	_check(dispatcher.arrival_count >= 12 and dispatcher.metros.size() >= 2 and dispatcher.metros.size() <= line.max_trains, "Large loops must provide real two-way service within the fleet ceiling (arrivals %d, trains %d)." % [dispatcher.arrival_count, dispatcher.metros.size()])
+	var served := {1: false, -1: false}
+	for train: Metro in dispatcher.metros:
+		served[train.travel_direction] = train.arrival_count > 0
+	_check(served[1] and served[-1], "Both directions must actually serve stops on the large loop.")

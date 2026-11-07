@@ -23,7 +23,7 @@ satisfaire, aucun compte a rebours. Le nom du jeu devient **Metro**.
   complete, pas seulement du point representant sa tete.
 - Les trains suivent un circuit aller/retour avec retournement aux terminus,
   au lieu de se teleporter sur la voie inverse.
-- Carte minimaliste sans decor, blanche le jour et sombre la nuit.
+- Carte minimaliste sans decor, blanc casse mat le jour et sombre la nuit.
   La grille de construction reste orthogonale mais invisible.
 - Le fond est dessine dans le monde et change de palette au fil de la journee.
   Les voies, trains et controles ne subissent pas la modulation sombre du
@@ -75,8 +75,8 @@ une surcharge de modele. Les responsabilites de fichiers sont distinctes.
 
 ## Implementation retenue
 
-- Chaque ligne dispose d'un circuit continu : voie aller, courbe de
-  retournement, voie retour, second retournement. Les arrets sont des distances
+- Chaque ligne ouverte dispose d'un circuit aller/retour avec voies communes
+  aux terminus et changement de cabine a l'arret. Les arrets sont des distances
   mesurees sur ce circuit, et non des indices de segments qui se decaleraient
   lors des editions.
 - Une ligne fermee conserve chaque station une fois, sauf la premiere repetee
@@ -101,11 +101,18 @@ une surcharge de modele. Les responsabilites de fichiers sont distinctes.
   d'intervalle reste un minimum souhaite ; le maximum de rames reste un plafond.
   Simulation subdivisee a 60 Hz ; les croisements hors station restent refuses.
 - Le fond atmospherique et les rails sont deux couches independantes. Les tests
-  graphiques comparent les pixels de nuit et de jour : fond sombre, rails stables.
+  graphiques comparent les pixels : nuit tres sombre, rails illumines seulement
+  la nuit, fond intact hors du halo local.
 - Les lignes sont des bandes opaques de 28 pixels avec deux pistes sombres
-  de 4 pixels, sans halo ni trait brillant. Les voies ouvertes gardent une
-  bordure coloree de 8 pixels, sans afficher les retournements. L'aperçu reprend les memes largeurs ; les
-  chemins physiques, wagons et rayons de courbure ne changent pas.
+  de 4 pixels le jour. La nuit ajoute un coeur lumineux de 1.2px et trois
+  couches de halo colore de 30/22/14px, sans changer le corridor ni ses caps.
+  Ces halos sont des polygones caches issus d'un offset arrondi de chaque voie :
+  l'union resout les replis interieurs, sans traits superposes ni largeur variable.
+  Les trous de boucles sont preserves en decoupant les contours avant soustraction.
+  Les couleurs par sommet conservent le fondu pres des stations partagees et
+  le recoloriage. La largeur reste constante dans les courbes comme sur les droites.
+  Les voies ouvertes gardent une bordure coloree de 8 pixels ; les raccords
+  des terminus suivent les chemins physiques visibles. L'aperçu garde ses largeurs.
 - La musique est une miniature originale de 48 secondes, composee de notes
   avec des silences et des decays, generee une fois et mise en cache. Pas de
   synthese par echantillon dans la boucle de rendu.
@@ -126,13 +133,43 @@ hors de cette iteration ; les correspondances se font aux stations.
   a jour d'un seul reglage.
 - La carte reste minimaliste, sans decor procedural ni grille visible. Un
   fond couvre la vue pendant le zoom, le deplacement et le resize.
-- Le fond passe doucement du blanc pur a midi a un discret degrade bleu nuit,
-  avec une teinte chaude au crepuscule. La grille invisible, le dessin aimante
-  et les controles contextuels sont conserves.
+- Le fond passe doucement du blanc casse a midi a un degrade bleu presque noir.
+  Des etapes distinctes donnent une aube bleutee, un coucher peche et une heure
+  bleue. Un shader Compatibility ajoute un grain mat ancre dans le monde et
+  des variations lentes tres faibles, sans decor, grille ni reflets de verre.
+  Le grain est attenue lors du dezoom pour eviter le scintillement. Une lueur
+  chaude vient du cote du soleil au lever/coucher. La grille invisible reste.
+- Les voies et trains ont des ombres solaires discretes. La direction change
+  d'est en ouest, les ombres sont plus longues a l'aube/au coucher, courtes a midi
+  et s'effacent la nuit. Les stations ne projettent plus d'ombre. Une source
+  partagee parcourt un arc de gauche a droite entre l'aube et le coucher ;
+  la lumiere chaude et les ombres suivent cette meme position, sans saut a midi.
+  Le corridor complet projette
+  une ombre legere sur le fond, a partir de contours arrondis caches (largeurs
+  29/31px), avec seulement 45 % du decalage solaire et 36 % de son opacite
+  par couche. Les trous de boucles sont preserves. Les ombres des trains restent
+  au-dessus des voies, sous les voitures.
+- Le monde n'a pas de bord fixe. Molette et pincement partagent le zoom
+  0,08-6x, contre 0,45-6x auparavant, pour les grandes cartes. Pas d'import
+  geographique ni de certification de performances pour un reseau JR East complet.
 - Les trains sont des miniatures vectorielles a voitures rectangulaires
-  rapprochees et passages souples, sans roues decoratives ni ombre portee.
-  Les roues sont cachees sous les caisses dans cette vue du dessus. Les phares
-  produisent des faisceaux doux a la nuit. Le lissage de lignes est desactive au
+  rapprochees et passages souples, sans roues decoratives ; seules les ombres
+  solaires discretes les ancrent sur la surface mate.
+  Les deux extremites portent des cabines assorties, nez adouci et pare-brise
+  sombre ; phares blancs en tete, feux rouges en queue. Le toit metal clair
+  reste neutre lors d'une recoloration, la couleur de ligne borde les caisses.
+  Fenetres et portes doubles rythment les flancs. Ventilation, plis des
+  intercirculations et reflets apparaissent progressivement entre zoom 1.5 et 3 ;
+  les grilles et joints fins entre 3 et 4.5. A l'echelle carte, seuls toit,
+  silhouette et cabines restent visibles. Pas de nouveau curseur.
+  Chaque passage relie les extremites rigides des deux voitures avec leurs
+  normales propres : les plis se resserrent naturellement a l'interieur du coude.
+  Toutes les voitures, cabines comprises, gagnent encore 10 % de longueur :
+  19.8px, largeur 7px, pas 20.8px (intervalle de 1px inchange).
+  Une echelle longitudinale commune guide caisses, portes, phares et soufflets.
+  Caisses, toits, portes, soufflets, quais et degagements utilisent ces proportions.
+  Les roues restent cachees. Les phares ont des halos locaux visibles et des
+  faisceaux plus intenses mais decroissants a la nuit. Le lissage est desactive au
   zoom rapproche car sa frange en unites monde rend les contours flous.
 
 ## Edition contextuelle et topologie
@@ -144,25 +181,49 @@ hors de cette iteration ; les correspondances se font aux stations.
   losange neutre pour remodeler. Taille et hit-testing restent constants a l'ecran.
   Le survol reste ancre dans un couloir continu entre les poignees du rail :
   traverser leur espacement ne deplace ni ne masque le popup, meme sur rail vertical.
-- Les losanges des rails permettent de deplacer un coude ; une poignee sous
-  le + permet aussi de remodeler un segment droit. Les chemins adjacents sont
-  reconstruits a 45 degres sans deplacer les autres points. Aucun rail ni train
+  Une station deja survolee conserve aussi ses controles dans le couloir centre
+  vers poignee : le + d'insertion du rail ne peut pas capturer le + de connexion
+  visible, meme si un rail part a droite et que la nouvelle liaison va a gauche.
+  Sans ce survol, l'insertion directe sur rail reste accessible.
+- Les losanges des rails permettent de deplacer un coude ; les poignees du
+  segment sont disposees perpendiculairement au rail, plutot que toujours
+  verticalement. Les halos de survol des stations ne volent pas ces poignees
+  sur les petites sections ; le centre d'une station reste prioritaire.
+  Le losange d'une section ne reconstruit que le chemin entre ses deux points
+  d'ancrage voisins, marques par de petits cercles fixes. Un losange de coude
+  conserve ses deux voisins. Les points eloignes restent identiques, meme si
+  un ancrage devient collineaire ; la simplification du rendu reste inchangee.
+  Les chemins adjacents sont reconstruits a 45 degres. Aucun rail ni train
   ne change pendant l'apercu : validation de toutes les lignes partagees au
   relachement, puis reconstruction du reseau, ou abandon atomique en cas d'erreur.
 - Apercu de la couleur de ligne, rouge si invalide, cible entouree et guides
   locaux temporaires. Pas de grille permanente. Les tooltips nomment les icones ;
-  les erreurs longues sont bornees a la fenetre. Une arrivee invalide reste
+  les erreurs longues sont repliees a 16px, jamais reduites ni tronquees.
+  En remodelage, l'erreur suit le coude deplace, pas la station distante.
+  Un mouvement dans la meme case affiche une indication de grille ; relacher
+  sans modification ne redispatche pas les trains. Une arrivee invalide reste
   modifiable, et Echap/clic droit ou relachement sur l'interface annule le geste.
 - Les positions des evenements souris sont converties par le transform du
   canvas, plutot que de relire une position globale potentiellement differente.
+  Le survol entre images utilise aussi la derniere position d'evenement,
+  reconvertie avec le canvas courant pour suivre le zoom et le deplacement.
 - Un clic ajoute sur le vide ou insere sur un rail, sans outil Station.
   Le + au survol d'un rail permet egalement l'insertion.
-- Decision utilisateur : supprimer une station supprime ses rails incidents,
-  sans reconnecter ses voisins. Supprimer un rail separe aussi les lignes.
+- Decision utilisateur : supprimer une station reconnecte les voisins de chaque
+  ligne en concatenant les chemins orientes et en conservant les anciens ancrages.
+  Les branches d'un carrefour ne sont pas reliees arbitrairement entre elles.
+  Une voie deja presente entre les voisins est reutilisee sans la redessiner.
+  Les boucles restent fermees avec au moins trois stations ; a deux stations,
+  elles deviennent ouvertes sur la voie survivante (pas de rails paralleles).
+  Supprimer un rail avec son x de survol separe les lignes ; ce controle reste
+  visible au survol d'un coude, pas seulement au milieu d'un segment.
   Chaque fragment reste selectionnable et conserve couleur, wagons et
   reglages. La premiere partie garde la ligne existante ; les autres
   obtiennent de nouveaux onglets. Une ligne vide reste reutilisable.
-- Les suppressions demandent confirmation. Les IDs restent des indices
+- Les suppressions demandent confirmation avec un texte propre a l'action.
+  La carte de confirmation est sans chrome de fenetre, avec des angles droits
+  pour son corps et ses boutons, sans melange carre/capsule.
+  Les IDs restent des indices
   compacts : stations, rails, lookup des paires et toutes les listes de
   lignes sont remis en coherence avant de reconstruire les circuits.
   Le dispatcher integre egalement les nouveaux fragments.
@@ -182,6 +243,49 @@ hors de cette iteration ; les correspondances se font aux stations.
 
 ## Espacement mobile et regulation
 
+- Echange leger de voyageurs, sans economie ni simulation de demande globale.
+  Chaque voiture offre deux portes et douze places abstraites. Au moins deux
+  entrants par porte quand la capacite le permet ; les flux sont plus fournis.
+  Le flux local
+  varie de facon deterministe par ligne/arret/visite, sans dependance au zoom
+  ni aux identifiants globaux des trains d'autres lignes. Les voyageurs restent
+  a bord entre arrets ; tous descendent au terminus. Pas de destinations/transferts.
+  Descente avant montee, avec departs et vitesses decales dans chaque lot.
+  Un generateur local initialise par ligne/arret/visite choisit les trajectoires
+  et horaires une seule fois ; le rendu ne consomme pas de hasard global.
+  Le comptage a bord suit la fin de chaque trajet, pas la fin d'un lot.
+  Le temps d'echange est
+  plafonne a l'arret minimum choisi + 2s lors de l'arrivee ; la recuperation au
+  terminus reste separee. Les estimations de cycle/intervalle/capacite integrent
+  la marge de 2s, pour conserver un dimensionnement prudent de la flotte.
+- Au-dessus du zoom 1.5, quais et minuscules silhouettes apparaissent doucement
+  jusqu'au zoom 3. Un seul quai continu suit la position et l'orientation de
+  chaque voiture, y compris dans les courbes ; ce n'est pas un rectangle impose.
+  Un ruban guide par les centres des voitures et les deux extremites conserve
+  les caps, sans les marches formees par chaque bout de caisse. Echantillonnage
+  commun aux deux bords (2px maximum), moyenne locale et quatre passes de lissage ;
+  simplification des bords limitee aux segments quasi collineaires (0.00001),
+  pour garder les courbes sans facettes ; tours locaux testes sous 8 degres.
+  les joints et points tactiles suivent la longueur du bord lisse.
+  Une union du ruban resout les replis en un contour simple : beton discret, joints,
+  bordure et bande tactile chaude continue, sans plaques separees par voiture.
+  Les silhouettes sont plus petites (rayon 0.34 au lieu de 0.48), avec couleurs
+  de manteaux/peaux variees, positions d'attente dispersees, vitesses individuelles
+  et courts trajets contenus sur le quai. L'aire de marche est le contour du quai
+  reduit du rayon du voyageur + 0.2px avec jointures en onglet ; chaque trajet
+  est coupe a cette aire,
+  avec vitesse limitee a 4px/s (pic du smoothstep). Les sortants continuent leur
+  trajet sur le quai apres avoir quitte la rame ; les entrants commencent leur
+  approche plus tot, avant leur lot. Le temps visuel est distinct du comptage
+  d'embarquement : pas de prolongation d'arret. Seuls les entrants sans assez
+  de temps ont un trajet raccourci.
+  Ces chemins sont caches a la creation de la visite, sans projection par image.
+  Les portes
+  du cote quai s'ouvrent, les sortants marchent un peu puis s'effacent sur le quai ;
+  les entrants emergent puis rejoignent les portes. Quais effaces 1.2s apres
+  depart/retrait de service. Horloge de simulation partagee : pause fige tout,
+  edition efface les visites. Pas de nouveaux boutons ; rendu hors vue ignore.
+
 - L'interlocking global, les sections entieres reservees et l'echange atomique
   des places en station sont retires. Ces derniers synchronisaient des vagues
   de departs et limitaient artificiellement les longs trajets entre stations.
@@ -193,6 +297,13 @@ hors de cette iteration ; les correspondances se font aux stations.
   Les deplacements sous-pixel conservent leur vitesse et leur acceleration.
   Les boucles isolent les sens ; une ligne ouverte conserve son circuit continu
   aller/retour. Aucun test geometrique ne couple deux lignes.
+- L'utilisateur a rejete les grandes courbes aux stations : retour aux arrondis
+  quadratiques serres d'origine, 12px aux stations et 24px ailleurs, limites a
+  35 % du segment adjacent. Pas de zones droites imposees ni suppression des ancrages.
+  Les arrets retrouvent leur projection sur la station ; les plateformes
+  s'adaptent a la rame, jamais l'inverse. Les terminus gardent leurs caps normaux
+  et un raccord vers une voie terminale commune. Toutes les voitures restent
+  dessinees et selectionnables ; seul le marqueur opaque les recouvre.
 - Acceleration 80 px/s2 et freinage 100 px/s2 sont independants de la vitesse
   maximale. La marche nominale utilise 90% de cette vitesse, laissant une
   marge pour rattraper un retard. Pas de nouveau curseur ni de retard aleatoire.
@@ -235,14 +346,29 @@ hors de cette iteration ; les correspondances se font aux stations.
   rail plat de 60 pixels logiques longe tout le bord inferieur, sans capsule,
   ombre ni coins arrondis. Les onglets numerotes ont un trait de la couleur
   de ligne ; la selection reste lisible quelle que soit cette couleur.
-  Les actions + et repli gardent une largeur fixe ; seules les lignes
-  defilent si elles depassent la place disponible.
-  Replier laisse une poignee discrete au bord inferieur, qui rouvre le rail
+  Le + partage le style souligne des onglets et suit immediatement la derniere
+  ligne dans leur conteneur defilant, sans grand vide entre les actions.
+  Le repli reste fixe a droite ; onglets et + gardent des largeurs minimales.
+  Le repli montre une icone de panneau avec fleche descendante,
+  et laisse la meme icone avec la fleche inverse au meme endroit, en bas a droite.
+  Les rectangles de clic restent identiques, meme quand les onglets defilent.
+  Les deux sont sans texte, avec infobulle traduite et cible de 44px.
+  L'icone inferieure rouvre le rail
   sans changer de ligne ni mettre les trains en pause.
 - Apres huit secondes d'inactivite, les commandes passent progressivement a
-  28 % d'opacite en 0,6 seconde. Mouvement, touche ou toucher les restaure
+  28 % d'opacite le jour, 70 % la nuit sombre, en 0,6 seconde. Le seuil suit
+  la transition jour/nuit ; les panneaux papier et textes contrastes restent
+  lisibles. Mouvement, touche ou toucher les restaure
   immediatement, sans consommer l'action. Feuilles, dialogues, picker et gestes
   en cours empechent l'estompage. Aucun etat de repli n'est persiste.
+- Aide et reglages sont centres sur la taille reelle de la vue, independamment
+  du rail inferieur. Les reglages utilisent une pile directe sans ScrollContainer,
+  avec hauteur adaptee au contenu et aux traductions ; l'aide garde son defilement
+  sur petit ecran. Le titre Metro utilise 48px logiques en haut a gauche,
+  reste opaque dix secondes, puis suit une
+  courbe smoothstep jusqu'a disparaitre a trente secondes. Ce delai reel continue
+  pendant la pause et le mode contemplation ; ni l'activite, ni les changements
+  de langue ou de taille ne le font revenir. Son opacite est independante du HUD.
 - Cliquer une ligne deplie ses cinq reglages dans le meme rail, au-dessus
   des onglets, sans panneau flottant ni bordure coloree. La hauteur suit le
   contenu, plafonnee a 300 pixels ; les colonnes s'adaptent (une sur telephone,
@@ -320,7 +446,8 @@ ne sont pas appliquees directement a un portable vu de pres.
 - Les voies physiques passent a +/-8 pixels du centre, au lieu de +/-11 :
   16 pixels entre les rames, pour des voitures de 7 pixels de large.
   Le rendu, l'apercu et la simulation partagent toujours le meme offset.
-- Stations : centre blanc de rayon 10 pixels, sans ombre ni halo.
+- Stations : centre blanc de rayon 10 pixels, sans halo. Leur ombre solaire
+  discrete suit le cycle du jour, contrairement a une ombre fixe de bouton.
   Chaque ligne desservie ajoute un anneau de 2 pixels dans sa couleur assombrie
   de 30 %. Ordre stable des lignes : anciennes a l'exterieur, nouvelles dedans.
   Le rayon total est 10 + 2 x nombre de lignes (minimum 12). Les correspondances
@@ -329,17 +456,53 @@ ne sont pas appliquees directement a un portable vu de pres.
   Recolorer ou retirer une ligne met a jour les anneaux immediatement.
   Sans ligne, la bordure reste neutre. La nuit, le blanc est legerement adouci
   et seule cette bordure neutre est eclaircie.
+  Le remplissage et les anneaux restent opaques au-dessus des trains.
+  L'essai de transparence a ete rejete : il exposait les rails sous le centre.
+  Les rames sont masquees par la geometrie du marqueur, jamais rendues invisibles.
 
 ## Courbes aux stations et fins de ligne
 
 - Le chemin central complet est arrondi avant la separation des deux voies.
+  Les marqueurs restent sur la grille ; les courbes quadratiques coupent
+  legerement le coin, comme auparavant. La preference pour les coudes serres
+  remplace les essais de courbes centrees/elargies. Tous les arrondis gardent
+  une subdivision adaptative de Casteljau : deviation
+  du segment sous 0,01px monde, ecart tangente/segment sous 1 degre, profondeur
+  maximale 12. Les tests imposent moins de 3 degres entre segments consecutifs
+  sur 45/90/135 degres et huit orientations. Pas de geometrie dependante du zoom.
   L'ancien raccord quadratique entre voies deja decalees pincait les voies
   au centre des stations en virage, causant un blocage face a face.
 - Les arrets sont projetes sur les segments du circuit, et pas uniquement
   sur ses sommets : supprimer un sommet collineaire ne deplace pas un arret.
-- Les terminus ajoutent une recuperation au temps d'arret. Les retournements
-  continus ne creent pas de reservation geometrique partagee entre sens.
-- Le circuit de simulation conserve les retournements continus, mais le
-  dessin des rails utilise seulement le centre et les deux voies ouvertes.
-  Un cap arrondi de la couleur de la ligne termine la bande derriere la station
-  sans dessiner le demi-tour. Le rendu et la circulation partagent les courbes.
+- Les terminus ajoutent une recuperation au temps d'arret. Les voies convergent
+  progressivement sur le centre avant la station, sur une zone commune assez
+  longue pour toute la rame. Le raccord ne depasse pas la station voisine.
+  Seuls ces abords changent ; les coudes intermediaires et ancrages restent fixes.
+- Au depart, la tete devient l'ancienne derniere voiture : la distance logique
+  avance du nombre de wagons fois le pas plus deux fois le retrait du terminus.
+  Ce retrait vaut rayon du marqueur + demi-voiture + 3px : la cabine et son quai
+  restent a l'exterieur du cercle, y compris aux terminus partages plus grands.
+  Les arrets intermediaires et les deux sens des boucles utilisent la meme
+  distance au marqueur : projection puis recul jusqu'au cercle de degagement,
+  du cote d'arrivee. Seuls les points d'arret changent, pas les voies ; les
+  trains traversent les stations sous les cercles lorsqu'ils repartent.
+  Le circuit revient sur le meme chemin
+  commun avant de reprendre la voie de retour. Les positions physiques de chaque
+  voiture sont identiques au changement de cabine ; aucun glissement lateral,
+  demi-tour serre ou chemin cache au-dela du cap. `car_axis` conserve une
+  tangente definie au point de rebroussement pour cabines, portes et soufflets.
+- Le dispatcher protege independamment chaque raccord de terminus par un seul
+  proprietaire, acquis avant la distance de freinage. Les autres rames attendent
+  avant le raccord. La reservation reste active jusqu'au degagement du dernier
+  wagon, avec marge de securite ; pause la conserve, retrait/rebuild la liberent.
+  Les lignes restent independantes. Les boucles n'ont pas cette reservation.
+- Une ligne trop courte pour loger deux zones terminales ne dispatchera pas ;
+  une erreur localisee demande de l'allonger ou de reduire les wagons.
+  Le calcul de cycle retire la distance logique sautee lors du changement de
+  cabine ; l'espacement mobile valide aussi cette avance avant le depart.
+- Les coeurs lumineux et halos de rails sont decoupes autour des stations
+  partagees (rayon du marqueur + 24px), puis reapparaissent progressivement
+  sur 16px, sans coupure lumineuse nette ni changer bandes, voies physiques,
+  phares ou simulation. Les chemins d'illumination sont caches au rebuild,
+  pas recalcules a chaque image. Les superpositions de raccords restent
+  discretes plutot que soulignees par une croix lumineuse.
