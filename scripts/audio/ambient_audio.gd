@@ -15,7 +15,7 @@ static var _cached_arrivals: Dictionary = {}
 var _music_player: AudioStreamPlayer
 var _rail_player: AudioStreamPlayer
 var _chime_player: AudioStreamPlayer
-var _music_volume := 0.55
+var _music_volume := 0.4
 var _effects_volume := 0.5
 var _night_factor := 0.0
 
@@ -95,67 +95,56 @@ func _apply_volumes() -> void:
 	if _chime_player != null:
 		_chime_player.volume_db = linear_to_db(maxf(_effects_volume * CHIME_EFFECT_GAIN, 0.0001))
 
-# Original sixteen-bar lo-fi groove: warm, compact piano voicings over a swung
-# kick/snare pattern. Two bars drop out to leave room in the arrangement.
+# Original sixteen-bar lo-fi groove: a consonant eight-bar progression repeats
+# over a steady swung kick/snare pulse, with sparse melody and muted hats.
 # Events are public so tests/tools can inspect the score without decoding PCM.
 static func composition_events() -> Array[Dictionary]:
 	var voicings: Array[PackedInt32Array] = [
-		PackedInt32Array([53, 60, 64, 69]), PackedInt32Array([57, 60, 64, 67]),
-		PackedInt32Array([58, 62, 65, 69]), PackedInt32Array([60, 62, 67, 72]),
-		PackedInt32Array([57, 60, 64, 67]), PackedInt32Array([55, 58, 62, 65]),
-		PackedInt32Array([53, 60, 64, 69]), PackedInt32Array([55, 60, 65, 70]),
-		PackedInt32Array([57, 60, 64, 67]), PackedInt32Array([57, 60, 64, 69]),
-		PackedInt32Array([58, 62, 65, 69]), PackedInt32Array([53, 60, 64, 69]),
-		PackedInt32Array([55, 58, 62, 65]), PackedInt32Array([57, 60, 64, 67]),
-		PackedInt32Array([60, 62, 67, 72]), PackedInt32Array([53, 60, 64, 69]),
+		PackedInt32Array([60, 64, 67, 71]), PackedInt32Array([57, 60, 64, 67]),
+		PackedInt32Array([62, 65, 69, 72]), PackedInt32Array([55, 59, 62, 65]),
+		PackedInt32Array([59, 62, 64, 67]), PackedInt32Array([57, 60, 64, 67]),
+		PackedInt32Array([53, 57, 60, 64]), PackedInt32Array([55, 60, 62, 67]),
 	]
-	var melody := PackedInt32Array([76, 74, 72, 74, 77, 76, 74, 71])
-	var answers := PackedInt32Array([79, 76, 76, 79, 76, 72, 72, 74])
+	var melody := PackedInt32Array([76, 79, 74, 72, 71, 69, 72, 74])
 	var events: Array[Dictionary] = []
 	for bar in range(16):
-		if bar == 7 or bar == 15:
-			continue
-		var start := float(bar) * BAR_SECONDS
-		for voice_index in range(voicings[bar].size()):
+		var score_bar := bar % voicings.size()
+		var start := float(bar) * BAR_SECONDS + 0.3
+		for voice_index in range(voicings[score_bar].size()):
 			events.append({
-				"time": start + 0.3 + float(voice_index) * 0.075,
-				"note": voicings[bar][voice_index], "duration": 2.15, "gain": 0.105,
+				"time": start + float(voice_index) * 0.035,
+				"note": voicings[score_bar][voice_index], "duration": 1.9, "gain": 0.08,
 			})
-		events.append({
-			"time": start + 1.5, "note": melody[bar % melody.size()],
-			"duration": 1.15, "gain": 0.07,
-		})
 		if bar % 2 == 0:
 			events.append({
-				"time": start + 2.25, "note": answers[bar % answers.size()],
-				"duration": 0.65, "gain": 0.055,
+				"time": start + 1.45, "note": melody[score_bar],
+				"duration": 0.9, "gain": 0.045,
 			})
 	return events
 
 static func drum_events() -> Array[Dictionary]:
 	var events: Array[Dictionary] = []
 	for bar in range(16):
-		if bar == 7 or bar == 15:
-			continue
 		var start := float(bar) * BAR_SECONDS + 0.3
 		for beat in [0.0, 2.0]:
-			events.append({"time": start + beat * BEAT_SECONDS, "kind": "kick", "gain": 0.7})
+			events.append({"time": start + beat * BEAT_SECONDS, "kind": "kick", "gain": 0.8})
 		for beat in [1.0, 3.0]:
-			events.append({"time": start + beat * BEAT_SECONDS, "kind": "snare", "gain": 0.43})
-		for eighth in range(8):
+			events.append({"time": start + beat * BEAT_SECONDS, "kind": "snare", "gain": 0.34})
+		var eighth_count := 6 if bar == 15 else 8
+		for eighth in range(eighth_count):
 			var swing := 0.045 if eighth % 2 == 1 else 0.0
-			var accent := 0.11 if eighth % 2 == 0 else 0.07
+			var accent := 0.075 if eighth % 2 == 0 else 0.045
 			events.append({
 				"time": start + float(eighth) * BEAT_SECONDS * 0.5 + swing,
 				"kind": "hat", "gain": accent,
 			})
-		if bar % 4 == 3:
+		if bar % 4 == 3 and bar < 15:
 			events.append({
 				"time": start + 3.5 * BEAT_SECONDS, "kind": "kick", "gain": 0.34,
 			})
 		if bar % 2 == 1:
 			events.append({
-				"time": start + 2.75 * BEAT_SECONDS, "kind": "ghost", "gain": 0.15,
+				"time": start + 2.75 * BEAT_SECONDS, "kind": "ghost", "gain": 0.1,
 			})
 	return events
 
@@ -234,16 +223,16 @@ static func render_music_note(note: int, duration: float) -> PackedFloat32Array:
 	return samples
 
 static func render_kick() -> PackedFloat32Array:
-	var count := int(SAMPLE_RATE * 0.28)
+	var count := int(SAMPLE_RATE * 0.32)
 	var samples := PackedFloat32Array()
 	samples.resize(count)
 	var phase := 0.0
 	for index in range(count):
 		var progress := float(index) / float(count - 1)
-		var frequency := lerpf(125.0, 48.0, progress)
+		var frequency := lerpf(145.0, 58.0, progress)
 		phase += TAU * frequency / SAMPLE_RATE
-		var envelope := exp(-7.0 * progress) * sin(PI * progress)
-		samples[index] = (sin(phase) + sin(phase * 2.0) * 0.12) * envelope
+		var envelope := exp(-6.0 * progress) * sin(PI * progress)
+		samples[index] = (sin(phase) + sin(phase * 2.0) * 0.18) * envelope
 	return samples
 
 static func render_snare() -> PackedFloat32Array:
@@ -256,11 +245,11 @@ static func render_snare() -> PackedFloat32Array:
 	for index in range(count):
 		seed_value = (seed_value * 1664525 + 1013904223) & 0xffffffff
 		var noise := float(seed_value & 0xffff) / 32767.5 - 1.0
-		filtered += (noise - filtered) * 0.22
+		filtered += (noise - filtered) * 0.1
 		var progress := float(index) / float(count - 1)
-		var envelope := exp(-10.0 * progress) * sin(PI * progress)
+		var envelope := exp(-8.0 * progress) * sin(PI * progress)
 		phase += TAU * 185.0 / SAMPLE_RATE
-		samples[index] = ((noise - filtered) * 0.72 + sin(phase) * 0.28) * envelope
+		samples[index] = (filtered * 0.55 + (noise - filtered) * 0.15 + sin(phase) * 0.3) * envelope
 	return samples
 
 static func render_hat() -> PackedFloat32Array:
@@ -273,9 +262,9 @@ static func render_hat() -> PackedFloat32Array:
 		seed_value = (seed_value * 1664525 + 1013904223) & 0xffffffff
 		var noise := float(seed_value & 0xffff) / 32767.5 - 1.0
 		var progress := float(index) / float(count - 1)
-		var envelope := exp(-25.0 * progress) * sin(PI * progress)
-		samples[index] = (noise - previous_noise) * envelope
-		previous_noise = noise
+		var envelope := exp(-32.0 * progress) * sin(PI * progress)
+		previous_noise += (noise - previous_noise) * 0.12
+		samples[index] = previous_noise * envelope
 	return samples
 
 # Recurrence oscillators and a multiplicative decay avoid per-sample trig/exp.

@@ -64,6 +64,15 @@ func _run() -> void:
 	await process_frame
 	_check(panel.position.x + panel.size.x <= 900 and panel.position.y + panel.size.y <= 600, "Compact controls must fit the minimum window size.")
 	_check(picker.get_global_rect().end.x <= panel.get_global_rect().end.x, "The color swatch must fit inside the compact panel.")
+	root.size = Vector2i(760, 520)
+	main.call("_resize_interface")
+	await process_frame
+	var settings: PanelContainer = main.get("_settings_popup")
+	_check(panel.position.x + panel.size.x <= 760 and panel.position.y + panel.size.y <= 520, "The main controls must fit a small laptop viewport.")
+	_check(settings.position.x + settings.size.x <= 760 and settings.position.y + settings.size.y <= 520, "Settings must stay on-screen at a small laptop viewport.")
+	root.size = Vector2i(900, 600)
+	main.call("_resize_interface")
+	await process_frame
 	main.call("_toggle_settings")
 	var click := InputEventMouseButton.new()
 	click.button_index = MOUSE_BUTTON_LEFT

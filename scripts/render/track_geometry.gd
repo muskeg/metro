@@ -99,15 +99,20 @@ static func simplify(points: PackedVector2Array) -> PackedVector2Array:
 	return result
 
 static func round_corners(points: PackedVector2Array) -> PackedVector2Array:
+	return round_corners_preserving(points, [])
+
+static func round_corners_preserving(points: PackedVector2Array, protected_points: Array[Vector2]) -> PackedVector2Array:
 	var anchors := simplify(points)
 	if anchors.size() < 2:
 		return anchors
 	var result := PackedVector2Array([anchors[0]])
 	for index in range(1, anchors.size() - 1):
 		var corner := anchors[index]
+		var is_station := protected_points.has(corner)
 		var incoming := corner - anchors[index - 1]
 		var outgoing := anchors[index + 1] - corner
-		var radius := minf(24.0, minf(incoming.length(), outgoing.length()) * 0.35)
+		var radius_limit := 12.0 if is_station else 24.0
+		var radius := minf(radius_limit, minf(incoming.length(), outgoing.length()) * 0.35)
 		var entry := corner - incoming.normalized() * radius
 		var exit := corner + outgoing.normalized() * radius
 		result.append(entry)
@@ -168,6 +173,9 @@ static func circuit(graph: TransitGraph, line: TransitLine, lines: Array[Transit
 		if not centerline.is_empty() and not centerline[centerline.size() - 1].is_equal_approx(points[0]):
 			centerline.append(graph.stations[line.stations[index]].position)
 		centerline.append_array(points)
+	var station_positions: Array[Vector2] = []
+	for station_id: int in line.stations:
+		station_positions.append(graph.stations[station_id].position)
 	if line.is_loop():
 		if not centerline[centerline.size() - 1].is_equal_approx(centerline[0]):
 			centerline.append(graph.stations[line.stations[0]].position)
@@ -177,7 +185,7 @@ static func circuit(graph: TransitGraph, line: TransitLine, lines: Array[Transit
 		var cyclic := PackedVector2Array([midpoint])
 		cyclic.append_array(centerline.slice(0, centerline.size() - 1))
 		cyclic.append(midpoint)
-		centerline = round_corners(cyclic)
+		centerline = round_corners_preserving(cyclic, station_positions)
 		var outbound_loop := offset_points(centerline, LANE_OFFSET)
 		var inbound_loop := offset_points(centerline, -LANE_OFFSET)
 		inbound_loop.reverse()
@@ -189,7 +197,7 @@ static func circuit(graph: TransitGraph, line: TransitLine, lines: Array[Transit
 		return outbound_route
 	# Round the whole route before separating the lanes. Joining already
 	# offset tracks through a station pinches opposing lanes into each other.
-	centerline = round_corners(centerline)
+	centerline = round_corners_preserving(centerline, station_positions)
 	var outbound := offset_points(centerline, LANE_OFFSET)
 	var inbound := offset_points(centerline, -LANE_OFFSET)
 	inbound.reverse()

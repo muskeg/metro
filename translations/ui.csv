@@ -26,7 +26,7 @@ keys,en,fr
 "Mettre en pause","Pause simulation","Mettre en pause"
 "Reprendre","Resume simulation","Reprendre"
 "Cliquez sur la carte pour placer une station.","Click the map to place a station.","Cliquez sur la carte pour placer une station."
-"Molette : zoom  ·  Clic milieu ou Espace : déplacer la vue","Scroll: zoom  ·  Middle-drag or Space: pan","Molette : zoom  ·  Clic milieu ou Espace : déplacer la vue"
+"Molette : zoom · Clic milieu/Espace + glisser : déplacer\nTrackpad : glisser à deux doigts : déplacer · pincer : zoomer","Scroll wheel: zoom · Middle-drag/Space-drag: pan\nTrackpad: two-finger swipe to pan · pinch to zoom","Molette : zoom · Clic milieu/Espace + glisser : déplacer\nTrackpad : glisser à deux doigts : déplacer · pincer : zoomer"
 "Dessiner : maintenez le bouton d'une station à l'autre.\nClic droit / Échap : annuler. Deux voies, sans flèches.","Draw: hold the mouse from one station to another.\nRight-click / Esc: cancel. Two physical tracks.","Dessiner : maintenez le bouton d'une station à l'autre.\nClic droit / Échap : annuler. Deux voies, sans flèches."
 "RÉGLAGES","SETTINGS","RÉGLAGES"
 "Langue","Language","Langue"

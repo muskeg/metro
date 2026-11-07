@@ -11,14 +11,14 @@ config/features=PackedStringArray("4.2", "GL Compatibility")
 
 [display]
 
-window/size/viewport_width=1440
-window/size/viewport_height=900
-window/size/window_width_override=1440
-window/size/window_height_override=900
+window/size/viewport_width=1180
+window/size/viewport_height=740
+window/size/window_width_override=1180
+window/size/window_height_override=740
 window/size/resizable=true
 window/size/borderless=false
-window/size/min_width=900
-window/size/min_height=600
+window/size/min_width=760
+window/size/min_height=520
 window/vsync/vsync_mode=1
 
 [rendering]
@@ -31,6 +31,7 @@ environment/defaults/default_clear_color=Color(0.20, 0.27, 0.29, 1)
 
 [audio]
 
+general/default_playback_type.web=0
 driver/enable_input=false
 
 [internationalization]

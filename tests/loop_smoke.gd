@@ -50,6 +50,10 @@ func _run() -> void:
 	main.call("_connect_stations", 0, 3)
 	_check(line.is_loop() and line.tracks.size() == 4 and graph.track_between(0, 3).id == closure_id, "A loop rail must remain redrawable without duplicating it.")
 	var route := TrackGeometry.circuit(graph, line, [line])
+	var centerline: PackedVector2Array = route["centerline"]
+	for station_id: int in [0, 1, 2, 3]:
+		var station_position: Vector2 = graph.stations[station_id].position
+		_check(TrackGeometry.closest_point(centerline, station_position).distance_to(station_position) < 5.0, "Rounded track geometry must stay centered within each station marker.")
 	for direction in [1, -1]:
 		var lane := TrackGeometry.route_for_direction(route, direction)
 		var points: PackedVector2Array = lane["points"]

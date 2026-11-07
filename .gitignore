@@ -2,3 +2,5 @@
 .mono/
 export.cfg
 /dist/
+.DS_Store
+Thumbs.db

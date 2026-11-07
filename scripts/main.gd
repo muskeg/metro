@@ -88,7 +88,7 @@ var settings_path := SETTINGS_PATH
 
 func _ready() -> void:
 	_load_language()
-	DisplayServer.window_set_min_size(Vector2i(900, 600))
+	DisplayServer.window_set_min_size(Vector2i(760, 520))
 	graph = TransitGraphScript.new()
 	dispatcher = DispatcherScript.new(graph)
 	world_view = WorldViewScript.new()
@@ -201,12 +201,23 @@ func _unhandled_input(event: InputEvent) -> void:
 			_toggle_fullscreen()
 		elif key_event.pressed and key_event.keycode == KEY_DELETE:
 			_request_delete(selected_station_id if selected_station_id >= 0 else world_view.hovered_station_id, world_view.hovered_track_id)
-	if event is InputEventMouseButton:
+	if event is InputEventPanGesture:
+		var pan_event := event as InputEventPanGesture
+		if not pan_event.delta.is_zero_approx():
+			_stop_following()
+			camera.position -= pan_event.delta / camera.zoom
+		get_viewport().set_input_as_handled()
+	elif event is InputEventMagnifyGesture:
+		var magnify_event := event as InputEventMagnifyGesture
+		if magnify_event.factor > 0.0:
+			camera.zoom = (camera.zoom * magnify_event.factor).clamp(Vector2(0.45, 0.45), Vector2(6.0, 6.0))
+		get_viewport().set_input_as_handled()
+	elif event is InputEventMouseButton:
 		var mouse_event := event as InputEventMouseButton
 		if mouse_event.button_index == MOUSE_BUTTON_WHEEL_UP and mouse_event.pressed:
-			camera.zoom = (camera.zoom * 1.12).clamp(Vector2(0.45, 0.45), Vector2(6.0, 6.0))
+			_zoom_camera(1.12)
 		elif mouse_event.button_index == MOUSE_BUTTON_WHEEL_DOWN and mouse_event.pressed:
-			camera.zoom = (camera.zoom / 1.12).clamp(Vector2(0.45, 0.45), Vector2(6.0, 6.0))
+			_zoom_camera(1.0 / 1.12)
 		elif mouse_event.button_index == MOUSE_BUTTON_MIDDLE:
 			_panning = mouse_event.pressed
 			if _panning:
@@ -329,7 +340,7 @@ func _create_interface() -> void:
 	_help_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	stack.add_child(_help_label)
 	_help_label.hide()
-	var navigation_help := _label("Molette : zoom  ·  Clic milieu ou Espace : déplacer la vue", 10, Color("#a0acae"))
+	var navigation_help := _label("Molette : zoom · Clic milieu/Espace + glisser : déplacer\nTrackpad : glisser à deux doigts : déplacer · pincer : zoomer", 10, Color("#a0acae"))
 	_navigation_help = navigation_help
 	navigation_help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	stack.add_child(navigation_help)
@@ -346,9 +357,14 @@ func _create_interface() -> void:
 	settings_margin.add_theme_constant_override("margin_top", 14)
 	settings_margin.add_theme_constant_override("margin_bottom", 14)
 	_settings_popup.add_child(settings_margin)
+	var settings_scroll := ScrollContainer.new()
+	settings_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	settings_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	settings_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	settings_margin.add_child(settings_scroll)
 	var settings_stack := VBoxContainer.new()
 	settings_stack.add_theme_constant_override("separation", 6)
-	settings_margin.add_child(settings_stack)
+	settings_scroll.add_child(settings_stack)
 	settings_stack.add_child(_label("RÉGLAGES", 14, Color("#f0eee7")))
 	settings_stack.add_child(_label("Langue", 11, Color("#d8e2de")))
 	_language_selector = OptionButton.new()
@@ -375,7 +391,7 @@ func _create_interface() -> void:
 	music_volume.min_value = 0.0
 	music_volume.max_value = 1.0
 	music_volume.step = 0.01
-	music_volume.value = 0.55
+	music_volume.value = 0.4
 	music_volume.value_changed.connect(func(value: float) -> void: audio.call("set_music_volume", value))
 	settings_stack.add_child(music_volume)
 	settings_stack.add_child(_label("Sons des trains", 11, Color("#d8e2de")))
@@ -406,7 +422,21 @@ func _create_interface() -> void:
 	_resize_interface()
 
 func _resize_interface() -> void:
-	_main_panel.size = Vector2(276.0, minf(460.0, get_viewport_rect().size.y - 32.0))
+	var viewport_size := get_viewport_rect().size
+	var available_width := maxf(0.0, viewport_size.x - 32.0)
+	var available_height := maxf(0.0, viewport_size.y - 32.0)
+	var panel_width := minf(276.0, available_width)
+	_main_panel.position = Vector2(16.0, 16.0)
+	_main_panel.custom_minimum_size.x = panel_width
+	_main_panel.size = Vector2(panel_width, minf(460.0, available_height))
+	var popup_width := minf(240.0, available_width)
+	var popup_height := minf(420.0, available_height)
+	_settings_popup.custom_minimum_size.x = popup_width
+	_settings_popup.size = Vector2(popup_width, popup_height)
+	var popup_x := _main_panel.position.x + _main_panel.size.x + 12.0
+	if popup_x + popup_width > viewport_size.x - 16.0:
+		popup_x = maxf(16.0, viewport_size.x - popup_width - 16.0)
+	_settings_popup.position = Vector2(popup_x, 16.0)
 
 func _toggle_help() -> void:
 	_help_label.visible = not _help_label.visible
@@ -1067,6 +1097,9 @@ func _toggle_pause() -> void:
 
 func _toggle_settings() -> void:
 	_settings_popup.visible = not _settings_popup.visible
+
+func _zoom_camera(factor: float) -> void:
+	camera.zoom = (camera.zoom * factor).clamp(Vector2(0.45, 0.45), Vector2(6.0, 6.0))
 
 func _toggle_fullscreen() -> void:
 	var is_fullscreen := DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN

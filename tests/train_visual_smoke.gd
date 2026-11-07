@@ -92,6 +92,17 @@ func _run() -> void:
 	_check(fill.get_luminance() > 0.9 and border.get_luminance() < 0.35, "Station outlines must retain a sharp contrasting border at follow zoom.")
 	_check(_difference(cap, line.color) < 0.08 and outside.get_luminance() > 0.95, "The line must form a complete rounded terminal behind the station, without displaying the turnaround.")
 	_check(station_image.save_png("/tmp/metro-terminal.png") == OK, "Could not capture close-up terminal rendering.")
+	var stops: PackedFloat32Array = route["stops"]
+	train.distance = stops[stops.size() - 1]
+	camera.position = Vector2.ZERO
+	camera.reset_smoothing()
+	train.position = TrackGeometry.point_at_distance(points, train.distance)
+	view.set_dynamic_state([train], camera.position, camera.zoom, 0.5)
+	await process_frame
+	await RenderingServer.frame_post_draw
+	var train_at_station := root.get_texture().get_image()
+	var covered_border := train_at_station.get_pixelv(station_center + Vector2i(0, -66))
+	_check(_difference(covered_border, Color("#34464f")) < 0.12, "Station markers must remain visible above trains passing through them.")
 	world.queue_free()
 	await process_frame
 	if failed:

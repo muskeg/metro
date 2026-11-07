@@ -86,6 +86,19 @@ func _run() -> void:
 	_check(main.get("_followed_train") == null, "Panning must stop following.")
 	middle.pressed = false
 	main.call("_unhandled_input", middle)
+	camera.position = Vector2.ZERO
+	camera.zoom = Vector2.ONE
+	var pan := InputEventPanGesture.new()
+	pan.delta = Vector2(36.0, -18.0)
+	main.call("_unhandled_input", pan)
+	_check(camera.position.is_equal_approx(Vector2(-36.0, 18.0)), "Two-finger pan gestures must move the world.")
+	var magnify := InputEventMagnifyGesture.new()
+	magnify.factor = 1.5
+	main.call("_unhandled_input", magnify)
+	_check(camera.zoom.is_equal_approx(Vector2.ONE * 1.5), "Pinch magnification must zoom in.")
+	magnify.factor = 0.5
+	main.call("_unhandled_input", magnify)
+	_check(camera.zoom.is_equal_approx(Vector2.ONE * 0.75), "Pinch magnification must also zoom out.")
 	main.call("_begin_world_interaction", train.position)
 	main.call("_refresh_network")
 	_check(main.get("_followed_train") == null, "Redispatch must stop following a removed train.")

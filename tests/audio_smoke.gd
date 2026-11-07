@@ -34,6 +34,7 @@ func _check_pcm(stream: AudioStreamWAV, label: String) -> void:
 	_check(_sample(data, 0) == 0.0 and _sample(data, count - 1) == 0.0, label + ": endpoints must be silent")
 
 func _run_test() -> void:
+	_check(ProjectSettings.get_setting("audio/general/default_playback_type.web") == 0, "Web audio must use Stream playback for the generated looping music")
 	var started := Time.get_ticks_msec()
 	var music: AudioStreamWAV = AmbientAudio.make_music()
 	var generation_ms := Time.get_ticks_msec() - started
@@ -52,8 +53,8 @@ func _run_test() -> void:
 			longest_rest = maxi(longest_rest, current_rest)
 		else:
 			current_rest = 0
-	_check(silent_samples > AmbientAudio.SAMPLE_RATE * 5, "The composition needs substantial real rests")
-	_check(longest_rest >= int(AmbientAudio.SAMPLE_RATE * 0.5), "Expected a breathing space of at least half a second")
+	_check(silent_samples > AmbientAudio.SAMPLE_RATE * 3, "The arrangement needs short breathing spaces between phrases")
+	_check(longest_rest >= int(AmbientAudio.SAMPLE_RATE * 0.25), "Expected a breathing space between bars")
 	for index in range(int(AmbientAudio.SAMPLE_RATE * 0.2)):
 		_check(_sample(data, index) == 0.0, "Loop opening must be silent")
 		_check(_sample(data, music.loop_end - 1 - index) == 0.0, "Loop closing must be silent")
@@ -73,11 +74,22 @@ func _run_test() -> void:
 	var events: Array[Dictionary] = AmbientAudio.composition_events()
 	_check(events.size() > 24, "Music needs both harmony and a composed melody")
 	var roots: Dictionary = {}
+	var scale_classes := [0, 2, 4, 5, 7, 9, 11]
 	for event: Dictionary in events:
 		_check(int(event["note"]) >= 53, "No incessant sub-bass voices")
+		_check(scale_classes.has(posmod(int(event["note"]), 12)), "The melody and harmony should stay in one consonant key")
 		if is_equal_approx(fmod(float(event["time"]), AmbientAudio.BAR_SECONDS), 0.3):
 			roots[int(event["note"])] = true
 	_check(roots.size() >= 3, "Harmony must change across the loop")
+	var progression := PackedInt32Array([60, 57, 62, 55, 59, 57, 53, 55])
+	for bar in range(16):
+		var expected_time := float(bar) * AmbientAudio.BAR_SECONDS + 0.3
+		var root_note := -1
+		for event: Dictionary in events:
+			if is_equal_approx(float(event["time"]), expected_time):
+				root_note = int(event["note"])
+				break
+		_check(root_note == progression[bar % progression.size()], "The eight-bar chord progression must repeat in a consistent key")
 	var drums: Array[Dictionary] = AmbientAudio.drum_events()
 	var kick_count := 0
 	var snare_count := 0
@@ -96,9 +108,9 @@ func _run_test() -> void:
 				)
 			"hat":
 				hat_count += 1
-	_check(kick_count >= 20, "Music needs a steady kick pulse")
-	_check(snare_count >= 20, "Music needs regular snare backbeats")
-	_check(hat_count >= 40, "Music needs a swung hi-hat rhythm")
+	_check(kick_count == 35, "Music needs two clear kick pulses in every bar and occasional syncopation")
+	_check(snare_count == 32, "Music needs backbeats on two and four in every bar")
+	_check(hat_count == 126, "Music needs a soft swung eighth-note texture with a clean loop ending")
 	var arrival: AudioStreamWAV = AmbientAudio.make_arrival(0.2, 0.0)
 	var night_arrival: AudioStreamWAV = AmbientAudio.make_arrival(0.2, 1.0)
 	var rail: AudioStreamWAV = AmbientAudio.make_rail()
@@ -111,7 +123,7 @@ func _run_test() -> void:
 		_check_pcm(AmbientAudio.make_arrival(float(hue_index) / 5.0, 0.0), "arrival hue %d" % hue_index)
 		_check_pcm(AmbientAudio.make_arrival(float(hue_index) / 5.0, 1.0), "night arrival hue %d" % hue_index)
 	var audio := AmbientAudio.new()
-	_check(audio.get("_music_volume") == 0.55 and audio.get("_effects_volume") == 0.5, "Default volumes must match the UI")
+	_check(audio.get("_music_volume") == 0.4 and audio.get("_effects_volume") == 0.5, "Default volumes must match the UI")
 	audio.set_music_volume(2.0)
 	audio.set_effects_volume(-1.0)
 	audio.set_night_factor(2.0)

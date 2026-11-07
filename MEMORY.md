@@ -13,7 +13,8 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
 
 - Native Godot 4/GDScript relaxing transit builder, named **Metro**. No economy,
   failure pressure or demand simulation. Release targets: Windows x86_64 and
-  universal macOS (Intel x86_64 + Apple Silicon arm64).
+  universal macOS (Intel x86_64 + Apple Silicon arm64), plus single-thread Web
+  hosted on GitHub Pages.
 - English default; French can be selected live in Menu. Language is persisted
   through ConfigFile. Add all new UI messages to [ui.csv](./translations/ui.csv).
 - Minimalist map: pure white at noon, a subtle blue night gradient and warm
@@ -41,16 +42,20 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
   directions. Reducing it below current occupancy redispatches the network.
   Click a locomotive or wagon to follow it at 5x zoom; Escape, panning or
   redispatch ends the follow. Scroll adjusts the zoom while following.
+- Mouse-wheel zoom and middle/Space-drag pan are supported, as are native
+  trackpad two-finger pan and pinch zoom gestures.
 - Lines are opaque color bands with darker running lanes, without rail glow.
   Lanes are at +/-8 pixels (16 apart); car width is 7. A tighter +/-7 attempt
   blocked shared curved routes and was rejected by simulation tests.
 - Stations have a 10-pixel white interior and a 2-pixel border; no shadow or glow.
   Night slightly softens the fill and lightens the border.
-- Compact main card (276 x 460 maximum), smaller settings popover and on-demand
-  help. Per-line ColorPicker offers presets and no alpha. Recolor immediately
-  updates rails, trains, tabs and preview without redispatching trains.
-- Original gentle 48-second composed PCM music, separate music/train-effect
-  volume, day/night lights and softly fading train headlights.
+- Compact main card (276 x 460 maximum), smaller scrollable settings popover and
+  on-demand help. The window opens at 1180 x 740 and allows resizing to 760 x 520.
+  Per-line ColorPicker offers presets and no alpha. Recolor immediately updates
+  rails, trains, tabs and preview without redispatching trains.
+- Original 48-second PCM music uses a consonant repeating eight-bar progression,
+  a swung 80 BPM kick/snare groove, sparse melody and muted hats. Music starts
+  at 0.4 volume; train effects have a separate volume.
 - Trains are top-down rectangular cars with short flexible gangways, windows
   and lamps; running gear is hidden, not represented by decorative wheels.
   They have no offset drop shadow.
@@ -75,8 +80,9 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
 - [track_geometry.gd](./scripts/render/track_geometry.gd): canonical anchors,
   elastic_path (deterministic diagonal-first/straight-first sections),
   simplification, corner rounding, shared-corridor offsets and route circuits.
-  Round the complete centerline BEFORE separating the two lanes. The former
-  station joins between already-offset tracks pinched lanes and deadlocked trains.
+  Round the complete centerline BEFORE separating the two lanes. Use a tighter
+  12-pixel smooth corner at stations to center the rail marker without hard
+  elbows; the latter deadlocked shared junctions.
 - Circuit data includes `points` (closed simulation path), `centerline`,
   `running_paths` (two open visible lanes), `stops`, `outbound_end`, and `length`.
   A loop has closed visible lanes and a separate `reverse_route`; select the
@@ -97,12 +103,21 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
   finishes each open terminus behind its station; loops have no caps. Physical turnaround curves
   still exist in simulation; do not describe them as removed or teleport trains.
   Close-up train and rail outlines omit Godot's world-unit AA fringe at zoom
-  1.5 or greater to avoid blurred contours. Headlights render before the cars.
+  1.5 or greater to avoid blurred contours. Headlights render before the cars;
+  station markers render above passing trains.
 - [urban_backdrop.gd](./scripts/render/urban_backdrop.gd) retains its historical
   filename/class but draws only the atmospheric day/night background.
 - [ambient_audio.gd](./scripts/audio/ambient_audio.gd): cached composition and
   train effects. Avoid introducing audio shutdown leaks; headless playback is
-  intentionally disabled.
+  intentionally disabled. Web overrides `audio/general/default_playback_type`
+  to Stream (`0` in ProjectSettings, NOT AudioServer's enum value `1`).
+  Sample playback threw browser AudioBuffer duplication errors on the generated
+  48-second WAV's pause/unpause and loop restart.
+- [pages.yml](./.github/workflows/pages.yml): imports, tests simulation/audio,
+  exports Web and uploads the Pages artifact on main pushes/PRs; only main
+  pushes/manual runs deploy. Single-thread Web needs no COOP/COEP headers.
+  [docs/](./docs/) contains README screenshots, ignored by Godot and excluded
+  from every export preset.
 - Native CSV import has escaped keys enabled for multiline help. Dynamic/nested
   errors must be translated before formatting, not only static control labels.
   New elastic help uses standard quoted multiline CSV cells for version portability.
@@ -113,11 +128,11 @@ Every task requires fresh Windows and macOS release exports before completion,
 as specified in [AGENTS.md](./AGENTS.md). Verify both and report any failure or
 platform-specific checks that could not be run.
 
-Godot version last used: 4.7.2, Compatibility renderer. `godot` below means an
-available matching editor binary; it was not globally installed in the previous
-environment. Temporary editor downloads were cleaned after validation.
-Matching Windows and macOS templates were installed in the standard Godot user directory;
-verify availability before the next build rather than assuming it.
+Godot version last verified: 4.7.2, Compatibility renderer. On macOS, the editor
+is installed at `/Applications/Godot.app/Contents/MacOS/Godot`; invoke that
+binary unless a `godot` command is configured. The standard export-templates
+directory may not exist on a fresh setup; verify matching templates before
+building.
 
 ```sh
 godot --headless --editor --path . --quit
@@ -136,6 +151,7 @@ godot --path . --script res://tests/visual_smoke.gd --audio-driver Dummy
 godot --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy
 godot --headless --path . --export-release "Windows Desktop" dist/Metro.exe
 godot --headless --path . --export-release "macOS" dist/Metro-macOS.zip
+godot --headless --path . --export-release "Web" dist/web/index.html
 ```
 
 - Inspect output for parser/script errors even when the editor exits zero.
@@ -153,16 +169,88 @@ godot --headless --path . --export-release "macOS" dist/Metro-macOS.zip
   runs; distinguish it from script/test errors.
 - [export_presets.cfg](./export_presets.cfg) embeds game data in
   `dist/Metro.exe` and packages `Metro.app` in `dist/Metro-macOS.zip`;
-  tests and dist are excluded from both. macOS uses built-in ad-hoc signing,
+  tests, dist and docs are excluded from all presets. macOS uses built-in ad-hoc signing,
   no notarization, bundle identifier `org.metro.game`. Keep project setting
   `textures/vram_compression/import_etc2_astc=true` for universal/arm64 exports.
-  Mac launch and Gatekeeper behavior require a real Mac; Linux can only verify
-  the archive structure. [`.gitignore`](./.gitignore)
+  Mac launch and Gatekeeper behavior require a real Mac; archive validation
+  alone does not verify Gatekeeper. [`.gitignore`](./.gitignore)
   ignores dist and editor caches. WSL previously ran the Windows executable
   directly with `--headless --quit-after 10 --audio-driver Dummy`; use a valid
   Windows log-file path if specifying one.
 
 ## Recent work and verification record
+
+### GitHub Pages and concise README (2026-11-06)
+
+- Added single-thread Web preset and GitHub Actions build/deployment workflow,
+  pinned to matching Godot/editor templates 4.7.2. PRs validate without deployment;
+  pushes/manual runs on main deploy using the official Pages actions.
+- Reorganized the French README into quick start, controls, development and
+  deployment sections, with actual day/night screenshots of the same network.
+  Added docs import/export exclusions so screenshots are not shipped in the game.
+- Browser testing found real Web Sample-backend AudioBuffer errors. A first
+  override mistakenly used AudioServer's enum value; verified engine source and
+  corrected ProjectSettings' value to Stream (`0`). Added an audio regression
+  assertion and included the audio smoke test in CI.
+- Validation passed:
+
+  ```sh
+  actionlint .github/workflows/pages.yml
+  git diff --check
+  /Applications/Godot.app/Contents/MacOS/Godot --headless --path . --script res://tests/simulation_smoke.gd
+  /Applications/Godot.app/Contents/MacOS/Godot --headless --path . --script res://tests/audio_smoke.gd
+  /Applications/Godot.app/Contents/MacOS/Godot --headless --path . --export-release "Web" dist/web/index.html
+  /Applications/Godot.app/Contents/MacOS/Godot --headless --path . --export-release "Windows Desktop" dist/Metro.exe
+  /Applications/Godot.app/Contents/MacOS/Godot --headless --path . --export-release "macOS" dist/Metro-macOS.zip
+  unzip -t dist/Metro-macOS.zip
+  file dist/Metro.exe
+  ```
+
+- Used temporary actionlint 1.7.12. All three exports completed without logged
+  errors/warnings; required Web files are nonempty. Verified universal macOS
+  architectures, strict deep code signature and exported-app headless startup
+  (`--headless --quit-after 10 --audio-driver Dummy`). Windows runtime not run.
+- Served `dist` with `python3 -m http.server 8765 --bind 127.0.0.1 --directory dist`.
+  Browser rendered at 1180 x 740, accepted station placement under `/web/`,
+  and ran for 55 seconds after interaction (beyond the 48-second music loop)
+  without page errors, console errors or failed requests, with cross-origin
+  isolation disabled. Initial loading-poll timeouts were test-harness failures;
+  subsequent inspection confirmed the loading element was removed and game ready.
+- Hosted Actions/Linux execution and actual Pages publication await committing
+  and pushing to main; no commit/push performed. Safari, physical trackpad feel
+  and subjective music quality were not manually verified.
+
+### Station alignment, laptop controls, and music (2026-11-06)
+
+- Tightened rounded corners at station anchors to 12 pixels while retaining
+  smooth turns. A first hard-corner variant caused two shared-station deadlock
+  checks; the smooth radius passed the full intersection safety suite. Station
+  circles now draw above trains, confirmed by a native pixel test.
+- Added Godot pan and magnify gesture handling for trackpad pan/pinch, with
+  synthetic input tests. Reduced startup window/viewport to 1180 x 740, minimum
+  760 x 520; made the settings popover scrollable and reposition it inside the
+  viewport. Added translated navigation instructions and README documentation.
+- Reworked the 48-second score to use a repeating C-major eight-bar progression,
+  a steady 80 BPM kick/backbeat, sparse melody and softer hats/snare; reduced
+  default music volume from 0.55 to 0.4. Audio tests check key, progression,
+  per-bar beat and loop boundaries.
+- Godot 4.7.2 import, audio, loop, controls, UI, simulation, editing,
+  localization, visual and six-scenario intersection tests passed. Native
+  rendering tests ran on Apple M2 with `--audio-driver Dummy`; trackpad hardware
+  gestures were not manually exercised. Each standard test command listed
+  above was run with `/Applications/Godot.app/Contents/MacOS/Godot` in place
+  of `godot`.
+- Fresh release exports and checks:
+
+  ```sh
+  /Applications/Godot.app/Contents/MacOS/Godot --headless --path . --export-release "Windows Desktop" dist/Metro.exe
+  /Applications/Godot.app/Contents/MacOS/Godot --headless --path . --export-release "macOS" dist/Metro-macOS.zip
+  ```
+
+- Windows PE and universal macOS ZIP/binary verified; the exported macOS app
+  passed `unzip -t`, `file`, `codesign --verify --deep --strict` and headless
+  startup checks. Windows runtime was not run on this Mac. Apple notarization is
+  not configured; physical trackpad behavior awaits user confirmation.
 
 ### Metro cars and terminals (2026-11-06)
 
@@ -424,14 +512,33 @@ godot --headless --path . --export-release "macOS" dist/Metro-macOS.zip
   or Apple Developer credentials available. Gatekeeper may require explicit
   approval. Gameplay suites not rerun for this build/configuration-only task.
 
+### macOS release build repaired (2026-11-06)
+
+- User installed Godot 4.7.2 and matching export templates. Created ignored
+  `dist/` output folder after the first export attempt reported it missing.
+  macOS universal and Windows x86_64 release exports both succeeded with:
+
+  ```sh
+  /Applications/Godot.app/Contents/MacOS/Godot --headless --path . --export-release "macOS" dist/Metro-macOS.zip
+  /Applications/Godot.app/Contents/MacOS/Godot --headless --path . --export-release "Windows Desktop" dist/Metro.exe
+  ```
+
+- Verified ZIP integrity and bundle layout with `unzip -t`, universal Mach-O
+  x86_64 + arm64 via `file`, and Windows PE32+ x86_64 via `file`. macOS bundle
+  also launched headlessly and quit successfully using
+  `Metro --headless --quit-after 10 --audio-driver Dummy`. Windows runtime and
+  gameplay suites were not run. Godot rewrote project settings while scanning;
+  those unrelated changes were restored, leaving the required ARM64 texture
+  import setting intact.
+
 ## Open limits and next-session cautions
 
 - Off-station independent rail crossings remain unsupported.
 - Hidden simulation turnarounds still carry trains continuously; visible rails
   do not draw these loops. If train motion itself still looks like spinning,
   inspect a new reproduction rather than assuming cap removal changed motion.
-- Latest automated scenarios passed, but no subsequent user confirmation of the
-  final terminal fix has been received.
+- Station alignment, trackpad and revised music changes pass automated tests;
+  user confirmation of MacBook trackpad feel and music quality remains useful.
 - Elastic drawing is implemented and exported; the earlier research alternatives
   are historical, not pending. Await user feedback on the interaction feel.
   Keep this file current instead of relying on prior chats or private session files.

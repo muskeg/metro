@@ -84,13 +84,6 @@ func _draw() -> void:
 				draw_circle(end, CORRIDOR_WIDTH * 0.5, line.color, true, -1.0, view_zoom.x < 1.5)
 		for lane: PackedVector2Array in route["running_paths"]:
 			draw_polyline(lane, line.color.darkened(0.3), RUNNING_LANE_WIDTH, view_zoom.x < 1.5)
-	for station: Station in graph.stations:
-		var night := _night_strength()
-		var fill := Color.WHITE.lerp(Color("#e8eff2"), night)
-		var border := Color("#34464f").lerp(Color("#819ca9"), night)
-		_draw_station(station.position, fill, border)
-		if station.id == selected_station_id:
-			draw_arc(station.position, 15.0, 0.0, TAU, 40, Color("#f9c27b"), 1.5, true)
 	for metro: Metro in metros:
 		if _routes.has(metro.line_id):
 			_draw_headlights(metro, TrackGeometry.route_for_direction(_routes[metro.line_id], metro.travel_direction))
@@ -98,6 +91,13 @@ func _draw() -> void:
 		if not _routes.has(metro.line_id):
 			continue
 		_draw_train(metro, TrackGeometry.route_for_direction(_routes[metro.line_id], metro.travel_direction), lines[metro.line_id].color)
+	for station: Station in graph.stations:
+		var night := _night_strength()
+		var fill := Color.WHITE.lerp(Color("#e8eff2"), night)
+		var border := Color("#34464f").lerp(Color("#819ca9"), night)
+		_draw_station(station.position, fill, border)
+		if station.id == selected_station_id:
+			draw_arc(station.position, 15.0, 0.0, TAU, 40, Color("#f9c27b"), 1.5, true)
 	if _preview.size() > 1:
 		draw_polyline(_preview, _preview_color, CORRIDOR_WIDTH, view_zoom.x < 1.5)
 		for offset: float in [-TrackGeometry.LANE_OFFSET, TrackGeometry.LANE_OFFSET]:
