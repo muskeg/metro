@@ -1,7 +1,7 @@
 class_name UrbanBackdrop
 extends Node2D
 
-const NIGHT_COLOR := Color("#142731")
+const NIGHT_COLOR := Color("#03060c")
 
 var view_center := Vector2.ZERO
 var view_zoom := Vector2.ONE
@@ -34,8 +34,8 @@ func _draw() -> void:
 	var daylight := (1.0 - cos(time_of_day * TAU)) * 0.5
 	var night := 1.0 - smoothstep(0.0, 1.0, daylight)
 	var twilight := sin(daylight * PI) * 0.10
-	var top := base.lerp(Color("#294458"), night * 0.36).lerp(Color("#ffe2ce"), twilight)
-	var bottom := base.lerp(Color("#101e29"), night * 0.22).lerp(Color("#d8e6ed"), twilight * 0.55)
+	var top := base.lerp(Color("#0a1220"), night * 0.28).lerp(Color("#ffe2ce"), twilight)
+	var bottom := base.lerp(Color("#02050a"), night * 0.22).lerp(Color("#d8e6ed"), twilight * 0.55)
 	draw_polygon(
 		PackedVector2Array([rect.position, rect.position + Vector2(rect.size.x, 0.0), rect.end, rect.position + Vector2(0.0, rect.size.y)]),
 		PackedColorArray([top, top, bottom, bottom])

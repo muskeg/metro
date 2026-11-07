@@ -66,6 +66,7 @@ func _run() -> void:
 			var station_id: int = [0, 1, 2, 3][index] if direction == 1 else [3, 2, 1, 0][index]
 			var stop := TrackGeometry.point_at_distance(points, stops[index])
 			_check(stop.distance_to(graph.stations[station_id].position) < 30.0, "Loop stops must remain near their stations.")
+			_check(stop.distance_to(graph.stations[station_id].position) >= TrackGeometry.station_stop_clearance(station_id, view.lines) - 0.02, "Both loop directions must stop outside the station, not beneath its marker.")
 	var other := TransitLine.new(1, Color.CORAL)
 	other.append_station(graph, 4)
 	other.append_station(graph, 0)
@@ -89,6 +90,7 @@ func _run() -> void:
 				_check(stops[index] > stops[index - 1], "Shared-track loop stops must remain ordered.")
 			var station_id: int = [0, 1, 2, 3][index] if direction == 1 else [3, 2, 1, 0][index]
 			_check(TrackGeometry.point_at_distance(points, stops[index]).distance_to(graph.stations[station_id].position) < 50.0, "Shared-track stops must remain near their stations.")
+			_check(TrackGeometry.point_at_distance(points, stops[index]).distance_to(graph.stations[station_id].position) >= TrackGeometry.station_stop_clearance(station_id, dispatcher.lines) - 0.02, "Shared loop stops must account for the larger interchange radius.")
 	var arrivals := [0, 0]
 	var second_half := [0, 0]
 	var directions := [false, false]

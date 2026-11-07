@@ -25,27 +25,44 @@ func _run() -> void:
 	dispatcher.process(3.0, false)
 	_main.set("paused", true)
 	_main.set_process(false)
+	_main.set_process_input(false)
 	for name: String in ["_main_panel", "_status_panel", "_toolbar"]:
 		_main.get(name).hide()
 	_main.call("_clear_hover")
 	var view: WorldView = _main.get("world_view")
 	view.selected_station_id = -1
 	var camera: Camera2D = _main.get("camera")
+	var geometry: PackedVector2Array = dispatcher.routes[0]["centerline"]
+	var rail_center := TrackGeometry.point_at_distance(geometry, 200.0)
+	var rail_axis := (TrackGeometry.point_at_distance(geometry, 202.0) - TrackGeometry.point_at_distance(geometry, 198.0)).normalized()
+	var rail_normal := Vector2(-rail_axis.y, rail_axis.x)
+	var solid_probe := Vector2i(view.get_global_transform_with_canvas() * rail_center)
+	var lane_probe := Vector2i(view.get_global_transform_with_canvas() * (rail_center - rail_normal * 8.0))
+	var outside_probe := Vector2i(view.get_global_transform_with_canvas() * (rail_center - rail_normal * 20.0))
 	for phase: float in [0.5, 0.0]:
 		_main.set("time_of_day", phase)
-		view.set_dynamic_state(dispatcher.metros, camera.get_screen_center_position(), camera.zoom, phase)
+		view.set_dynamic_state([], camera.get_screen_center_position(), camera.zoom, phase)
 		await process_frame
 		await process_frame
 		await RenderingServer.frame_post_draw
 		if DisplayServer.get_name() != "headless":
 			var image := root.get_texture().get_image()
-			var rail := image.get_pixel(620, 250)
+			solid_probe = Vector2i(view.get_global_transform_with_canvas() * rail_center)
+			lane_probe = Vector2i(view.get_global_transform_with_canvas() * (rail_center - rail_normal * 8.0))
+			outside_probe = Vector2i(view.get_global_transform_with_canvas() * (rail_center - rail_normal * 20.0))
+			var rail := image.get_pixelv(lane_probe)
 			var city := image.get_pixel(740, 90)
-			var solid := image.get_pixel(620, 258)
+			var solid := image.get_pixelv(solid_probe)
 			var station_fill := image.get_pixel(528, 258)
 			var station_border := image.get_pixel(528, 247)
 			var shadow_position := image.get_pixel(532, 280)
-			for terminal_pixel: Vector2i in [Vector2i(511, 258), Vector2i(1086, 738)]:
+			var centerline: PackedVector2Array = dispatcher.routes[0]["centerline"]
+			var terminal_probes := PackedVector2Array([
+				centerline[0] + (centerline[0] - centerline[1]).normalized() * 17.0,
+				centerline[centerline.size() - 1] + (centerline[centerline.size() - 1] - centerline[centerline.size() - 2]).normalized() * 17.0
+			])
+			for terminal_position: Vector2 in terminal_probes:
+				var terminal_pixel := Vector2i(view.get_global_transform_with_canvas() * terminal_position)
 				var terminal_color := image.get_pixelv(terminal_pixel)
 				var terminal_background := image.get_pixel(400, terminal_pixel.y)
 				if absf(terminal_color.r - terminal_background.r) + absf(terminal_color.g - terminal_background.g) + absf(terminal_color.b - terminal_background.b) > 0.025:
@@ -66,26 +83,36 @@ func _run() -> void:
 				push_error("The line corridor must be an opaque solid color.")
 				quit(1)
 				return
-			if rail.get_luminance() >= solid.get_luminance() - 0.05:
-				push_error("The train running lanes must be darker than the solid line.")
+			if phase > 0.1 and rail.get_luminance() >= solid.get_luminance() - 0.05:
+				push_error("Daytime running lanes must be darker than the solid line.")
 				quit(1)
 				return
-			var outside := image.get_pixel(620, 239)
-			var outside_background := image.get_pixel(400, 239)
-			if absf(outside.r - outside_background.r) + absf(outside.g - outside_background.g) + absf(outside.b - outside_background.b) > 0.025:
-				push_error("The thinner rail corridor must not have a wide glow or shadow.")
+			var outside := image.get_pixelv(outside_probe)
+			var outside_background := image.get_pixel(400, outside_probe.y)
+			var halo_difference := _pixel_difference(outside, outside_background)
+			if (phase > 0.1 and halo_difference > 0.025) or (phase == 0.0 and (halo_difference < 0.025 or halo_difference > 0.5)):
+				push_error("Rail glow must appear only at night and stay bounded beside the corridor.")
+				quit(1)
+				return
+			var distant_probe := Vector2i(view.get_global_transform_with_canvas() * (rail_center - rail_normal * 32.0))
+			if _pixel_difference(image.get_pixelv(distant_probe), image.get_pixel(400, distant_probe.y)) > 0.025:
+				push_error("Night rail glow must not wash out the surrounding map.")
 				quit(1)
 				return
 			if phase > 0.1:
 				_day_rail = rail
 				_day_city = city
 			else:
-				if absf(rail.r - _day_rail.r) + absf(rail.g - _day_rail.g) + absf(rail.b - _day_rail.b) > 0.08:
-					push_error("The night cycle should not darken the rail layer.")
+				if rail.get_luminance() <= _day_rail.get_luminance() + 0.08:
+					push_error("Night must illuminate the running rails with a clearly visible core.")
 					quit(1)
 					return
 				if _day_city.get_luminance() - city.get_luminance() < 0.03:
 					push_error("The solid background should visibly darken at night.")
+					quit(1)
+					return
+				if city.get_luminance() > 0.04:
+					push_error("Night must be very dark behind the illuminated network.")
 					quit(1)
 					return
 			var path := "/tmp/metro-day.png" if phase > 0.1 else "/tmp/metro-night.png"
@@ -101,7 +128,7 @@ func _run() -> void:
 	await process_frame
 	await RenderingServer.frame_post_draw
 	if DisplayServer.get_name() != "headless":
-		var pixel := root.get_texture().get_image().get_pixel(620, 258)
+		var pixel := root.get_texture().get_image().get_pixelv(solid_probe)
 		if absf(pixel.r - recolor.r) + absf(pixel.g - recolor.g) + absf(pixel.b - recolor.b) > 0.025:
 			push_error("Changing the line color must recolor the visible solid corridor.")
 			quit(1)

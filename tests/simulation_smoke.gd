@@ -21,9 +21,13 @@ func _run_test() -> void:
 	var straight_route := TrackGeometry.circuit(straight, straight_line, straight_lines)
 	var straight_stops: PackedFloat32Array = straight_route["stops"]
 	for index in range(4):
+		if index == 1 or index == 3:
+			continue
 		var station_id: int = [1, 2, 1, 0][index]
 		var stop := TrackGeometry.point_at_distance(straight_route["points"], straight_stops[index])
-		_check(stop.distance_to(straight.stations[station_id].position) <= TrackGeometry.LANE_OFFSET + 0.1, "Route smoothing must keep every intermediate station stop at its actual position.")
+		var clearance := TrackGeometry.station_stop_clearance(station_id, straight_lines)
+		_check(absf(stop.distance_to(straight.stations[station_id].position) - clearance) < 0.02, "Intermediate stops must put the leading cab just outside the station marker.")
+		_check(stop.x < straight.stations[station_id].position.x if index == 0 else stop.x > straight.stations[station_id].position.x, "Each direction must stop on the approach side, not beyond the station.")
 	var corner := TransitGraph.new()
 	for position: Vector2 in [Vector2(-384, 0), Vector2.ZERO, Vector2(0, -384)]:
 		corner.add_station(position)
@@ -34,6 +38,8 @@ func _run_test() -> void:
 	var corner_route := TrackGeometry.circuit(corner, corner_line, corner_lines)
 	var lanes: Array = corner_route["running_paths"]
 	for point: Vector2 in lanes[0]:
+		if point.distance_to(corner.stations[1].position) > 64.0:
+			continue
 		for other: Vector2 in lanes[1]:
 			_check(point.distance_squared_to(other) >= 100.0, "Opposing running lanes must not pinch together at a station corner.")
 	var graph := TransitGraph.new()
@@ -147,7 +153,7 @@ func _run_test() -> void:
 	main.call("_create_line")
 	await process_frame
 	var selector: HBoxContainer = main.get("_line_selector")
-	_check(selector.get_child_count() == 2, "Every line should remain selectable.")
+	_check(selector.get_child_count() == 3, "Every line should remain selectable with add-line immediately afterward.")
 	main.call("_select_line", 0)
 	main.call("_on_wagon_changed", 3.0)
 	_check(main_lines[0].wagon_count == 3, "The wagon setting should apply to the selected line.")

@@ -3,11 +3,13 @@ extends RefCounted
 
 const LANE_OFFSET := 8.0
 const CORRIDOR_SPACING := 32.0
-const CAR_PITCH := 13.0
-const CAR_LENGTH := 12.0
+const CAR_LENGTH := 19.8
+const CAR_PITCH := CAR_LENGTH + 1.0
+const CAR_SCALE := CAR_LENGTH / 12.0
 const CAR_WIDTH := 7.0
 const SAFETY_GAP := 14.0
 const GRID_SIZE := 48.0
+const TERMINAL_GAP := 3.0
 
 static func elastic_path(start: Vector2, finish: Vector2, diagonal_first: bool = true) -> PackedVector2Array:
 	var target := (finish / GRID_SIZE).round() * GRID_SIZE
@@ -26,7 +28,7 @@ static func anchors(graph: TransitGraph, track: Track) -> PackedVector2Array:
 		anchors = PackedVector2Array([graph.stations[track.a].position, graph.stations[track.b].position])
 	anchors[0] = graph.stations[track.a].position
 	anchors[anchors.size() - 1] = graph.stations[track.b].position
-	return simplify(anchors)
+	return simplify(anchors, anchors)
 
 static func closest_point(points: PackedVector2Array, position: Vector2) -> Vector2:
 	var closest := points[0]
@@ -84,7 +86,7 @@ static func reshape_endpoint(points: PackedVector2Array, position: Vector2, at_s
 		result.reverse()
 	return result
 
-static func simplify(points: PackedVector2Array) -> PackedVector2Array:
+static func simplify(points: PackedVector2Array, protected_points: PackedVector2Array = PackedVector2Array()) -> PackedVector2Array:
 	var result := PackedVector2Array()
 	for point: Vector2 in points:
 		if not result.is_empty() and result[result.size() - 1].is_equal_approx(point):
@@ -92,7 +94,7 @@ static func simplify(points: PackedVector2Array) -> PackedVector2Array:
 		if result.size() >= 2:
 			var before := result[result.size() - 1] - result[result.size() - 2]
 			var after := point - result[result.size() - 1]
-			if absf(before.cross(after)) < 0.01 and before.dot(after) > 0.0:
+			if absf(before.cross(after)) < 0.01 and before.dot(after) > 0.0 and not protected_points.has(result[result.size() - 1]):
 				result[result.size() - 1] = point
 				continue
 		result.append(point)
@@ -189,8 +191,8 @@ static func circuit(graph: TransitGraph, line: TransitLine, lines: Array[Transit
 		var outbound_loop := offset_points(centerline, LANE_OFFSET)
 		var inbound_loop := offset_points(centerline, -LANE_OFFSET)
 		inbound_loop.reverse()
-		var outbound_route := _loop_route(graph, line, outbound_loop, false)
-		var inbound_route := _loop_route(graph, line, inbound_loop, true)
+		var outbound_route := _loop_route(graph, line, lines, outbound_loop, false)
+		var inbound_route := _loop_route(graph, line, lines, inbound_loop, true)
 		outbound_route["centerline"] = centerline
 		outbound_route["running_paths"] = [outbound_loop, inbound_loop]
 		outbound_route["reverse_route"] = inbound_route
@@ -198,8 +200,18 @@ static func circuit(graph: TransitGraph, line: TransitLine, lines: Array[Transit
 	# Round the whole route before separating the lanes. Joining already
 	# offset tracks through a station pinches opposing lanes into each other.
 	centerline = round_corners_preserving(centerline, station_positions)
-	var outbound := offset_points(centerline, LANE_OFFSET)
-	var inbound := offset_points(centerline, -LANE_OFFSET)
+	var terminal_insets := PackedFloat32Array()
+	for station_id: int in [line.stations[0], line.stations.back()]:
+		terminal_insets.append(station_stop_clearance(station_id, lines))
+	var shared_length := float(line.wagon_count) * CAR_PITCH + maxf(terminal_insets[0], terminal_insets[1]) + CAR_LENGTH * 0.5
+	var terminal_length := minf(shared_length + 64.0, length(centerline) * 0.5 - 6.0)
+	if line.stations.size() > 2:
+		var first_section := _distance_to_point(centerline, graph.stations[line.stations[1]].position, 0).x
+		var last_section := length(centerline) - _distance_to_point(centerline, graph.stations[line.stations[line.stations.size() - 2]].position, 0).x
+		terminal_length = minf(terminal_length, minf(first_section, last_section) - 6.0)
+	var terminal_ready := terminal_length >= shared_length + 12.0
+	var outbound := _terminal_lane(centerline, LANE_OFFSET, shared_length, terminal_length) if terminal_ready else offset_points(centerline, LANE_OFFSET)
+	var inbound := _terminal_lane(centerline, -LANE_OFFSET, shared_length, terminal_length) if terminal_ready else offset_points(centerline, -LANE_OFFSET)
 	inbound.reverse()
 	var stop_positions: Array[Vector2] = []
 	for station_index in range(1, line.stations.size()):
@@ -208,41 +220,95 @@ static func circuit(graph: TransitGraph, line: TransitLine, lines: Array[Transit
 		stop_positions.append(closest_point(inbound, graph.stations[line.stations[station_index]].position))
 	var result := outbound.duplicate()
 	var outbound_length := length(outbound)
-	var last_tangent := (outbound[outbound.size() - 1] - outbound[outbound.size() - 2]).normalized()
-	_append_turn(result, inbound[0], last_tangent)
 	result.append_array(inbound)
-	var first_tangent := (inbound[inbound.size() - 1] - inbound[inbound.size() - 2]).normalized()
-	_append_turn(result, outbound[0], first_tangent)
 	var stops := PackedFloat32Array()
 	var search_from := 0
 	for position: Vector2 in stop_positions:
 		var mark := _distance_to_point(result, position, search_from)
 		stops.append(mark.x)
 		search_from = int(mark.y)
-	return {"points": result, "centerline": centerline, "running_paths": [outbound, inbound], "stops": stops, "outbound_end": outbound_length, "length": length(result)}
+	var total := length(result)
+	for index in range(stops.size()):
+		var station_index := index + 1 if index < line.stations.size() - 1 else stops.size() - 1 - index
+		if station_index > 0 and station_index < line.stations.size() - 1:
+			var station_id: int = line.stations[station_index]
+			stops[index] = _approach_stop(result, stops[index], graph.stations[station_id].position, station_stop_clearance(station_id, lines))
+	stops[line.stations.size() - 2] = outbound_length - terminal_insets[1]
+	stops[stops.size() - 1] = total - terminal_insets[0]
+	var outbound_entry := _distance_to_point(outbound, point_at_distance(centerline, length(centerline) - terminal_length), 0).x
+	var inbound_entry := outbound_length + _distance_to_point(inbound, point_at_distance(centerline, terminal_length), 0).x
+	var near_exit := total + _distance_to_point(outbound, point_at_distance(centerline, terminal_length), 0).x
+	var far_exit := outbound_length + _distance_to_point(inbound, point_at_distance(centerline, length(centerline) - terminal_length), 0).x
+	var entry_margin := CAR_LENGTH * 0.5 + SAFETY_GAP
+	return {"points": result, "centerline": centerline, "running_paths": [outbound, inbound], "stops": stops, "outbound_end": outbound_length, "length": total, "terminal_ready": terminal_ready, "terminal_insets": terminal_insets, "terminal_entries": PackedFloat32Array([inbound_entry - entry_margin, outbound_entry - entry_margin]), "terminal_exits": PackedFloat32Array([near_exit, far_exit])}
 
-static func _loop_route(graph: TransitGraph, line: TransitLine, points: PackedVector2Array, reverse: bool) -> Dictionary:
+static func reversal_distance(route: Dictionary, wagons: int, stop_index: int) -> float:
+	var terminal := 0 if stop_index == route["stops"].size() - 1 else 1
+	return wagons * CAR_PITCH + 2.0 * float(route["terminal_insets"][terminal])
+
+static func _terminal_lane(centerline: PackedVector2Array, offset: float, shared_length: float, terminal_length: float) -> PackedVector2Array:
+	var sampled := PackedVector2Array()
+	var distances := PackedFloat32Array()
+	var traveled := 0.0
+	var total := length(centerline)
+	sampled.append(centerline[0])
+	distances.append(0.0)
+	for index in range(1, centerline.size()):
+		var segment_length := centerline[index - 1].distance_to(centerline[index])
+		var steps := maxi(1, ceili(segment_length / 4.0))
+		for step in range(1, steps + 1):
+			var distance := traveled + segment_length * float(step) / steps
+			if step < steps and distance > terminal_length + 4.0 and distance < total - terminal_length - 4.0:
+				continue
+			sampled.append(centerline[index - 1].lerp(centerline[index], float(step) / steps))
+			distances.append(distance)
+		traveled += segment_length
+	var shifted := offset_points(sampled, offset)
+	for index in range(sampled.size()):
+		var distance := minf(distances[index], traveled - distances[index])
+		shifted[index] = sampled[index].lerp(shifted[index], smoothstep(shared_length, terminal_length, distance))
+	return shifted
+
+static func station_stop_clearance(station_id: int, lines: Array[TransitLine]) -> float:
+	var serving := 0
+	for line: TransitLine in lines:
+		if line.stations.has(station_id):
+			serving += 1
+	return 10.0 + 2.0 * maxi(1, serving) + CAR_LENGTH * 0.5 + TERMINAL_GAP
+
+static func _approach_stop(points: PackedVector2Array, mark: float, position: Vector2, clearance: float) -> float:
+	var total := length(points)
+	var traveled := 0.0
+	# Walk backwards to the approach-side circle boundary, including loop wrap.
+	while traveled < total:
+		var distance := fposmod(mark - traveled, total)
+		if point_at_distance(points, distance).distance_squared_to(position) >= clearance * clearance:
+			var low := maxf(0.0, traveled - 1.0)
+			var high := traveled
+			for iteration in range(12):
+				var middle := (low + high) * 0.5
+				if point_at_distance(points, fposmod(mark - middle, total)).distance_squared_to(position) >= clearance * clearance:
+					high = middle
+				else:
+					low = middle
+			return fposmod(mark - high, total)
+		traveled += 1.0
+	assert(false, "A running path must leave its station marker before a stop can be placed.")
+	return mark
+
+static func _loop_route(graph: TransitGraph, line: TransitLine, lines: Array[TransitLine], points: PackedVector2Array, reverse: bool) -> Dictionary:
 	var stops := PackedFloat32Array()
 	var search_from := 0
 	for index in range(line.stations.size() - 1):
 		var station_index := line.stations.size() - 2 - index if reverse else index
 		var position := closest_point(points, graph.stations[line.stations[station_index]].position)
 		var mark := _distance_to_point(points, position, search_from)
-		stops.append(mark.x)
+		stops.append(_approach_stop(points, mark.x, graph.stations[line.stations[station_index]].position, station_stop_clearance(line.stations[station_index], lines)))
 		search_from = int(mark.y)
 	return {"points": points, "stops": stops, "outbound_end": length(points), "length": length(points)}
 
 static func route_for_direction(route: Dictionary, direction: int) -> Dictionary:
 	return route["reverse_route"] if direction < 0 and route.has("reverse_route") else route
-
-static func _append_turn(points: PackedVector2Array, finish: Vector2, tangent: Vector2) -> void:
-	var start := points[points.size() - 1]
-	var control_a := start + tangent * 22.0
-	var control_b := finish + tangent * 22.0
-	for step in range(1, 17):
-		var t := float(step) / 16.0
-		var u := 1.0 - t
-		points.append(start * u * u * u + control_a * 3.0 * u * u * t + control_b * 3.0 * u * t * t + finish * t * t * t)
 
 static func _distance_to_point(points: PackedVector2Array, point: Vector2, search_from: int) -> Vector2:
 	var traveled := 0.0
@@ -261,6 +327,15 @@ static func _distance_to_point(points: PackedVector2Array, point: Vector2, searc
 
 static func car_position(points: PackedVector2Array, total_length: float, head_distance: float, car_index: int) -> Vector2:
 	return point_at_distance(points, fposmod(head_distance - float(car_index) * CAR_PITCH, total_length))
+
+static func car_axis(points: PackedVector2Array, total: float, distance: float, head_distance: float) -> Vector2:
+	var before := point_at_distance(points, fposmod(distance - 2.0, total))
+	var after := point_at_distance(points, fposmod(distance + 2.0, total))
+	var axis := after - before
+	if axis.length_squared() < 0.0001:
+		var center := point_at_distance(points, fposmod(distance, total))
+		axis = after - center if head_distance > distance + 0.01 else center - before
+	return axis.normalized()
 
 static func train_length(wagon_count: int) -> float:
 	return float(wagon_count) * CAR_PITCH + CAR_LENGTH

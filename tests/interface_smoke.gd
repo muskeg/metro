@@ -48,7 +48,7 @@ func _run() -> void:
 	var selector: HBoxContainer = main.get("_line_selector")
 	var active_tab: Button
 	for child: Node in selector.get_children():
-		if not child.is_queued_for_deletion():
+		if not child.is_queued_for_deletion() and child.button_pressed:
 			active_tab = child
 	_check(active_tab.get_theme_stylebox("pressed").border_color == color, "The selected line indicator must update immediately.")
 	for background: Color in [Color("#111111"), Color("#777777"), Color("#58b8bd"), Color("#e98668"), Color("#dfeee8")]:
@@ -97,6 +97,12 @@ func _run() -> void:
 	root.push_input(click)
 	await process_frame
 	await process_frame
+	selector = main.get("_line_selector")
+	var add: Button = selector.get_child(selector.get_child_count() - 1)
+	var last: Button = selector.get_child(selector.get_child_count() - 2)
+	_check(add.text == "+" and not add.toggle_mode and add.size.y >= 44.0, "Add-line must be an accessible action after the tabs, not a selectable line.")
+	_check(is_equal_approx(add.position.x, last.position.x + last.size.x + 8.0), "Add-line must sit directly beside the final line tab without expanding to the far edge.")
+	_check(add.get_theme_stylebox("normal").border_width_bottom == last.get_theme_stylebox("normal").border_width_bottom, "Add-line must share the line tabs' underline styling.")
 	_check(picker.get_popup().visible, "Pressing the swatch must open the actual picker popup.")
 	_check(picker.get_popup().size.y <= 520, "The color picker must not require a taller screen than the minimum laptop viewport.")
 	if DisplayServer.get_name() != "headless":
@@ -109,6 +115,10 @@ func _run() -> void:
 	await _test_station_preview_and_watch(main)
 	await _test_quiet_interface(main)
 	await _test_help_feedback_layout(main)
+	var count: int = main.get("lines").size()
+	var line_row: HBoxContainer = main.get("_line_selector")
+	line_row.get_child(line_row.get_child_count() - 1).pressed.emit()
+	_check(main.get("lines").size() == count + 1, "The inline plus action must actually create and select a new line.")
 	main.queue_free()
 	await process_frame
 	if _failed:
@@ -412,6 +422,7 @@ func _test_quiet_interface(main: Node) -> void:
 		await process_frame
 		_check(Rect2(Vector2.ZERO, Vector2(viewport_size)).encloses(handle.get_global_rect()) and handle.size.y >= 44, "Collapsed rail handle must stay touch-sized and onscreen.")
 	main.call("_wake_interface")
+	main.set("time_of_day", 0.5)
 	main.call("_update_ui_idle", 7.9)
 	var ui: Control = main.get("_ui_root")
 	_check(is_equal_approx(ui.modulate.a, 1.0), "Controls must not dim before eight idle seconds.")
@@ -419,6 +430,10 @@ func _test_quiet_interface(main: Node) -> void:
 	_check(is_equal_approx(ui.modulate.a, 0.64), "Idle controls must fade smoothly after eight seconds, not disappear abruptly.")
 	main.call("_update_ui_idle", 0.3)
 	_check(is_equal_approx(ui.modulate.a, 0.28), "Idle controls must remain faintly visible and tappable.")
+	main.set("time_of_day", 0.0)
+	main.call("_update_ui_idle", 0.6)
+	_check(is_equal_approx(ui.modulate.a, 0.7), "Dark-night idle controls must retain readable opacity through the day/night transition.")
+	main.set("time_of_day", 0.5)
 	var motion := InputEventMouseMotion.new()
 	motion.relative = Vector2.ONE
 	main.call("_input", motion)
@@ -572,6 +587,7 @@ func _test_route_mouse_input(main: Node) -> void:
 	await process_frame
 	await process_frame
 	var anchor := view.station_handle_position(graph.stations[0], Vector2.RIGHT)
+	await _mouse_motion(view, graph.stations[0].position)
 	await _mouse_motion(view, anchor)
 	await _mouse_event(view, anchor, true)
 	await _mouse_event(view, anchor, false)
@@ -592,6 +608,7 @@ func _test_route_mouse_input(main: Node) -> void:
 	await _mouse_event(view, graph.stations[1].position, true)
 	await _mouse_event(view, graph.stations[1].position, false)
 	_check(main.get("_connect_drag_source_id") == -1 and graph.tracks.size() == 1, "Click completion must redraw the existing connection without duplicating rails.")
+	await _mouse_motion(view, graph.stations[0].position)
 	await _mouse_motion(view, anchor)
 	await _mouse_event(view, anchor, true)
 	await _mouse_motion(view, Vector2(240.0, -144.0))

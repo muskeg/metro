@@ -13,7 +13,7 @@ func _run_test() -> void:
 	if backdrop.background_color(0.5) != Color.WHITE:
 		_fail("Noon must have a pure white background.")
 		return
-	if backdrop.background_color(0.0) != backdrop.NIGHT_COLOR or backdrop.background_color(0.0).get_luminance() > 0.2:
+	if backdrop.background_color(0.0) != backdrop.NIGHT_COLOR or backdrop.background_color(0.0).get_luminance() > 0.04:
 		_fail("Midnight must have a dark background.")
 		return
 	if backdrop.background_color(0.0) != backdrop.background_color(1.0) or backdrop.background_color(0.5) != backdrop.background_color(-0.5):

@@ -177,7 +177,7 @@ func _run() -> void:
 	_check(main.get("dispatcher").lines.size() == main.get("lines").size(), "Dispatcher must include all newly split lines.")
 	await process_frame
 	var selector: HBoxContainer = main.get("_line_selector")
-	_check(selector.get_child_count() == main.get("lines").size(), "All fragments must have accessible line tabs.")
+	_check(selector.get_child_count() == main.get("lines").size() + 1, "All fragments must have accessible line tabs followed by the add-line button.")
 	main.call("_select_line", 1)
 	main.call("_connect_stations", 1, 0)
 	_check(main_graph.tracks.size() == 1, "Surviving fragments must be extendable after deletion.")
@@ -198,11 +198,34 @@ func _run() -> void:
 	await process_frame
 	await _test_elastic_edits()
 	await _test_rail_gizmo_reach()
+	await _test_sharp_rail_picking()
+	await _test_short_rail_reshaping()
+	await _test_local_rail_reshaping()
+	await _test_station_connect_priority()
 	if _failed:
 		quit(1)
 	else:
 		print("Editing smoke passed: shared insertion, deletion, fragments, remapping, reshaping, hover anchors and cancellation.")
 		quit()
+
+func _test_sharp_rail_picking() -> void:
+	var main: Node = load("res://scenes/main.tscn").instantiate()
+	root.add_child(main)
+	await process_frame
+	var graph: TransitGraph = main.get("graph")
+	graph.add_station(Vector2.ZERO)
+	graph.add_station(Vector2(576, 0))
+	graph.add_station(Vector2(576, 576))
+	main.call("_connect_stations", 0, 1)
+	main.call("_connect_stations", 1, 2)
+	main.get("active_line").wagon_count = 6
+	main.call("_refresh_network")
+	main.get("camera").zoom = Vector2.ONE * 2.0
+	main.call("_clear_hover")
+	main.call("_update_hover", Vector2(516, 0))
+	_check(main.get("world_view").hovered_track_id == 0, "Sharper rail guides must remain in place and selectable near station bends.")
+	main.queue_free()
+	await process_frame
 
 func _test_rail_gizmo_reach() -> void:
 	var main: Node = load("res://scenes/main.tscn").instantiate()
@@ -238,6 +261,150 @@ func _test_rail_gizmo_reach() -> void:
 				_check(graph.stations.size() == 2, "Gizmo clicks must not insert stations.")
 			main.call("_update_hover", endpoint * 0.5 + Vector2(5000.0, 5000.0))
 			_check(view.hovered_track_id == -1, "Leaving the gizmo area must clear the rail hover.")
+	main.queue_free()
+	await process_frame
+
+func _test_station_connect_priority() -> void:
+	var main: Node = load("res://scenes/main.tscn").instantiate()
+	root.add_child(main)
+	await process_frame
+	main.set_process(false)
+	main.set_process_input(false)
+	var graph: TransitGraph = main.get("graph")
+	var view: WorldView = main.get("world_view")
+	var camera: Camera2D = main.get("camera")
+	graph.add_station(Vector2.ZERO)
+	graph.add_station(Vector2(576, 0))
+	graph.add_station(Vector2(-576, 0))
+	main.call("_connect_stations", 0, 1)
+	for zoom: float in [0.5, 1.0, 2.0, 5.0]:
+		camera.zoom = Vector2.ONE * zoom
+		view.view_zoom = camera.zoom
+		main.call("_clear_hover")
+		main.call("_update_hover", Vector2(192, 0))
+		_check(view.hovered_track_id == 0, "The existing rail must still expose insertion when approaching it directly.")
+		main.call("_update_hover", Vector2.ZERO)
+		var anchor := view.station_handle_position(graph.stations[0], Vector2.RIGHT)
+		for step in range(1, 33):
+			main.call("_update_hover", Vector2.ZERO.lerp(anchor, step / 32.0))
+			_check(view.hovered_station_id == 0 and view.hovered_track_id == -1, "Rail insertion must not steal a visible station connect handle or its approach corridor.")
+		main.call("_begin_world_interaction", anchor)
+		_check(main.get("_connect_drag_source_id") == 0 and graph.stations.size() == 3, "Clicking connect above an existing rightward rail must draw, not insert a station.")
+		main.call("_extend_stroke", graph.stations[2].position)
+		_check(view.route_target_id == 2 and view.get("_preview_error").is_empty(), "The captured station handle must allow a valid leftward connection.")
+		main.call("_cancel_gesture")
+	main.call("_update_hover", Vector2.ZERO)
+	main.call("_begin_world_interaction", view.station_handle_position(graph.stations[0], Vector2.RIGHT))
+	main.call("_end_world_interaction", graph.stations[2].position)
+	_check(graph.stations.size() == 3 and graph.tracks.size() == 2, "Completing a left connection must keep the original right rail and avoid accidental station insertion.")
+	main.queue_free()
+	await process_frame
+
+func _test_short_rail_reshaping() -> void:
+	var main: Node = load("res://scenes/main.tscn").instantiate()
+	root.add_child(main)
+	await process_frame
+	var graph: TransitGraph = main.get("graph")
+	var view: WorldView = main.get("world_view")
+	var camera: Camera2D = main.get("camera")
+	graph.add_station(Vector2.ZERO)
+	graph.add_station(Vector2(96, 0))
+	main.get("active_line").wagon_count = 1
+	main.call("_connect_stations", 0, 1)
+	for endpoint: Vector2 in [Vector2(96, 0), Vector2(0, 96), Vector2(96, 96)]:
+		graph.stations[1].position = endpoint
+		graph.tracks[0].waypoints = PackedVector2Array([Vector2.ZERO, endpoint])
+		main.call("_refresh_network")
+		for zoom: float in [0.5, 1.0, 2.0, 5.0]:
+			camera.zoom = Vector2.ONE * zoom
+			for deleting: bool in [false, true]:
+				main.call("_clear_hover")
+				main.call("_update_hover", endpoint * 0.5)
+				_check(view.hovered_track_id == 0 and view.hovered_station_id == -1, "Station hover halos must not hide short-rail controls.")
+				var anchor := view.rail_anchor
+				var target := view.rail_delete_position() if deleting else view.rail_move_position()
+				_check(absf((target - anchor).normalized().dot(endpoint.normalized())) < 0.01, "Short-rail controls must sit beside the rail, not along it.")
+				for step in range(1, 33):
+					main.call("_update_hover", anchor.lerp(target, step / 32.0))
+					_check(view.hovered_track_id == 0 and view.rail_anchor == anchor, "Short-rail controls must stay reachable beside station hover areas (end %s, zoom %s, delete %s, step %s)." % [endpoint, zoom, deleting, step])
+				main.call("_begin_world_interaction", target)
+				if deleting:
+					_check(main.get("_delete_dialog").visible, "Short-rail deletion must remain reachable.")
+					main.get("_delete_dialog").hide()
+				else:
+					_check(main.get("_editing_track_id") == 0, "Short-rail reshaping must start without moving a station.")
+					if main.get("_editing_track_id") < 0:
+						main.queue_free()
+						await process_frame
+						return
+					_check(view.get("_preview_hint") == "Glissez vers une autre case de la grille.", "Unchanged grid-snapped edits must explain how to move the bend.")
+					main.call("_update_track_edit", anchor + Vector2(1, 1))
+					_check(not view.get("_preview_hint").is_empty(), "Sub-grid pointer movement must retain the snapping hint.")
+					main.call("_cancel_gesture")
+			main.call("_clear_hover")
+			main.call("_update_hover", Vector2.ZERO)
+			_check(view.hovered_station_id == 0, "Station centers must retain priority over nearby rails.")
+	graph.stations[1].position = Vector2(96, 0)
+	var detour := PackedVector2Array([Vector2.ZERO, Vector2(48, 48), Vector2(96, 0)])
+	graph.tracks[0].waypoints = detour
+	main.get("active_line").wagon_count = 6
+	main.call("_refresh_network")
+	camera.zoom = Vector2.ONE * 2.0
+	main.call("_clear_hover")
+	main.call("_begin_world_interaction", Vector2(48, 48))
+	main.call("_update_track_edit", Vector2(48, 0))
+	_check(main.call("_track_edit_error") == "Cette rame serait trop longue pour un segment. Allongez le tracé.", "Shortening below full-train clearance must explain the length restriction.")
+	_check(view.get("_preview_error") == main.call("_track_edit_error") and view.route_pins[0] == Vector2(48, 0), "The exact rejection must accompany the dragged bend, not only the distant endpoint.")
+	main.call("_end_world_interaction", Vector2(48, 0) + main.get("_edit_pointer_offset"))
+	_check(graph.tracks[0].waypoints == detour, "Rejected short edits must preserve the original route.")
+	main.queue_free()
+	await process_frame
+
+func _test_local_rail_reshaping() -> void:
+	var main: Node = load("res://scenes/main.tscn").instantiate()
+	root.add_child(main)
+	await process_frame
+	var graph: TransitGraph = main.get("graph")
+	var view: WorldView = main.get("world_view")
+	graph.add_station(Vector2.ZERO)
+	graph.add_station(Vector2(768, 384))
+	var original := PackedVector2Array([Vector2.ZERO, Vector2(192, 0), Vector2(192, 192), Vector2(576, 192), Vector2(576, 384), Vector2(768, 384)])
+	main.call("_connect_stations", 0, 1, original)
+	main.get("camera").zoom = Vector2.ONE * 2.0
+	main.call("_clear_hover")
+	main.call("_update_hover", Vector2(384, 192))
+	main.call("_begin_world_interaction", view.rail_move_position())
+	_check(main.get("_editing_segment_index") == 2, "A section handle must select its own pair of anchors, not the entire track.")
+	_check(view.get("_preview_hint") == "Glissez vers une autre case de la grille.", "Beginning a section edit must not change the existing route.")
+	if DisplayServer.get_name() != "headless":
+		main.get("camera").position = Vector2(384, 192)
+		main.get("camera").reset_smoothing()
+		await process_frame
+		await RenderingServer.frame_post_draw
+		_check(root.get_texture().get_image().save_png("/tmp/metro-reshape-anchors.png") == OK, "Could not capture fixed reshape anchors and the grid-snapping hint.")
+	main.call("_update_track_edit", Vector2(384, 288))
+	var preview: PackedVector2Array = main.get("_drawn_points").duplicate()
+	_check(preview.slice(0, 3) == original.slice(0, 3) and preview.slice(preview.size() - 3) == original.slice(3), "Section reshaping must preserve every waypoint outside its neighboring anchors.")
+	_check(view.reshape_anchors == PackedVector2Array([original[2], original[3]]), "The neighboring fixed anchors must be exposed to the renderer.")
+	_check(graph.tracks[0].waypoints == original, "Local reshaping must remain a preview until release.")
+	var offset: Vector2 = main.get("_edit_pointer_offset")
+	main.call("_end_world_interaction", Vector2(384, 288) + offset)
+	_check(graph.tracks[0].waypoints == preview, "Releasing a local section edit must commit the exact preview.")
+	_check(view.reshape_anchors.is_empty(), "Fixed-anchor markers must clear when editing ends.")
+	var committed := graph.tracks[0].waypoints.duplicate()
+	main.call("_clear_hover")
+	main.call("_begin_world_interaction", original[1])
+	main.call("_update_track_edit", Vector2(144, 48))
+	preview = main.get("_drawn_points").duplicate()
+	var fixed := preview.find(original[2])
+	_check(fixed >= 0 and preview.slice(fixed) == committed.slice(2), "Moving an existing bend must preserve all subsequent anchors, including a previously reshaped section.")
+	_check(TrackGeometry.anchors(graph, graph.tracks[0]) == committed, "Committed editing anchors must survive subsequent geometry reads, even when collinear.")
+	main.call("_cancel_gesture")
+	_check(graph.tracks[0].waypoints == committed and view.reshape_anchors.is_empty(), "Cancelling a local bend edit must restore no geometry and clear its anchor markers.")
+	main.call("_clear_hover")
+	main.call("_begin_world_interaction", original[1])
+	main.call("_end_world_interaction", Vector2(144, 48))
+	_check(graph.tracks[0].waypoints == preview and TrackGeometry.anchors(graph, graph.tracks[0]).has(original[2]), "Fixed anchors that become collinear must remain available after committing the edit.")
 	main.queue_free()
 	await process_frame
 
@@ -278,6 +445,7 @@ func _test_elastic_edits() -> void:
 	_check(not view.get("_preview_error").is_empty(), "Invalid route feedback must be sent to the renderer.")
 	main.call("_end_world_interaction", Vector2(192.0, 480.0))
 	_check(graph.tracks[0].waypoints == committed and main.get("_editing_track_id") == -1, "An invalid bend edit must preserve the original rail atomically.")
+	main.call("_update_hover", Vector2.ZERO)
 	main.call("_begin_world_interaction", Vector2(32.0, 0.0))
 	main.call("_pin_route_bend", Vector2(192.0, 480.0))
 	main.call("_end_world_interaction", Vector2(576.0, 192.0))

@@ -17,6 +17,9 @@ var blocked: bool = false
 var at_station: bool = true
 var station_arrival_time: float = 0.0
 var departure_error: float = 0.0
+var passenger_count := 0
+var visit: StationVisit
+var reverse_pending := false
 
 func _init(metro_id: int, route_id: int, initial_position: Vector2) -> void:
 	id = metro_id

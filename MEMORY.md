@@ -12,12 +12,14 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
 ## Current product decisions
 
 - Native Godot 4/GDScript relaxing transit builder, named **Metro**. No economy,
-  failure pressure or demand simulation. Release targets: Windows x86_64 and
+  failure pressure or network-wide demand simulation. Light bounded local
+  passenger exchanges affect stop times without destinations or transfers.
+  Release targets: Windows x86_64 and
   universal macOS (Intel x86_64 + Apple Silicon arm64), plus single-thread Web
   hosted on GitHub Pages.
 - English default; French can be selected live in Menu. Language is persisted
   through ConfigFile. Add all new UI messages to [ui.csv](./translations/ui.csv).
-- Minimalist map: pure white at noon, a subtle blue night gradient and warm
+- Minimalist map: pure white at noon, a very dark blue night gradient and warm
   twilight, smoothly transitioning. No scenery or visible grid; the 48-pixel
   construction grid remains active.
   Earlier procedural-city iterations were deliberately removed, not unfinished.
@@ -28,6 +30,15 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
   and continues by clicks. Tab or the source's two-arrow handle flips posture;
   Backspace undoes the last pinned section. Rail diamonds reshape bends or add
   a detour to a straight rail. Red previews identify invalid routes before commit.
+  Reshaping is local: a section preserves its two neighboring anchors and all
+  distant bends; a bend preserves its neighbors. Fixed anchors remain editable
+  even when collinear, and appear as small circles during dragging. Rail popups
+  sit perpendicular to the section and retain priority over station hover halos.
+  Once a station is hovered, its visible controls and center-to-handle corridors
+  take priority over rail insertion, even above an existing rightward rail.
+  Direct rail access outside those corridors still exposes insertion/reshape.
+  Live wrapped feedback follows the dragged point and explains grid snapping or
+  rejected geometry; unchanged releases do not restart trains.
 - Connect the endpoints of a line with at least three stations to close a loop.
   Both directions run continuously around it; deleting a station or rail opens
   the loop into one continuous line without reconnecting removed rails.
@@ -42,6 +53,8 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
   1-6 wagons. Cars follow curves. Moving authority preserves full-train gaps on
   each independent circuit; multiple trains can share an interstation section.
   No station-slot locks, geometric cross-line collisions or junction FIFO.
+  Open-line terminal crossover protection is the deliberate exception:
+  each terminal shared track accepts one train at a time, independently per line.
   User explicitly accepted visual overlap where station paths converge.
 - A line has a manual desired maximum (default 4), capped by conservative route
   geometry/service capacity, not station count. Recommended fleet uses cycle
@@ -67,7 +80,9 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
   day/night. It preserves pause and running trains/audio.
   Camera pan/zoom and train following work; placement/move/delete are disabled.
   Entering cancels in-progress edits safely. No setting is persisted.
-- Lines are opaque color bands with darker running lanes, without rail glow.
+- Lines are opaque color bands with darker running lanes by day and bounded
+  colored rail glow/bright cores at night. Shared-station junction illumination
+  fades away around the marker so crossings do not form a luminous cross.
   Lanes are at +/-8 pixels (16 apart); car width is 7. A tighter +/-7 attempt
   blocked shared curved routes and was rejected by simulation tests.
 - Stations retain a 10-pixel white center. Each serving line contributes one
@@ -78,17 +93,22 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
   borders; night softens fills and lightens only neutral borders.
   Radius-aware picking, handles, selection/hover and route-target rings keep
   interaction geometry outside the marker. Membership/recolor updates are live.
+  Markers are opaque above trains again; the rejected transparency experiment
+  exposed the rails and looked unfinished. No artificial car visibility guards.
 - Map-first HUD: paper/ink toolbar and a flat, full-width 60px bottom rail,
   no floating capsule/shadow. Numbered line tabs use colored underlines, neutral
   selected backgrounds and readable text independent of the route color.
   Both + and collapse actions use shrink flags, never expand flags; otherwise
   they steal tab width and cause false overflow. Tabs scroll only as needed.
+  Add-line is styled like the underlined tabs and placed immediately after the
+  last tab inside their scrolling row; only collapse stays fixed at the far right.
   Line controls expand inside the same rail above the tabs, height based on
   content (max 300px), with 1/2/3/5 columns at <620/620/760/1366px. Same-tab
   click folds controls; switching lines keeps them open. Redundant Line settings
   button removed. Menu/help remain separate, mutually exclusive sheets.
   Collapsing the rail leaves the same faint grip used for watch restoration.
-  Controls fade to 28% opacity over 0.6s after eight idle seconds; movement,
+  Controls fade to 28% opacity by day, 70% in dark night, over 0.6s after eight
+  idle seconds; the threshold follows day/night continuously. Movement,
   touch, keys and action feedback immediately wake them without consuming input.
   Sheets, dialogs, picker and active gestures prevent fading. The independent
   watch restore grip never fades. Collapse/watch are not persisted.
@@ -105,9 +125,49 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
 - Original 48-second PCM music uses a consonant repeating eight-bar progression,
   a swung 80 BPM kick/snare groove, sparse melody and muted hats. Music starts
   at 0.4 volume; train effects have a separate volume.
-- Trains are top-down rectangular cars with short flexible gangways, windows
-  and lamps; running gear is hidden, not represented by decorative wheels.
-  They have no offset drop shadow.
+- Trains are top-down metro trainsets with matching cab ends, pale neutral roofs,
+  line-colored body edges and articulated accordion gangways. Doors/windows,
+  ventilation and folds fade in at zoom 1.5-3; fine seams/grilles at 3-4.5.
+  Running gear is hidden; no decorative wheels or offset drop shadows.
+  All cars/cabs gained another 10%: length 19.8px, pitch 20.8px, width 7px.
+  `CAR_SCALE` shares longitudinal proportions and preserves the one-pixel gap.
+  Body rendering,
+  doors, gangways, platforms and full-train safety/capacity share the proportions.
+  Very dark blue night (#03060c) uses bright rail cores and bounded colored
+  halos, plus distinct local headlamp glow and stronger fading beams.
+  Rail illumination is excluded within shared-marker radius + 24px and fades
+  back over 16px; geometry and per-vertex strengths are cached on network refresh.
+  Wide glow layers use cached Polygon2D rounded offset outlines, resolving
+  inward folds without changing width. Loop holes are split/subtracted rather
+  than filled. Vertex colors preserve junction fades; recolor refreshes without
+  redispatch. Replaces the rejected Line2D curvature-width workaround.
+- Close-up stops reveal one continuous transient platform per train and tiny passengers.
+  The connected ribbon is guided by car centers and the two end caps, with
+  paired 2px samples, local averaging and four corner-cutting passes. It follows
+  tighter bends without per-car endpoint steps; safety edging and paving
+  are placed along the smoothed edges. One polygon union resolves any folds.
+  platforms never reshape routes or require the entire train to be straight.
+  Alighting precedes boarding; people stay on the platform and fade there.
+  Platforms fade out 1.2s after departure/withdrawal. Visible only above zoom 1.5,
+  fading fully in by 3; boarding simulation is identical at every zoom.
+  Platforms have concrete pavement, fine joints, a defined perimeter and a
+  continuous warm tactile safety strip; detail stays inside their merged outline.
+  People are smaller (body radius 0.34, formerly 0.48), with varied coats/skin,
+  scattered queues and individual start/speed variation. Cached short walking
+  segments stay inside the platform inset by body radius + 0.2px (miter inset
+  preserves containment around concave corners); smoothstep
+  motion is capped at 4 world units/s. Alighters have extra visual walking time
+  after exiting; boarders approach earlier, shortening only when time is limited.
+  Visual timing is independent of occupancy and never extends train dwell.
+  Alighters stop walking at the end of their trip and fade in place.
+  Each car has two doors and twelve abstract places. Local deterministic exchanges
+  carry riders between stops, empty trains at termini, and add at most two
+  seconds beyond the chosen minimum dwell at arrival. Recovery remains separate.
+  Cycle/headway/capacity estimates include the two-second boarding allowance.
+  Fuller flows use at least two boarders per door when capacity permits.
+  Local seeded profiles are generated once per visit; rendering does not use
+  global randomness. Actual occupancy follows individual completed journeys.
+  Pause freezes activity, geometry rebuilds clear it; no demand objectives.
 
 ## Architecture and invariants
 
@@ -115,6 +175,8 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
   graph-edit integration. Release over GUI cancels a gesture; Escape/right-click
   restores a movement's original station position and incident paths. Mouse input
   uses event coordinates transformed through the world canvas, not OS cursor reads.
+  Frame-to-frame hover uses the stored viewport pointer position from the last
+  mouse event, transformed by the current canvas; it never polls OS coordinates.
   Drawing pins/history and rail-edit previews are separate from committed geometry.
   `_configure_display` / `_update_display_density` handle logical display units;
   `_resize_interface` lays out the HUD. Sheets never pause simulation.
@@ -144,18 +206,32 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
 - Geometry edits validate all affected paths; invalid movement rolls back the
   full change. Moving a station reshapes its adjacent elbow from the gesture's
   original path, keeping distant bends fixed. Off-station crossings are rejected.
-- [track_geometry.gd](./scripts/render/track_geometry.gd): canonical anchors,
-  elastic_path (deterministic diagonal-first/straight-first sections),
-  simplification, corner rounding, shared-corridor offsets and route circuits.
-  Round the complete centerline BEFORE separating the two lanes. Use a tighter
-  12-pixel smooth corner at stations to center the rail marker without hard
-  elbows; the latter deadlocked shared junctions.
+- [track_geometry.gd](./scripts/render/track_geometry.gd): canonical grid guides,
+  elastic_path, preview rounding, shared-corridor offsets and route circuits.
+  Original geometry restored: local corner rounding of 12px at stations,
+  24px elsewhere, capped at 35% of adjacent segment lengths, before lane offsets.
+  No forced straight berths, removed elbows, expanded terminal paths or special
+  effective picking paths. Preserve sharper user-drawn bends and normal caps.
+  `anchors` retains explicit collinear waypoints; `simplify` accepts protected
+  points for local edits. Rendering still simplifies before corner rounding,
+  so keeping an editing anchor does not alter the running path.
 - Circuit data includes `points` (closed simulation path), `centerline`,
   `running_paths` (two open visible lanes), `stops`, `outbound_end`, and `length`.
   A loop has closed visible lanes and a separate `reverse_route`; select the
   route by train direction for simulation and rendering.
-  Stops project onto segments, not only vertices: simplifying a collinear station
-  vertex must not move its stop to another station.
+  Every leading cab stops on the approach side outside its station marker
+  at radius + half-car + 3px, in both open-line and loop directions.
+  Intermediate/loop projections walk back to that clearance-circle boundary;
+  moving trains still pass underneath markers, without changed running paths.
+  `terminal_insets` stores each end independently, including larger interchanges.
+  Open terminals share a center track with a
+  visible two-lane convergence, and reverse cabs at departure, not by U-turn.
+  `terminal_ready`, `terminal_entries` and `terminal_exits` describe fit/protection.
+  Shared zone length is wagon span + largest terminal inset + half-car;
+  the crossover adds up to 64px,
+  bounded before the adjacent station and before the two terminal zones overlap.
+  No terminal path extends beyond the station cap. Too-short lines disable
+  dispatch with explicit localized guidance; wagon increases validate terminal fit.
 - [dispatcher.gd](./scripts/dispatch/dispatcher.gd): 60 Hz substeps; moving
   authority uses forward circuit distance minus leader length and safety gap.
   Braking envelope includes 0.25s reaction against a conservatively stationary
@@ -163,7 +239,8 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
   Known station stops instead use a single-substep braking margin to avoid a
   creeping approach tail. Arrival snap requires pre-step speed within one
   braking step; subpixel displacement does not reset speed.
-  Open lines share a continuous outbound/turn/inbound circuit; loop directions
+  Open lines share an outbound/inbound distance circuit with retraced terminal
+  center tracks; loop directions
   have separate circuits. Independent lines never constrain each other.
   Safety can brake mid-section; regulation normally holds at stations, at most
   three extra seconds. `_last_departures` stores timing, not occupancy.
@@ -176,14 +253,39 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
   `_retire_surplus` withdraws stopped trains at termini/loop origin, never moving
   trains. Dispatch starts both ends, retries blocked origins and alternates.
   Geometry/wagon edits clear trains/routes/timetables; pause freezes simulation.
+  `_terminal_owners` protects each line's two terminal crossovers independently.
+  Acquire before braking into a junction, hold through recovery/reversal until
+  the tail clears with margin, release on withdrawal/rebuild. Other lines and
+  loops never share these locks. `reverse_pending` advances the logical head
+  by wagon span + twice that terminal's inset while stopped, after validating
+  forward authority (`TrackGeometry.reversal_distance`): the
+  old last car becomes head without moving any physical car. Cycle estimates
+  subtract that logical jump. `car_axis` handles exact reversal cusps.
+  A short line that cannot clear one terminal before reaching the opposite
+  entry is capped at one train to prevent bidirectional terminal deadlock.
   See [DESIGN.md](./DESIGN.md) for formulas and intentional game simplifications.
+- [station_visit.gd](./scripts/sim/station_visit.gd): stop exchange and immutable
+  door/car geometry snapshot. Individual alight/board completions update train
+  occupancy; cached visual walk timing is independent. Dispatcher-owned visits survive a train's
+  departure/retirement for fade-out, expire promptly and clear on rebuild.
+  Local flow does not use global train IDs, preserving cross-line independence.
+  A smoothed car-center ribbon resolves into one exterior polygon at arrival,
+  not per frame. Inner/safety edges and pavement details follow that same curve.
+  [world_view.gd](./scripts/render/world_view.gd) consumes visits only for drawing;
+  offscreen platform/person work is culled. [main.gd](./scripts/main.gd) passes
+  visits alongside trains, without a separate wall-clock animation timer.
 - [world_view.gd](./scripts/render/world_view.gd): draw rail bands from centerline
   and open running paths, not the closed simulation circuit. A rounded band cap
-  finishes each open terminus behind its station; loops have no caps. Physical turnaround curves
-  still exist in simulation; do not describe them as removed or teleport trains.
+  finishes each open terminus behind its station; loops have no caps. Open
+  termini use visible convergence and in-place cab reversal, not physical turns.
+  All cars, gangways and lights remain drawn during terminal movement; there
+  are no visibility-range guards in rendering or train picking.
   Close-up train and rail outlines omit Godot's world-unit AA fringe at zoom
   1.5 or greater to avoid blurred contours. Headlights render before the cars;
-  station markers render above passing trains.
+  station markers render opaque above overlapping trains; no fading opacity pass.
+  Night glow is local layered geometry, compatible with native/Web Compatibility
+  rendering, not an HDR/environment dependency. Compressed gangways use two
+  triangles so a folded connector cannot fail polygon triangulation.
   `station_line_colors` derives membership once per line, in array order;
   `station_radius` is shared with input picking. `_draw_network_station` is
   also used for route source/target repaint, preserving committed line rings.
@@ -222,6 +324,7 @@ godot --headless --path . --script res://tests/simulation_smoke.gd
 godot --headless --path . --script res://tests/loop_smoke.gd
 godot --headless --path . --script res://tests/train_controls_smoke.gd
 godot --headless --path . --script res://tests/schedule_smoke.gd
+godot --headless --path . --script res://tests/terminal_smoke.gd
 godot --headless --path . --script res://tests/intersection_smoke.gd
 godot --headless --path . --script res://tests/editing_smoke.gd
 godot --headless --path . --script res://tests/interface_smoke.gd
@@ -269,6 +372,883 @@ godot --headless --path . --export-release "Web" dist/web/index.html
   Windows log-file path if specifying one.
 
 ## Recent work and verification record
+
+### Committing accumulated train, platform and interaction refinements (2026-11-07)
+
+- User requested committing the pending changes together: terminal reversal,
+  station clearances, platform/passenger simulation and visuals, local reshape
+  anchors/feedback, station-handle priority, inline add-line action, proportions,
+  night glow, translations, regression tests and terminal CI coverage.
+- Fresh releases used the documented `godot --headless --path . --export-release`
+  commands for Windows Desktop, macOS and Web. First macOS export reported an
+  unreadable transient `dist/Metro.app` icon while packing; repeating the exact
+  macOS command completed without errors/warnings. Windows/Web logs were clean.
+- Verified `file dist/Metro.exe`, `unzip -t dist/Metro-macOS.zip`, nonempty Web
+  HTML/JS/WASM/PCK, universal macOS x86_64/arm64, strict deep codesign and exported
+  Apple Silicon startup with `--headless --quit-after 10 --audio-driver Dummy`.
+  `git --no-pager diff --check` passed. No additional tests were rerun for this
+  commit-only task; prior validation remains recorded below. Windows/Intel
+  runtime and browser checks remain unrun. No push requested.
+
+### Uniform merged glow, replacing distorted stroke joins (2026-11-07)
+
+- User rejected continued inner folds and weird curved glow. Removed Line2D
+  width profiles in [world_view.gd](./scripts/render/world_view.gd). Rounded
+  `Geometry2D.offset_polyline` outlines resolve self-overlap before rendering as
+  cached Polygon2D layers of constant 30/22/14px width. Closed-loop holes are
+  split through their center before subtraction to produce simple polygons.
+  Per-vertex junction fades and live recolor/night opacity remain.
+- Expanded [train_visual_smoke.gd](./tests/train_visual_smoke.gd) with actual
+  offset S-bends: halo boundaries stay within 15.1px of the lane, coverage never
+  stacks within a layer, and loop interiors remain unlit. Tight-radius outlines
+  triangulate cleanly. Native S-bend capture inspected: even bands, no wedge
+  spikes or changing-width shoulders. README/DESIGN/current-state memory updated.
+- Native train_visual and visual tests passed using
+  `/Applications/Godot.app/Contents/MacOS/Godot --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy`
+  and the same command with `res://tests/visual_smoke.gd`.
+- Fresh Windows/macOS/Web release exports succeeded using the documented
+  export commands; all three logs had no errors/warnings. Windows PE x86_64,
+  nonempty Web HTML/JS/WASM/PCK, macOS ZIP integrity, universal x86_64/arm64,
+  `codesign --verify --deep --strict` and Apple Silicon exported startup
+  (`--headless --quit-after 10 --audio-driver Dummy`) verified.
+  `git --no-pager diff --check` passed.
+- Exact user screenshot topology was approximated, not reconstructed; no
+  Windows/Intel runtime, browser run or frame-time profiling this task.
+  Dispatch/passenger/UI suites were not rerun for this rendering-only fix.
+
+### Preventing inner-bend glow folds (2026-11-07)
+
+- User screenshot showed a folded luminous wedge inside a tight running-lane
+  bend after round joins fixed the outside corners. Added cached per-layer
+  curvature width profiles in [world_view.gd](./scripts/render/world_view.gd):
+  halo half-width stays below 80% of the local circumcircle radius. Profiles
+  interpolate linearly and wrap closed-lane neighbors. No change to running
+  paths, rail cores, passengers, UI, straight widths or junction fading.
+- [train_visual_smoke.gd](./tests/train_visual_smoke.gd) verifies a 4px-radius
+  bend limits the 30px halo below a 3.3px half-width and straight rails retain
+  full width. Native train_visual and visual smoke passed using
+  `/Applications/Godot.app/Contents/MacOS/Godot --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy`
+  and the same command with `res://tests/visual_smoke.gd`.
+  README/DESIGN updated.
+- Fresh exports passed with `/Applications/Godot.app/Contents/MacOS/Godot`:
+
+  ```sh
+  --headless --path . --export-release "Windows Desktop" dist/Metro.exe
+  --headless --path . --export-release "macOS" dist/Metro-macOS.zip
+  --headless --path . --export-release "Web" dist/web/index.html
+  unzip -t dist/Metro-macOS.zip
+  file dist/Metro.exe
+  test -s dist/web/index.html
+  test -s dist/web/index.js
+  test -s dist/web/index.wasm
+  test -s dist/web/index.pck
+  git diff --check
+  ```
+
+  No export errors/warnings. Extracted universal x86_64/arm64 app passed
+  `codesign --verify --deep --strict` and executable startup
+  `--headless --quit-after 10 --audio-driver Dummy`. Ad-hoc, not notarized.
+  Temporary captures/export logs/extracted app cleaned. Exact screenshot network
+  not reproduced; coverage uses tight synthetic curvature and existing native
+  round-corner pixel/visual fixtures. Windows/Intel/browser runtime, full traffic
+  suite and frame-time profiling not rerun for this renderer-only change.
+  No commit/push.
+
+### Final train, glow, line-action and platform refinements (2026-11-07)
+
+- User approved lengthening every car including cabs by exactly 10%.
+  [track_geometry.gd](./scripts/render/track_geometry.gd) now uses length 19.8,
+  pitch 20.8 (unchanged gap 1) and `CAR_SCALE`; renderer, doors, headlamp sources,
+  gangway attachments, safety, terminal fit, stop clearance and platforms agree.
+- [world_view.gd](./scripts/render/world_view.gd) builds cached Line2D halo layers
+  with round joints/caps and precision 24, replacing overlapping thick primitive
+  joins that exposed square light corners. Closed loops close their halo seam.
+  Junction gradients and bounded widths remain; recoloring refreshes halo colors
+  without rebuilding dispatch. Night opacity follows the existing phase.
+- [main.gd](./scripts/main.gd) moves add-line into the scrolling tab row after
+  the last numbered tab, with the same underline/paper style and 44px minimum
+  target. Selection/recolor loops distinguish the action from toggled line tabs.
+  Last-line reveal includes the adjacent + when space permits; collapse stays fixed.
+- [station_visit.gd](./scripts/sim/station_visit.gd) uses four smoothing passes
+  and stricter paired collinearity simplification, preserving smooth curves
+  rather than cutting visible facets. Passenger inset increased to radius + 0.2
+  using miter joins after exact containment tests exposed concave-edge clipping
+  on the denser outline. Paths and bounded passenger timing remain unchanged.
+- Updated native train probes for shared dimensions; exact 10% length, one-unit
+  spacing and <8-degree platform edge turns pass. A synthetic sharp-corner
+  pixel test verifies glow absent outside the round radius but present beside
+  straight rails; native captures inspected. Added inline + adjacency/style/
+  actual creation tests and updated line-child counts to include the action.
+  README/DESIGN/current-state memory updated.
+- Initial tests had stale cab/door pixel coordinates and tab child assumptions;
+  corrected to actual scaled locations and pressed-tab identity. Added UI test
+  variable redeclaration/type inference parse errors corrected. Native full
+  interface run stalled without output and was stopped; headless version passed
+  before final follow-up checks.
+- Final successful commands used `/Applications/Godot.app/Contents/MacOS/Godot`:
+
+  ```sh
+  --headless --path . --script res://tests/interface_smoke.gd
+  --headless --path . --script res://tests/terminal_smoke.gd
+  --headless --path . --script res://tests/schedule_smoke.gd
+  --headless --path . --script res://tests/simulation_smoke.gd
+  --headless --path . --script res://tests/editing_smoke.gd
+  --headless --path . --script res://tests/loop_smoke.gd
+  --headless --path . --script res://tests/train_controls_smoke.gd
+  --headless --path . --script res://tests/localization_smoke.gd
+  --headless --path . --script res://tests/intersection_smoke.gd
+  --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy
+  --path . --script res://tests/visual_smoke.gd --audio-driver Dummy
+  --headless --path . --export-release "Windows Desktop" dist/Metro.exe
+  --headless --path . --export-release "macOS" dist/Metro-macOS.zip
+  --headless --path . --export-release "Web" dist/web/index.html
+  unzip -t dist/Metro-macOS.zip
+  file dist/Metro.exe
+  test -s dist/web/index.html
+  test -s dist/web/index.js
+  test -s dist/web/index.wasm
+  test -s dist/web/index.pck
+  git diff --check
+  ```
+
+  Headway deviation 0.181s regulated vs 6.864s unregulated. All six-minute
+  intersection fixtures retained safe gaps/service; final arrivals perpendicular
+  [110,110], shared terminal/through [88,42], shared segment [118,118], unequal
+  speeds [110,110,74], busy terminal [31], screenshot layout [144,146].
+  Final Windows/macOS/Web exports and asset checks passed without log errors/
+  warnings. Universal x86_64/arm64 extracted app passed
+  `codesign --verify --deep --strict` and startup
+  `--headless --quit-after 10 --audio-driver Dummy`. Ad-hoc, not notarized.
+  Temporary screenshots/export logs/extracted verification app cleaned.
+  Full native interface smoke stalled and was stopped; only headless UI checks
+  completed. Windows/Intel/browser execution and frame-time/audio profiling
+  not rerun. No commit/push.
+
+### Broader platform walks without faster passengers (2026-11-07)
+
+- User found constrained passengers too close to the train. Extended the cached
+  platform-contained paths in [station_visit.gd](./scripts/sim/station_visit.gd)
+  across the pavement with more sideways spread. Separate visual walk timing
+  lets alighters continue after exiting and boarders approach before their batch,
+  retaining 4px/s peak speed, unchanged occupancy/dwell and platform containment.
+  README/DESIGN updated. Schedule tests now measure visual timing, require
+  >=2.5px platform walks and verify added walking time rather than added speed.
+- Final successful commands used `/Applications/Godot.app/Contents/MacOS/Godot`:
+
+  ```sh
+  --headless --path . --script res://tests/schedule_smoke.gd
+  --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy
+  --headless --path . --export-release "Windows Desktop" dist/Metro.exe
+  --headless --path . --export-release "macOS" dist/Metro-macOS.zip
+  --headless --path . --export-release "Web" dist/web/index.html
+  unzip -t dist/Metro-macOS.zip
+  file dist/Metro.exe
+  test -s dist/web/index.html
+  test -s dist/web/index.js
+  test -s dist/web/index.wasm
+  test -s dist/web/index.pck
+  git diff --check
+  ```
+
+  Schedule/body containment/peak-speed tests and native day/night visuals passed;
+  inspected the broader platform crowd capture. Headway deviation remains
+  0.181s regulated vs 6.944s unregulated. All three exports passed without
+  errors/warnings; extracted universal x86_64/arm64 macOS app passed
+  `codesign --verify --deep --strict` and startup
+  `--headless --quit-after 10 --audio-driver Dummy`. Ad-hoc, not notarized.
+  Temporary screenshots/export logs/extracted app cleaned. Windows/Intel/browser
+  execution, full traffic suite and frame-time/audio profiling not rerun for
+  this visual-timing change. No commit/push.
+
+### Platform-contained, slower passengers (2026-11-07)
+
+- User found passengers too fast/far-reaching and requested platform containment.
+  [station_visit.gd](./scripts/sim/station_visit.gd) now caches short segments
+  inside an inset walking polygon, including body clearance on corner platforms.
+  Individual profiles keep timing and queue scatter, but walking distance scales
+  with available time to cap smoothstep peak speed at 4 world units/s. Boarders
+  fade at the platform-side door area; alighters stop and fade on the platform,
+  without continued escape into the map. Occupancy, exchanges, recovery and
+  the exact two-second extra-dwell bound are unchanged.
+- [schedule_smoke.gd](./tests/schedule_smoke.gd) checks whole-body containment
+  at five points per path for 1-6 wagons on open/loop curved platforms, measured
+  speed, fade-in-place, and peak speed at minimum dwells 0/3/12 seconds.
+  README/DESIGN and current-state memory updated. Initial added test reused
+  an enclosing iterator name; corrected the parse error and reran successfully.
+- Final validations used `/Applications/Godot.app/Contents/MacOS/Godot`:
+
+  ```sh
+  --headless --path . --script res://tests/schedule_smoke.gd
+  --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy
+  --headless --path . --export-release "Windows Desktop" dist/Metro.exe
+  --headless --path . --export-release "macOS" dist/Metro-macOS.zip
+  --headless --path . --export-release "Web" dist/web/index.html
+  unzip -t dist/Metro-macOS.zip
+  file dist/Metro.exe
+  test -s dist/web/index.html
+  test -s dist/web/index.js
+  test -s dist/web/index.wasm
+  test -s dist/web/index.pck
+  git diff --check
+  ```
+
+  All passed. Peak-speed probe initially used subpixel deltas at large world
+  coordinates and failed from float precision; use a wider midpoint interval
+  plus the exact smoothstep derivative to verify the same 4px/s threshold.
+  Headway deviation stays 0.181s regulated vs 6.944s unregulated. Native
+  daytime platform capture inspected; people remain on pavement, not in the map.
+  Windows/macOS/Web releases refreshed without log errors/warnings. Extracted
+  universal x86_64/arm64 app passed `codesign --verify --deep --strict` and
+  executable startup `--headless --quit-after 10 --audio-driver Dummy`.
+  Ad-hoc signed, not notarized. Temporary screenshots, export logs and extracted
+  verification app cleaned. Windows/Intel/browser runtime, full intersection
+  suite and audio/frame-time profiling not rerun for this animation-only change.
+  No commit/push.
+
+### Smooth corner platforms and approach-side stops everywhere (2026-11-07)
+
+- User rejected stepped corner platforms. [station_visit.gd](./scripts/sim/station_visit.gd)
+  now guides the ribbon through car centers rather than every car end, with
+  unchanged first/last caps. Paired uniform samples, weighted local averaging
+  and two smoothing passes produce continuous curved inner/outer/safety edges.
+  Paving joints and tactile points follow arc distance along those same edges.
+  A single polygon union resolves folds; replacing repeated triangle unions
+  avoids doing clipping for every finely sampled segment.
+- User explicitly chose stop-before-every-station, while allowing trains to
+  pass underneath in motion. [track_geometry.gd](./scripts/render/track_geometry.gd)
+  shares radius-aware clearance across termini, intermediate stops and both
+  loop directions. Intermediate/loop projections move backwards to the
+  approach-side clearance circle. Rails, caps, edit anchors, circulation paths
+  and terminal reversal metadata remain unchanged.
+- Updated [simulation_smoke.gd](./tests/simulation_smoke.gd) and
+  [loop_smoke.gd](./tests/loop_smoke.gd) with measured clearance/approach checks.
+  [schedule_smoke.gd](./tests/schedule_smoke.gd) checks all car corners and all
+  platform edges clear their visited marker for 1-6 wagons, open/loop directions.
+  Its cross-line independence baseline now has an inactive membership marker,
+  matching the shared station's ring radius; actual crossing trains must still
+  produce identical motion. Larger ring clearance intentionally shifts stops.
+  [train_visual_smoke.gd](./tests/train_visual_smoke.gd) measures <25-degree local
+  turns on corner platform/safety edges; inspected the smooth native capture.
+  README/DESIGN and current-state memory updated.
+- Initial endpoint smoothing still retained 52-degree kinks; the new
+  center-guided ribbon passes the same threshold. Original independence test
+  failed because an extra serving line grows the marker and changes its stop;
+  corrected the baseline geometry, not the no-cross-line-authority invariant.
+  Superseded long schedule runs were stopped before rerunning final code.
+- Successful commands used `/Applications/Godot.app/Contents/MacOS/Godot`:
+
+  ```sh
+  --headless --path . --script res://tests/simulation_smoke.gd
+  --headless --path . --script res://tests/loop_smoke.gd
+  --headless --path . --script res://tests/editing_smoke.gd
+  --headless --path . --script res://tests/train_controls_smoke.gd
+  --headless --path . --script res://tests/schedule_smoke.gd
+  --headless --path . --script res://tests/terminal_smoke.gd
+  --headless --path . --script res://tests/intersection_smoke.gd
+  --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy
+  --path . --script res://tests/visual_smoke.gd --audio-driver Dummy
+  --headless --path . --export-release "Windows Desktop" dist/Metro.exe
+  --headless --path . --export-release "macOS" dist/Metro-macOS.zip
+  --headless --path . --export-release "Web" dist/web/index.html
+  unzip -t dist/Metro-macOS.zip
+  file dist/Metro.exe
+  test -s dist/web/index.html
+  test -s dist/web/index.js
+  test -s dist/web/index.wasm
+  test -s dist/web/index.pck
+  git diff --check
+  ```
+
+  All exports passed without log errors/warnings. Extracted universal
+  x86_64/arm64 app passed `codesign --verify --deep --strict` and executable
+  startup `--headless --quit-after 10 --audio-driver Dummy`.
+  Ad-hoc signing, not notarization. Final schedule/terminal/intersection tests
+  passed without errors. Headway deviation remains 0.181s regulated vs 6.944s
+  unregulated; all six-minute traffic fixtures retained safe moving-block gaps
+  and service. Final arrivals: perpendicular [110,110], shared terminal/through
+  [88,42], nearby/shared segment [118,118], unequal speeds [110,110,74],
+  busy termini [30], screenshot layout [144,146]. Temporary screenshots,
+  export logs and extracted verification app were cleaned.
+  Windows/Intel/browser execution, audio and
+  frame-time profiling not run. No commit/push.
+
+### Finished platform detail, livelier crowds and connect priority (2026-11-07)
+
+- Improved [station_visit.gd](./scripts/sim/station_visit.gd) and
+  [world_view.gd](./scripts/render/world_view.gd): kept one continuous platform
+  and terminal clearance, added concrete finish, subtle pavement joints,
+  perimeter/inner edging and a warm continuous tactile strip. Cached dots/joints
+  stay within the curved platform. Passenger bodies shrink from 0.48 to 0.34;
+  fuller exchanges and 12 places per car replace the sparse six-place flow.
+  Per-visit seeded profiles scatter queues and vary starts, walking speeds,
+  sideways paths and dispersal. Coats/skin vary; day/night contrast remains.
+  Individual completion drives occupancy; descending still precedes boarding,
+  with the same exact maximum two-second extension and independent recovery.
+- Follow-up user report: existing rightward rails stole the station connect +
+  when attempting to connect left. [main.gd](./scripts/main.gd) now prioritizes
+  a hovered station's center-to-handle corridors before rail/bend popup retention.
+  General station hover halos do not capture short rails; direct rail insertion
+  and nearest physical station centers retain their intended behavior.
+- Expanded [schedule_smoke.gd](./tests/schedule_smoke.gd) for denser counts,
+  measurable timing/queue spread, deterministic profiles, bounded occupancy,
+  fade expiry and platform detail containment.
+  [train_visual_smoke.gd](./tests/train_visual_smoke.gd) measures smaller people
+  and distinct tactile edges by day/night; inspected both native captures.
+  [editing_smoke.gd](./tests/editing_smoke.gd) walks center-to-connect paths at
+  zoom 0.5/1/2/5, then actually completes a left connection while retaining the
+  original rightward rail and all station IDs. README/DESIGN updated.
+- Successful commands used `/Applications/Godot.app/Contents/MacOS/Godot`:
+
+  ```sh
+  --headless --path . --script res://tests/schedule_smoke.gd
+  --headless --path . --script res://tests/terminal_smoke.gd
+  --headless --path . --script res://tests/intersection_smoke.gd
+  --headless --path . --script res://tests/editing_smoke.gd
+  --headless --path . --script res://tests/simulation_smoke.gd
+  --headless --path . --script res://tests/train_controls_smoke.gd
+  --headless --path . --script res://tests/loop_smoke.gd
+  --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy
+  --path . --script res://tests/visual_smoke.gd --audio-driver Dummy
+  --headless --path . --export-release "Windows Desktop" dist/Metro.exe
+  --headless --path . --export-release "macOS" dist/Metro-macOS.zip
+  --headless --path . --export-release "Web" dist/web/index.html
+  unzip -t dist/Metro-macOS.zip
+  file dist/Metro.exe
+  test -s dist/web/index.html
+  test -s dist/web/index.js
+  test -s dist/web/index.wasm
+  test -s dist/web/index.pck
+  git diff --check
+  git status --short
+  ```
+
+  Regulated headway deviation is 0.181s vs 6.944s unregulated with the fuller
+  exchanges. Initial dwell assertion exposed floating-point equality at the
+  two-second cap; its inequality now allows 0.000001s precision. Timing test
+  initially sampled after the first batch finished, and direct-insertion test
+  used the visible station approach; corrected probes to test the intended cases.
+- Final Windows/macOS/Web builds and nonempty assets passed without export
+  errors/warnings. Extracted app passed universal x86_64/arm64 inspection,
+  `codesign --verify --deep --strict` and executable startup
+  `--headless --quit-after 10 --audio-driver Dummy`. Ad-hoc, not notarized.
+  Git now works again; final whitespace/status checks passed, superseding the
+  earlier Xcode blocker. Full six-minute intersection fixtures passed with
+  sustained arrivals and moving-block gaps: perpendicular [110,110], shared
+  terminal/through [88,42], shared segment [118,118], three speeds [110,110,74],
+  busy terminals [30], screenshot layout [130,146]. Extra boarding time slightly
+  reduces throughput as intended, without deadlocks. Temporary screenshots,
+  export logs and extracted verification app were cleaned.
+  Windows/Intel/browser execution, subjective real-time crowd observation and
+  audio/frame-time profiling not run. No commit or push.
+
+### Outside-terminal stops and restrained junction illumination (2026-11-07)
+
+- User clarified that terminal trains should stop slightly outside the marker,
+  not move platforms above stations. Kept opaque station layering, normal caps,
+  sharper routes and in-place reversal. Terminal offsets follow each serving-line
+  radius, with a 3px cab gap; increased shared-track fit accordingly.
+  Reversal authority and cycle estimates use the same terminal-specific jump,
+  preserving physical car positions at both ends, including unequal ring counts.
+- [track_geometry.gd](./scripts/render/track_geometry.gd) and
+  [dispatcher.gd](./scripts/dispatch/dispatcher.gd) own the new stop/jump metadata.
+  [world_view.gd](./scripts/render/world_view.gd) clips nighttime rail cores and
+  halos at shared stations, with a smooth 16px return rather than abrupt lit ends.
+  Cached paths/strengths refresh with geometry, not each frame; base colors,
+  daytime rails, headlights and simulation remain unchanged.
+- Expanded [terminal_smoke.gd](./tests/terminal_smoke.gd) to verify full platform
+  edges clear terminal markers by >2.5px, cab clearance, and <0.02px reversal
+  continuity for 1-6 wagons on horizontal/vertical/bent paths and independently
+  sized shared terminals. [train_visual_smoke.gd](./tests/train_visual_smoke.gd)
+  checks visible stopped cars/platforms, excluded illumination geometry and native
+  junction pixels. [simulation_smoke.gd](./tests/simulation_smoke.gd) now limits
+  station-center projections to intermediate stops. README/DESIGN updated.
+- Successful validations used `/Applications/Godot.app/Contents/MacOS/Godot`:
+
+  ```sh
+  --headless --path . --script res://tests/terminal_smoke.gd
+  --headless --path . --script res://tests/schedule_smoke.gd
+  --headless --path . --script res://tests/simulation_smoke.gd
+  --headless --path . --script res://tests/intersection_smoke.gd
+  --headless --path . --script res://tests/loop_smoke.gd
+  --headless --path . --script res://tests/train_controls_smoke.gd
+  --headless --path . --script res://tests/editing_smoke.gd
+  --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy
+  --path . --script res://tests/visual_smoke.gd --audio-driver Dummy
+  ```
+
+  Terminal/schedule/simulation and all six-minute intersection scenarios passed;
+  headway deviation remains 0.119s regulated vs 6.572s unregulated. Initial
+  added-test constructor arguments caused a parser failure; corrected. The
+  feathering pass exposed conditional typed-array assignment at runtime; fixed
+  with packed float widths and reran native tests without errors.
+- Final Windows/macOS/Web release exports succeeded using the same Godot binary:
+
+  ```sh
+  --headless --path . --export-release "Windows Desktop" dist/Metro.exe
+  --headless --path . --export-release "macOS" dist/Metro-macOS.zip
+  --headless --path . --export-release "Web" dist/web/index.html
+  unzip -t dist/Metro-macOS.zip
+  file dist/Metro.exe
+  test -s dist/web/index.html
+  test -s dist/web/index.js
+  test -s dist/web/index.wasm
+  test -s dist/web/index.pck
+  ```
+
+  All passed; export logs contain no errors/warnings. The extracted app passed
+  `file` universal x86_64/arm64 inspection, `codesign --verify --deep --strict`
+  and executable startup `--headless --quit-after 10 --audio-driver Dummy`.
+  Ad-hoc signed, not notarized. Native final terminal and perpendicular-junction
+  captures were inspected; bright cross arms are suppressed with smooth fades,
+  and the full stopped platform/cars remain clear. Temporary verification app,
+  captures and export logs were cleaned.
+- `git diff --check` and `git status --short` remain blocked by the Xcode license
+  (exit 69).
+  Windows/Intel/browser execution and audio/frame-time profiling not rerun.
+  No commit or push.
+
+### Opaque stations, reversing terminals and stronger night visuals (2026-11-07)
+
+- User rejected faded station markers. Restored the opaque white center and
+  dark concentric rings in [world_view.gd](./scripts/render/world_view.gd).
+  Removed the opacity pass and fading-specific tests. Local reshape anchors
+  and short-rail controls remain unchanged; the prior fade decision is superseded.
+- User chose stop-and-reverse with visible two-lane convergence into a shared,
+  one-train-protected terminal. [track_geometry.gd](./scripts/render/track_geometry.gd)
+  merges lanes onto a center track long enough for the full train, bounded
+  before adjacent stations. No track extends past the station. The distance
+  circuit retraces that terminal path; [dispatcher.gd](./scripts/dispatch/dispatcher.gd)
+  originally switched logical head by wagon span while stopped (terminal
+  stand-off now adds twice the inset; see the newer entry), after validating
+  clearance. All physical car centers remain in place when cabs switch.
+  `car_axis` handles the cusp for roofs, cab lights, gangways and visit doors.
+- Dispatcher terminal owners gate entry before braking distance and hold until
+  the tail clears with safety margin; pause/rebuild/retirement preserve or clear
+  ownership appropriately. Other lines and loops remain independent.
+  Cycle-time estimates subtract reversal jumps. Short lines unable to clear
+  one terminal before the opposing entry are capped at one train, avoiding
+  deadlock; insufficient terminal fit explicitly reports localized guidance
+  rather than silently failing to dispatch. Wagon increases validate fit.
+- User chose 50% longer cars (not wider) and very dark night with pronounced
+  rail/headlamp glow. Car length/pitch are now 18/19px, width remains 7px.
+  Body/door geometry, gangway attachments, platforms, clearance and capacity
+  use the new proportions. Compressed gangways draw two ribbon triangles to
+  avoid failed polygon triangulation on tight curves.
+- [urban_backdrop.gd](./scripts/render/urban_backdrop.gd) uses near-black blue
+  midnight (#03060c), retaining white noon and smooth dawn/dusk. Renderer adds
+  a 1.2px luminous rail core and bounded 30/22/14px layered colored halo at
+  night only, plus local headlamp glow and stronger fading beams. No HDR/glow
+  environment dependency; native/Web Compatibility remains supported.
+  Opaque paper UI keeps contrast; idle opacity interpolates from 28% day to
+  70% dark night. Updated README/DESIGN, localization and current-state memory.
+- Added [terminal_smoke.gd](./tests/terminal_smoke.gd) and wired it into Pages CI.
+  It verifies physical car continuity (<0.02px) at cab switches, actual smooth
+  departures, nonzero terminal axes, one-train reservations, moving gaps and
+  sustained service for 1-6 wagons on horizontal/vertical/bent routes, plus
+  short-line deadlock prevention and pause/rebuild cleanup.
+- Initial native run caught a duplicated local `night` variable; fixed it.
+  Longer cars exposed a folded-gangway triangulation error; fixed the ribbon
+  rendering and reran without errors. Existing tests assumed globally separate
+  lanes and unlit nights; updated probes to check separation outside shared
+  terminal zones and explicit night-only core/halo bounds. Refined midnight
+  until native background luminance was <=0.04. Inspected nighttime network,
+  headlamp/long-car and opaque terminal captures.
+- Final successful commands used `/Applications/Godot.app/Contents/MacOS/Godot`:
+
+  ```sh
+  --headless --path . --script res://tests/terminal_smoke.gd
+  --headless --path . --script res://tests/schedule_smoke.gd
+  --headless --path . --script res://tests/intersection_smoke.gd
+  --headless --path . --script res://tests/editing_smoke.gd
+  --headless --path . --script res://tests/interface_smoke.gd
+  --headless --path . --script res://tests/simulation_smoke.gd
+  --headless --path . --script res://tests/loop_smoke.gd
+  --headless --path . --script res://tests/train_controls_smoke.gd
+  --headless --path . --script res://tests/localization_smoke.gd
+  --headless --path . --script res://tests/urban_smoke.gd
+  --path . --script res://tests/visual_smoke.gd --audio-driver Dummy
+  --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy
+  --path . --script res://tests/interface_smoke.gd --audio-driver Dummy
+  --path . --script res://tests/urban_smoke.gd --audio-driver Dummy
+  --headless --path . --export-release "Windows Desktop" dist/Metro.exe
+  --headless --path . --export-release "macOS" dist/Metro-macOS.zip
+  --headless --path . --export-release "Web" dist/web/index.html
+  ```
+
+- Headway standard deviation remains 0.119s regulated versus 6.572s unregulated;
+  all six-minute intersection fixtures preserve gaps and sustained arrivals.
+  Final terminal/schedule/editing/train-control tests include the short-line
+  capacity fix. Windows/macOS/Web exports succeeded without logged errors or
+  warnings. `unzip -t dist/Metro-macOS.zip`, Windows x86_64 PE, nonempty Web
+  assets, universal macOS x86_64/arm64, `codesign --verify --deep --strict`,
+  and exported Apple Silicon startup (`--headless --quit-after 10 --audio-driver Dummy`)
+  passed. Ad-hoc signing, not notarization.
+- Final `git diff --check` and Git status/stat were blocked by the unaccepted
+  Xcode license (exit 69); no standalone Git was installed. Earlier Git checks
+  passed before this environment change, but do not count as final validation.
+  User must accept the license with `sudo xcodebuild -license` to restore Git.
+  Windows/Intel/browser runtime, audio and frame-time profiling not rerun.
+  No commit/push/deploy; previous train/platform/reshape work remains pending.
+
+### Local reshape anchors and fading station markers (fading superseded, 2026-11-07)
+
+- Fixed the section popup's whole-track rewrite in
+  [main.gd](./scripts/main.gd): retain the selected guide segment index, rebuild
+  only between its adjacent anchors, and preserve all outside waypoints.
+  Existing bend handles still use their two neighbors. Protected simplification
+  and `TrackGeometry.anchors` keep explicit anchors even when made collinear.
+  [world_view.gd](./scripts/render/world_view.gd) marks the fixed anchors.
+- Short sections were obscured by station hover halos and along-rail vertical
+  popups. Popups now sit perpendicular to their segment, retain their capsule
+  hover corridor, and take priority over broad station halos. Physical station
+  centers and visible station handles remain usable; overlapping hidden handles
+  are resolved by distance to the rail's grid anchor. Repeated bend picks retain
+  bend identity rather than falling through to insertion.
+- Grid-stationary edits explain snapping; rejected edits show their exact reason
+  beside the dragged point, not the distant terminus. Captions wrap at 16 logical
+  pixels instead of shrinking/truncating. Added localized grid guidance and
+  actionable train-length wording in [ui.csv](./translations/ui.csv).
+  No-change releases avoid redispatch. Hover now uses cached event coordinates,
+  fixing frame-to-frame OS-pointer disagreement exposed by real-input tests.
+- User chose fading station markers, not drawing trains on top. Spatial opacity
+  considers every oriented car body, fades fill/rings down to 20%, and recovers
+  after the full train clears. Rings use nonoverlapping arcs to avoid stacking
+  transparency below the center. Stop simulation, passengers and picking unchanged.
+  Updated README/DESIGN and current-state memory.
+- Initial tests caught bend identity loss, fixed anchors removed by collinear
+  simplification, and OS hover-coordinate disagreement; corrected each.
+  Test snapshots needed explicit packed-array duplication. Opaque-station pixel
+  fixtures now omit trains; fixed visual fixtures disable incidental OS input.
+  Fade recovery probes include the compact terminal turn before asserting full
+  opacity. A failed loop fixture stalled after a script error and was stopped.
+  One later native interface repeat stalled without errors; stopped and reran
+  in isolation successfully. No success claims rely on either stopped run.
+- Final validations passed with `/Applications/Godot.app/Contents/MacOS/Godot`:
+
+  ```sh
+  --headless --editor --path . --quit
+  --headless --path . --script res://tests/editing_smoke.gd
+  --headless --path . --script res://tests/interface_smoke.gd
+  --headless --path . --script res://tests/simulation_smoke.gd
+  --headless --path . --script res://tests/loop_smoke.gd
+  --headless --path . --script res://tests/train_controls_smoke.gd
+  --headless --path . --script res://tests/schedule_smoke.gd
+  --headless --path . --script res://tests/localization_smoke.gd
+  --path . --script res://tests/visual_smoke.gd --audio-driver Dummy
+  --path . --script res://tests/interface_smoke.gd --audio-driver Dummy
+  --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy
+  --path . --script res://tests/editing_smoke.gd --audio-driver Dummy
+  --headless --path . --export-release "Windows Desktop" dist/Metro.exe
+  --headless --path . --export-release "macOS" dist/Metro-macOS.zip
+  --headless --path . --export-release "Web" dist/web/index.html
+  ```
+
+  `unzip -t dist/Metro-macOS.zip`, `file dist/Metro.exe`, nonempty Web assets,
+  universal x86_64/arm64 Mach-O, `codesign --verify --deep --strict`, exported
+  Apple Silicon startup (`--headless --quit-after 10 --audio-driver Dummy`)
+  and `git diff --check` passed. Export logs had no errors/warnings.
+- Coverage: short horizontal/vertical/diagonal sections at zoom 0.5/1/2/5,
+  local preview/commit/cancel, collinear anchor retention, length rejection,
+  complete grid guidance, station-center priority and actual mouse input.
+  Native train pixels verify station transparency day/night at map/follow zoom,
+  multi-line rings, last-wagon influence and smooth opacity recovery. Inspected
+  anchored-reshape and station-fade captures. Regulated headway deviation remains
+  0.119s versus 6.572s unregulated.
+- Windows/Intel/browser runtime, full intersections/audio/urban suites and
+  frame-time profiling not rerun. macOS ad-hoc signed, not notarized.
+  No commit/push/deploy; earlier train/platform work remains pending too.
+
+### Restored routes and continuous curved platforms (2026-11-07)
+
+- User rejected the station-berth geometry and invisible turnbacks. Restored
+  [track_geometry.gd](./scripts/render/track_geometry.gd) exactly to commit
+  `2c79f51`; restored original rail/train picking and always-visible cars.
+  This supersedes the four geometry/visibility experiments below, including
+  centered stops and special last-car-origin alignment. Normal terminal caps
+  and compact turns are retained, not expanded into hidden straight paths.
+- Kept the improved trainsets and bounded passenger exchanges. In
+  [station_visit.gd](./scripts/sim/station_visit.gd), union overlapping ribbon
+  triangles into one curve-following platform outline; draw once in
+  [world_view.gd](./scripts/render/world_view.gd). No rectangular requirement or
+  automatic route reshaping. Updated README/DESIGN and current-state memory.
+- Initial polygon unions failed on exactly shared clipping edges; winding
+  normalization and 0.02-world-unit overlap fixed the failures. One graphical
+  diagnostic stalled and was explicitly stopped. Final tests verify renderable
+  connected platforms and coverage beside every car at all stops, open/loop
+  routes, both directions and 1-6 wagons. Native pixels verify inter-car gap
+  coverage, terminal movement visibility and platform/passenger fade/zoom.
+  Inspected the curved-platform capture with differently angled cars.
+- Passed these exact commands (Godot 4.7.2):
+
+  ```sh
+  /Applications/Godot.app/Contents/MacOS/Godot --headless --path . --script res://tests/schedule_smoke.gd
+  /Applications/Godot.app/Contents/MacOS/Godot --headless --path . --script res://tests/editing_smoke.gd
+  /Applications/Godot.app/Contents/MacOS/Godot --headless --path . --script res://tests/simulation_smoke.gd
+  /Applications/Godot.app/Contents/MacOS/Godot --headless --path . --script res://tests/loop_smoke.gd
+  /Applications/Godot.app/Contents/MacOS/Godot --headless --path . --script res://tests/train_controls_smoke.gd
+  /Applications/Godot.app/Contents/MacOS/Godot --headless --path . --script res://tests/intersection_smoke.gd
+  /Applications/Godot.app/Contents/MacOS/Godot --headless --path . --script res://tests/localization_smoke.gd
+  /Applications/Godot.app/Contents/MacOS/Godot --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy
+  /Applications/Godot.app/Contents/MacOS/Godot --path . --script res://tests/visual_smoke.gd --audio-driver Dummy
+  /Applications/Godot.app/Contents/MacOS/Godot --path . --script res://tests/interface_smoke.gd --audio-driver Dummy
+  /Applications/Godot.app/Contents/MacOS/Godot --headless --path . --export-release "Windows Desktop" dist/Metro.exe
+  /Applications/Godot.app/Contents/MacOS/Godot --headless --path . --export-release "macOS" dist/Metro-macOS.zip
+  /Applications/Godot.app/Contents/MacOS/Godot --headless --path . --export-release "Web" dist/web/index.html
+  unzip -t dist/Metro-macOS.zip
+  file dist/Metro.exe
+  git diff --check
+  ```
+
+- Schedule deviation 0.119s regulated versus 6.572s unregulated. All six-minute
+  intersection fixtures retain full-train gaps and sustained arrivals.
+  Fresh Windows/macOS/Web exports succeeded without logged warnings/errors.
+  Verified nonempty Web assets, Windows PE x86_64, macOS universal x86_64/arm64,
+  `codesign --verify --deep --strict` and exported Apple Silicon startup
+  `--headless --quit-after 10 --audio-driver Dummy`. Ad-hoc signed, not notarized.
+  Windows/Intel/browser runtime, audio/urban suites and frame-time profiling
+  not rerun. Changes remain uncommitted; no push/deploy.
+
+### Hidden terminal trains rendering fix (superseded, 2026-11-07)
+
+- Screenshot showed cars floating beyond a visible terminal, not an actual
+  closed-loop route. Restored caps hid simulation extensions but car/gangway/
+  headlight rendering still used the entire circuit. Added open-route
+  `visible_ranges` and shared `TrackGeometry.car_visible` guard for each car,
+  both gangway endpoints, headlights and [main.gd](./scripts/main.gd) picking.
+  Cars vanish individually past the cap, with half-car-length tolerance.
+  Closed loops remain entirely visible. Timetables/stops unchanged.
+- [train_visual_smoke.gd](./tests/train_visual_smoke.gd) now positions a train
+  on a hidden terminal turn, verifies all cars invisible and actual pixels
+  match an empty night view. Passed with installed Godot binary:
+  `/Applications/Godot.app/Contents/MacOS/Godot --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy`,
+  `/Applications/Godot.app/Contents/MacOS/Godot --headless --path . --script res://tests/train_controls_smoke.gd`,
+  `/Applications/Godot.app/Contents/MacOS/Godot --headless --path . --script res://tests/schedule_smoke.gd`.
+  Updated [DESIGN.md](./DESIGN.md).
+- Fresh Windows/macOS/Web exports passed using the same binary with
+  `--headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  `--headless --path . --export-release "macOS" dist/Metro-macOS.zip`,
+  `--headless --path . --export-release "Web" dist/web/index.html`.
+  Archive integrity (`unzip -t dist/Metro-macOS.zip`), Windows x86_64 PE
+  (`file dist/Metro.exe`), nonempty Web assets and `git diff --check` passed;
+  no export errors/warnings. Runtime/signature checks and broader suites not
+  rerun. Following retains its existing simulation-camera behavior during
+  hidden turnback. No commit/push/deploy. Task captures/logs cleaned.
+
+### Restored normal terminal caps (superseded implementation, 2026-11-07)
+
+- User confirmed restoring rounded visible caps at terminal markers without
+  long straight extensions. [track_geometry.gd](./scripts/render/track_geometry.gd)
+  now clips open-line visible centerline/running lanes to terminal projections,
+  while retaining full simulation berths, end-car stops and continuous platforms.
+  Effective rail picking paths are sliced from that visible centerline.
+  Loops and timetable/movement calculations are unchanged.
+- Updated [DESIGN.md](./DESIGN.md) and current memory. Added exact terminal
+  endpoint checks for all train lengths; close-up pixel tests confirm normal
+  cap extent. Passed with `/Applications/Godot.app/Contents/MacOS/Godot`:
+  `--headless --path . --script res://tests/schedule_smoke.gd`,
+  `--headless --path . --script res://tests/editing_smoke.gd`,
+  `--path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy`,
+  `--path . --script res://tests/visual_smoke.gd --audio-driver Dummy`.
+- Fresh exports passed using the same binary with
+  `--headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  `--headless --path . --export-release "macOS" dist/Metro-macOS.zip`,
+  `--headless --path . --export-release "Web" dist/web/index.html`.
+  Verified archive integrity via `unzip -t dist/Metro-macOS.zip`, Windows
+  x86_64 PE via `file dist/Metro.exe`, nonempty Web assets and
+  `git diff --check`; no export errors/warnings. Runtime/signature checks
+  not rerun for this visual-only clipping change. No commit/push/deploy.
+
+### End-car station alignment (superseded, 2026-11-07)
+
+- User rejected centered train stops and explicitly chose last-car alignment at
+  the line's first station, leading-car alignment at every other station, in
+  both directions. [track_geometry.gd](./scripts/render/track_geometry.gd) now
+  projects stops directly at the marker except origin stops, whose head advances
+  by `wagon_count * CAR_PITCH`. Straight berth half-span grows to that span +
+  half a car length + 16px so neither train end boards around a curve.
+  Continuous platform/fading/passengers and automatic curve easing retained.
+- Updated [README.md](./README.md), [DESIGN.md](./DESIGN.md) and current memory;
+  previous centered-stop decisions below are superseded. Tests verify designated
+  end-car marker distance <= lane offset + 0.1px for all 1-6 wagon counts on
+  open/loop routes in both directions, alongside whole-train straight alignment.
+  Shared-loop tests initially assumed head-at-origin; corrected to designated
+  end-car probes, then passed. Terminal visual probes match expanded straight
+  berth. No translation changes needed.
+- Passed with `/Applications/Godot.app/Contents/MacOS/Godot`:
+  `--headless --path . --script res://tests/schedule_smoke.gd`,
+  `--headless --path . --script res://tests/simulation_smoke.gd`,
+  `--headless --path . --script res://tests/loop_smoke.gd`,
+  `--headless --path . --script res://tests/train_controls_smoke.gd`,
+  `--headless --path . --script res://tests/editing_smoke.gd`,
+  `--headless --path . --script res://tests/intersection_smoke.gd`,
+  `--path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy`,
+  `--path . --script res://tests/visual_smoke.gd --audio-driver Dummy`.
+  Regulated headway deviation 0.115s vs 6.931s unregulated; all six-minute
+  intersection scenarios retain full-train safe gaps and sustained arrivals.
+- Fresh export commands using the same binary passed:
+  `--headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  `--headless --path . --export-release "macOS" dist/Metro-macOS.zip`,
+  `--headless --path . --export-release "Web" dist/web/index.html`.
+  Verified `unzip -t dist/Metro-macOS.zip`, Windows x86_64 PE, universal
+  x86_64/arm64 binary, strict deep signature, exported Mac headless startup
+  `--headless --quit-after 10 --audio-driver Dummy`, nonempty Web assets and
+  `git diff --check`. No export errors/warnings. Windows/Intel/browser runtime,
+  interface/localization/audio/urban suites not rerun. Not committed/deployed.
+  Task-owned verification files cleaned.
+
+### Continuous platforms and straight station berths (superseded geometry, 2026-11-07)
+
+- User chose automatic reshaping instead of rejecting tight approaches.
+  [track_geometry.gd](./scripts/render/track_geometry.gd) now reserves a straight
+  train-length + 32px berth centered at each station, using its travel bisector
+  or terminal tangent. Cubic tangent connectors ease the route around these
+  berths, discarding guide elbows within the platform approach footprint.
+  Stations do not move. Stops put the head half the car-center span ahead,
+  keeping the whole train straight before the next bend/terminal turnaround.
+  Geometry is generated on rebuild/wagon changes, not every frame.
+- [station_visit.gd](./scripts/sim/station_visit.gd) snapshots one continuous
+  platform polygon covering the full train; [world_view.gd](./scripts/render/world_view.gd)
+  draws it with the existing fade/passenger lifecycle. Effective per-track
+  paths wire [main.gd](./scripts/main.gd) rail picking to eased geometry.
+  Canonical grid guides, edit validation and train clearance remain unchanged.
+  Updated [README.md](./README.md) and [DESIGN.md](./DESIGN.md).
+- Tests cover all 1-6 wagon lengths at each station on open/loop routes in both
+  travel phases: car axes dot >0.999, center spacing error <0.05px, continuous
+  platform length error <0.05px. Sharp 135-degree source fixtures assert eased
+  lane tangent dot >0.85 and no nonadjacent segment crossings. Visual tests
+  sample the former inter-car platform gap; berth capture inspected. Editing
+  test selects a visibly eased approach away from its original guide.
+- Initial typed-array fixture failed at runtime despite Godot exiting zero;
+  fixed and rerun cleanly. Shared-route endpoint offsets initially hid station
+  knots and broke loop ordering; explicit station anchors and offset-join
+  cleanup fixed it. Old tests assumed head-at-marker and unextended terminal
+  caps; updated them to train-center alignment and geometry-derived probes.
+  Visual rail probes now transform after the render frame, avoiding stale
+  camera transforms. These are intentional geometry changes, not skipped tests.
+- Passed with `/Applications/Godot.app/Contents/MacOS/Godot`:
+  `--headless --path . --script res://tests/schedule_smoke.gd`,
+  `--headless --path . --script res://tests/intersection_smoke.gd`,
+  `--headless --path . --script res://tests/loop_smoke.gd`,
+  `--headless --path . --script res://tests/simulation_smoke.gd`,
+  `--headless --path . --script res://tests/train_controls_smoke.gd`,
+  `--headless --path . --script res://tests/editing_smoke.gd`,
+  `--headless --path . --script res://tests/localization_smoke.gd`,
+  `--path . --script res://tests/visual_smoke.gd --audio-driver Dummy`,
+  `--path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy`,
+  `--path . --script res://tests/interface_smoke.gd --audio-driver Dummy`.
+  Full intersection scenarios retain safe gaps and continued service.
+  Regulated headway standard deviation 0.112s vs 6.944s unregulated.
+- Fresh exports passed using the same binary:
+  `--headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  `--headless --path . --export-release "macOS" dist/Metro-macOS.zip`,
+  `--headless --path . --export-release "Web" dist/web/index.html`.
+  Verified `unzip -t dist/Metro-macOS.zip`, Windows x86_64 PE, universal
+  x86_64/arm64 binary, `codesign --verify --deep --strict`, exported macOS
+  startup `--headless --quit-after 10 --audio-driver Dummy`, nonempty Web assets
+  and `git diff --check`. No final script/export errors or warnings.
+  Windows/Intel/browser execution, audio/urban suites and frame-time profiling
+  not rerun. Existing hidden terminal turns still carry moving trains; they are
+  not station boarding areas. Canonical grid edit previews remain guides,
+  effective eased geometry is built on commit. No commit/push/deploy.
+  Task-owned captures/logs/verification app cleaned.
+
+### Transient platforms and bounded passenger boarding (2026-11-07)
+
+- User chose actual passenger effects on boarding time, transient platforms,
+  and a cap of two extra seconds per stop. Implemented light local exchange,
+  not full destination/demand simulation. Occupancy persists between stops,
+  alighting precedes boarding and termini empty arriving trains. Dwell is at
+  least the selected minimum and covers the exchange; terminal recovery
+  remains additional. Fleet/cycle/headway estimates use the conservative
+  two-second allowance. No new UI controls, notifications or gameplay pressure.
+- Added [station_visit.gd](./scripts/sim/station_visit.gd) and UID;
+  [metro.gd](./scripts/sim/metro.gd) stores riders/current visit;
+  [dispatcher.gd](./scripts/dispatch/dispatcher.gd) owns simulation-time visits,
+  bounded boarding and expiry; [main.gd](./scripts/main.gd) passes visits to
+  [world_view.gd](./scripts/render/world_view.gd). Platform geometry matches
+  stopped car orientations, doors open on that side, tiny figures emerge/board
+  or walk outward/fade. Draws fade in with zoom 1.5-3 and out 1.2s after departure,
+  including service withdrawal; offscreen activity culled. Pause freezes visits,
+  watch/follow continue to show them, edits clear old snapshots.
+- Updated [README.md](./README.md), [DESIGN.md](./DESIGN.md), live localized
+  minimum-stop tooltip in [ui.csv](./translations/ui.csv) and imported resources.
+  Added schedule tests (already in CI) for dwell bounds at minimum 0/0.1/3/12s,
+  boarding affecting departure, terminal exchange ordering/capacity, fade
+  continuity/expiry, pause and edit cleanup. Visual tests assert platforms,
+  tiny passengers, map-zoom suppression and fade-out; close-up capture inspected.
+- Passed with `/Applications/Godot.app/Contents/MacOS/Godot`:
+
+  ```sh
+  --headless --editor --path . --quit
+  --headless --path . --script res://tests/schedule_smoke.gd
+  --headless --path . --script res://tests/intersection_smoke.gd
+  --headless --path . --script res://tests/loop_smoke.gd
+  --headless --path . --script res://tests/simulation_smoke.gd
+  --headless --path . --script res://tests/train_controls_smoke.gd
+  --headless --path . --script res://tests/editing_smoke.gd
+  --headless --path . --script res://tests/localization_smoke.gd
+  --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy
+  --path . --script res://tests/visual_smoke.gd --audio-driver Dummy
+  --path . --script res://tests/interface_smoke.gd --audio-driver Dummy
+  --headless --path . --export-release "Windows Desktop" dist/Metro.exe
+  --headless --path . --export-release "macOS" dist/Metro-macOS.zip
+  --headless --path . --export-release "Web" dist/web/index.html
+  ```
+
+- Initial terminal ordering test exposed float-boundary progress just under
+  completion; fixed with microsecond tolerance and constant-time batch counts.
+  Final schedule headway deviation: regulated 0.119s vs 6.572s unregulated.
+  Full six-minute intersections retain independent lanes, safe gaps and arrivals.
+  All final import/export logs have no parser/script errors or warnings.
+- Fresh Windows/macOS/Web exports succeeded after final code changes.
+  `unzip -t dist/Metro-macOS.zip`, `file dist/Metro.exe`, universal binary
+  inspection, `codesign --verify --deep --strict`, exported Mac startup
+  `--headless --quit-after 10 --audio-driver Dummy`, nonempty Web assets and
+  `git diff --check` verified. Windows/Intel execution, browser runtime, audio/
+  urban suites and large-network frame-time profiling not rerun. No commit,
+  push or deployment. Task captures/export logs/verification apps cleaned.
+
+### Refined metro trainsets (2026-11-07)
+
+- Implemented all five approved visual refinements in
+  [world_view.gd](./scripts/render/world_view.gd): matching softened cab ends
+  and windscreens, neutral metal roofs/ventilation, paired door/window rhythm,
+  accordion gangways attached to both car orientations, progressive zoom detail.
+  Geometry dimensions, clearance, picking, headlights and simulation unchanged.
+  Updated [README.md](./README.md), [DESIGN.md](./DESIGN.md).
+- Passed with `/Applications/Godot.app/Contents/MacOS/Godot`:
+  `--path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy`,
+  `--path . --script res://tests/visual_smoke.gd --audio-driver Dummy`,
+  `--headless --path . --script res://tests/train_controls_smoke.gd`,
+  `--headless --path . --script res://tests/loop_smoke.gd`.
+  Expanded pixel/geometry assertions for matching cab glazing, neutral roof,
+  equipment, paired doors, recoloring, map detail suppression, fixed-width
+  gangway ends and inside-curve compression. Inspected straight/curved/map
+  captures. Initial old body-color probes hit the newly neutral roof; moved
+  them to the body edge. Roof/seam probes aligned to actual rasterized features.
+  A Pillow pixel probe was unavailable; used renderer assertions instead.
+- Fresh Windows/macOS/Web export commands from Validation and delivery passed.
+  Archive integrity, x86_64 PE, universal x86_64/arm64 binary, strict deep Mac
+  signature, exported Mac headless startup and nonempty Web assets verified;
+  no export log errors/warnings. Windows/Intel/browser runtime not rerun.
+  Not committed or deployed. Follow-up request adds transient zoomed platforms
+  and passenger exchange affecting stops, capped at two extra seconds; this
+  supersedes the purely decorative recommendation in the prior discussion.
+
+### Train appearance discussion (2026-11-07)
+
+- Inspected current car/gangway/headlight rendering in
+  [world_view.gd](./scripts/render/world_view.gd). No implementation requested
+  or made. Suggested restrained metro realism: matching cab ends instead of
+  locomotive/trailer styling, roof equipment/seams, clearer door/window rhythm,
+  believable articulated connections and zoom-dependent detail. These are
+  proposals, not approved product decisions; changing proportions would also
+  require geometry, clearance and picking updates.
+- Required Windows/macOS release export commands from Validation and delivery
+  succeeded with the installed Godot binary. `unzip -t dist/Metro-macOS.zip`
+  and `file dist/Metro.exe` verified archive integrity and Windows x86_64 PE.
+  Export logs contained no errors/warnings (the no-match log search exits 1).
+  No runtime/tests/browser checks rerun for this design-only discussion.
 
 ### Consolidating pending changes (2026-11-07)
 

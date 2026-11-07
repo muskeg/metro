@@ -47,6 +47,7 @@ keys,en,fr
 "Suivi du train. Échap ou déplacer la vue pour arrêter.","Following train. Press Esc or pan to stop.","Suivi du train. Échap ou déplacer la vue pour arrêter."
 "Suivi du train terminé.","Stopped following train.","Suivi du train terminé."
 "Arrêt en station","Station dwell","Arrêt en station"
+"Arrêt minimum ; embarquement : jusqu'à 2 s de plus.","Minimum stop; boarding adds up to 2 s.","Arrêt minimum ; embarquement : jusqu'à 2 s de plus."
 "Vitesse de croisière","Cruise speed","Vitesse de croisière"
 "Wagons par train","Carriages per train","Wagons par train"
 "Mettre en pause","Pause simulation","Mettre en pause"
@@ -87,7 +88,7 @@ keys,en,fr
 "Cette case est déjà occupée par une station.","A station already occupies this grid point.","Cette case est déjà occupée par une station."
 "La rame serait trop longue pour ce segment.","The train would be too long for this segment.","La rame serait trop longue pour ce segment."
 "Déplacement refusé : %s","Cannot move station: %s","Déplacement refusé : %s"
-"Cette rame serait trop longue pour un segment. Allongez le tracé.","Train too long: extend the track.","Rame trop longue : allongez le rail."
+"Cette rame serait trop longue pour un segment. Allongez le tracé.","Too short for this train: move the bend farther out or reduce carriages.","Trop court pour la rame : éloignez le coude ou réduisez les wagons."
 "Composition modifiée : les rames repartent avec %d wagons.","Train updated: restarting with %d carriages.","Composition modifiée : les rames repartent avec %d wagons."
 "Choisissez deux stations différentes.","Choose two different stations.","Choisissez deux stations différentes."
 "Dessinez un chemin entre les stations.","Draw a path between the stations.","Dessinez un chemin entre les stations."
@@ -106,6 +107,8 @@ keys,en,fr
 "Tirez un point + pour dessiner","Drag a + anchor to draw","Tirez un point + pour dessiner"
 "Relier une station","Connect stations","Relier une station"
 "Remodeler le tracé","Reshape route","Remodeler le tracé"
+"Glissez vers une autre case de la grille.","Drag to another grid point.","Glissez vers une autre case de la grille."
+"Pas assez de place aux terminus. Allongez la ligne ou réduisez les wagons.","Not enough terminal space: extend the line or reduce carriages.","Pas assez de place aux terminus : allongez la ligne ou réduisez les wagons."
 "Inverser le coude","Flip bend","Inverser le coude"
 "Survolez une station : centre pour déplacer, + pour relier.
 Glissez vers une station ou cliquez pour fixer des coudes. Reliez les extrémités pour former une boucle.

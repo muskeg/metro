@@ -50,6 +50,7 @@ var _route_press_position := Vector2.ZERO
 var _route_pointer := Vector2.ZERO
 var _editing_track_id := -1
 var _editing_bend_index := -1
+var _editing_segment_index := -1
 var _edit_original := PackedVector2Array()
 var _edit_pointer_offset := Vector2.ZERO
 var _dragging_station_id: int = -1
@@ -76,6 +77,7 @@ var _sheet_feedback: Array[Label] = []
 var _ui_root: Control
 var _ui_hidden := false
 var _pointer_inside := false
+var _pointer_position := Vector2.ZERO
 var _hide_ui_button: Button
 var _restore_ui_button: Button
 var _collapse_dock_button: Button
@@ -168,11 +170,11 @@ func _process(delta: float) -> void:
 		var last_line := lines[dispatcher.last_arrival_line_id]
 		audio.call("play_arrival", last_line.color.h, night_factor)
 	_update_interaction_overlays()
-	world_view.set_dynamic_state(dispatcher.metros, camera.get_screen_center_position(), camera.zoom, time_of_day)
+	world_view.set_dynamic_state(dispatcher.metros, camera.get_screen_center_position(), camera.zoom, time_of_day, dispatcher.visits)
 	_update_connection_guidance()
 	if _connect_drag_source_id < 0 and _dragging_station_id < 0 and _editing_track_id < 0:
 		if _pointer_inside and not _ui_hidden and not _any_sheet_open() and not _space_down and get_viewport().gui_get_hovered_control() == null and not _panning:
-			_update_hover(get_global_mouse_position())
+			_update_hover(world_view.get_global_transform_with_canvas().affine_inverse() * _pointer_position)
 		else:
 			_clear_hover()
 	_update_status()
@@ -190,6 +192,7 @@ func _input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 	if event is InputEventMouse:
+		_pointer_position = event.position
 		_pointer_inside = get_viewport_rect().has_point(event.position)
 		if event is InputEventMouseMotion and _connect_drag_source_id < 0 and _dragging_station_id < 0 and _editing_track_id < 0:
 			world_view.station_preview_visible = false
@@ -379,11 +382,6 @@ func _create_interface() -> void:
 	_line_selector.add_theme_constant_override("separation", 8)
 	_line_scroll.add_child(_line_selector)
 	_line_button_group = ButtonGroup.new()
-	var new_line := _button("+", _create_line)
-	new_line.tooltip_text = "+ Nouvelle"
-	new_line.custom_minimum_size.x = 44.0
-	new_line.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	dock.add_child(new_line)
 	_collapse_dock_button = _button("v", _toggle_dock)
 	_collapse_dock_button.tooltip_text = "Replier les lignes"
 	_collapse_dock_button.custom_minimum_size.x = 44.0
@@ -576,7 +574,8 @@ func _update_ui_idle(delta: float) -> void:
 		return
 	var fade_delta := maxf(0.0, _ui_idle_seconds + delta - UI_IDLE_SECONDS) - maxf(0.0, _ui_idle_seconds - UI_IDLE_SECONDS)
 	_ui_idle_seconds += delta
-	_ui_root.modulate.a = move_toward(_ui_root.modulate.a, UI_IDLE_ALPHA, fade_delta * (1.0 - UI_IDLE_ALPHA) / 0.6)
+	var idle_alpha := lerpf(UI_IDLE_ALPHA, 0.7, _night_strength(time_of_day))
+	_ui_root.modulate.a = move_toward(_ui_root.modulate.a, idle_alpha, fade_delta * (1.0 - UI_IDLE_ALPHA) / 0.6)
 
 func _toggle_help() -> void:
 	_toggle_sheet(_help_popup)
@@ -809,10 +808,18 @@ func _refresh_line_selector() -> void:
 		_style_line_tab(button, line.color)
 		button.pressed.connect(_on_line_tab_pressed.bind(line.id))
 		_line_selector.add_child(button)
+	var new_line := _button("+", _create_line)
+	new_line.tooltip_text = tr("+ Nouvelle")
+	new_line.custom_minimum_size = Vector2(44.0, 44.0)
+	new_line.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_style_line_tab(new_line, UI_INK)
+	_line_selector.add_child(new_line)
 	_reveal_active_line.call_deferred()
 	_resize_interface()
 
 func _reveal_active_line() -> void:
+	if active_line.id == lines.size() - 1:
+		_line_scroll.ensure_control_visible(_line_selector.get_child(lines.size()))
 	_line_scroll.ensure_control_visible(_line_selector.get_child(active_line.id))
 
 func _style_line_tab(button: Button, color: Color) -> void:
@@ -920,6 +927,7 @@ func _begin_world_interaction(world_position: Vector2) -> void:
 		elif world_view.hovered_bend_index >= 0 or _near_handle(world_position, world_view.rail_move_position()):
 			_editing_track_id = world_view.hovered_track_id
 			_editing_bend_index = world_view.hovered_bend_index
+			_editing_segment_index = world_view.rail_segment_index
 			_edit_original = TrackGeometry.anchors(graph, graph.tracks[_editing_track_id])
 			_edit_pointer_offset = Vector2.ZERO if _editing_bend_index >= 0 else world_position - world_view.rail_anchor
 			world_view.route_active = true
@@ -934,8 +942,9 @@ func _end_world_interaction(world_position: Vector2) -> void:
 		_update_track_edit(world_position - _edit_pointer_offset)
 		var error := _track_edit_error()
 		if error.is_empty():
-			graph.tracks[_editing_track_id].waypoints = _drawn_points.duplicate()
-			_refresh_network()
+			if _drawn_points != _edit_original:
+				graph.tracks[_editing_track_id].waypoints = _drawn_points.duplicate()
+				_refresh_network()
 		else:
 			_set_status(error)
 		_cancel_gesture()
@@ -970,6 +979,7 @@ func _cancel_gesture() -> void:
 	_connect_drag_source_id = -1
 	_editing_track_id = -1
 	_editing_bend_index = -1
+	_editing_segment_index = -1
 	_edit_original.clear()
 	_route_pins.clear()
 	_route_history.clear()
@@ -984,6 +994,7 @@ func _cancel_gesture() -> void:
 		world_view.route_source_id = -1
 		world_view.route_target_id = -1
 		world_view.route_pins.clear()
+		world_view.reshape_anchors.clear()
 		world_view.valid_connection_targets.clear()
 		world_view.set_stroke_preview(_drawn_points, Color.WHITE)
 
@@ -1040,15 +1051,19 @@ func _connection_error(from_id: int, to_id: int, points: PackedVector2Array, ope
 
 func _update_track_edit(position: Vector2) -> void:
 	var bend := (position / GRID_SIZE).round() * GRID_SIZE
-	var before := _editing_bend_index - 1 if _editing_bend_index >= 0 else 0
-	var after := _editing_bend_index + 1 if _editing_bend_index >= 0 else _edit_original.size() - 1
+	var before := _editing_bend_index - 1 if _editing_bend_index >= 0 else _editing_segment_index
+	var after := _editing_bend_index + 1 if _editing_bend_index >= 0 else _editing_segment_index + 1
 	_drawn_points = _edit_original.slice(0, before)
 	_drawn_points.append_array(TrackGeometry.elastic_path(_edit_original[before], bend))
 	_drawn_points.append_array(TrackGeometry.elastic_path(bend, _edit_original[after], false).slice(1))
 	_drawn_points.append_array(_edit_original.slice(after + 1))
-	_drawn_points = TrackGeometry.simplify(_drawn_points)
+	_drawn_points = TrackGeometry.simplify(_drawn_points, _edit_original)
+	world_view.hover_pointer = position
 	world_view.route_pins = PackedVector2Array([bend])
-	world_view.set_stroke_preview(_drawn_points, active_line.color, _track_edit_error())
+	world_view.reshape_anchors = PackedVector2Array([_edit_original[before], _edit_original[after]])
+	var error := _track_edit_error()
+	var hint := "Glissez vers une autre case de la grille." if error.is_empty() and _drawn_points == _edit_original else ""
+	world_view.set_stroke_preview(_drawn_points, active_line.color, error, hint)
 
 func _track_edit_error() -> String:
 	var track := graph.tracks[_editing_track_id]
@@ -1227,22 +1242,24 @@ func _update_hover(position: Vector2) -> void:
 			if _near_handle(position, world_view.station_handle_position(previous, direction)):
 				station = previous
 				break
-	if station != null:
-		world_view.hovered_station_id = station.id
-		world_view.hovered_track_id = -1
-		world_view.hover_caption = "Relier une station" if _near_handle(position, world_view.station_handle_position(station, Vector2.RIGHT)) else ""
-		if _near_handle(position, world_view.station_handle_position(station, Vector2(1.0, -1.0))):
-			world_view.hover_caption = "Supprimer la station"
-		elif station.position.distance_to(position) <= maxf(world_view.station_radius(station) + 3.0, 12.0 / camera.zoom.x):
-			world_view.hover_caption = "Glissez le centre pour déplacer"
+	if station != null and station.position.distance_to(position) <= maxf(world_view.station_radius(station) + 3.0, 12.0 / camera.zoom.x):
+		_set_station_hover(station, position)
 		return
-	world_view.hovered_station_id = -1
+	if station != null and (world_view.hovered_station_id == station.id or world_view.connection_hint_station_id == station.id):
+		for direction: Vector2 in [Vector2.RIGHT, Vector2(1.0, -1.0)]:
+			var handle := world_view.station_handle_position(station, direction)
+			var approach := Geometry2D.get_closest_point_to_segment(position, station.position, handle)
+			if _near_handle(position, approach):
+				_set_station_hover(station, position)
+				return
 	for track: Track in graph.tracks:
 		var anchors := TrackGeometry.anchors(graph, track)
 		for index in range(1, anchors.size() - 1):
 			if _near_handle(position, anchors[index]):
+				world_view.hovered_station_id = -1
 				world_view.hovered_track_id = track.id
 				world_view.hovered_bend_index = index
+				world_view.set_rail_anchor(anchors, position)
 				world_view.rail_anchor = anchors[index]
 				world_view.hover_caption = "Remodeler le tracé"
 				return
@@ -1261,6 +1278,19 @@ func _update_hover(position: Vector2) -> void:
 		if _near_handle(position, spine):
 			world_view.hover_caption = ""
 			return
+	if station != null:
+		var handles_visible := world_view.hovered_station_id == station.id or world_view.connection_hint_station_id == station.id
+		var rail_distance := INF
+		if not handles_visible:
+			for track: Track in graph.tracks:
+				var anchor := TrackGeometry.insertion_point(TrackGeometry.anchors(graph, track), position)
+				rail_distance = minf(rail_distance, anchor.distance_squared_to(position))
+		for direction: Vector2 in [Vector2.RIGHT, Vector2(1.0, -1.0)]:
+			var handle := world_view.station_handle_position(station, direction)
+			if _near_handle(position, handle) and (handles_visible or handle.distance_squared_to(position) < rail_distance):
+				_set_station_hover(station, position)
+				return
+	world_view.hovered_station_id = -1
 	world_view.hovered_track_id = -1
 	world_view.hover_caption = ""
 	var best_distance := 20.0 / camera.zoom.x + TrackGeometry.LANE_OFFSET
@@ -1271,12 +1301,24 @@ func _update_hover(position: Vector2) -> void:
 		if distance < best_distance:
 			best_distance = distance
 			world_view.hovered_track_id = track.id
-			world_view.rail_anchor = TrackGeometry.insertion_point(TrackGeometry.anchors(graph, track), position)
+			world_view.set_rail_anchor(TrackGeometry.anchors(graph, track), position)
 			world_view.hover_caption = "Insérer une station"
+	if world_view.hovered_track_id < 0 and station != null:
+		_set_station_hover(station, position)
+		return
 	var snapped := _station_placement_position(position)
 	if world_view.hovered_track_id < 0 and _station_near(snapped, 20.0) == null and _train_near(position) == null:
 		world_view.station_preview_position = snapped
 		world_view.station_preview_visible = true
+
+func _set_station_hover(station: Station, position: Vector2) -> void:
+	world_view.hovered_station_id = station.id
+	world_view.hovered_track_id = -1
+	world_view.hover_caption = "Relier une station" if _near_handle(position, world_view.station_handle_position(station, Vector2.RIGHT)) else ""
+	if _near_handle(position, world_view.station_handle_position(station, Vector2(1.0, -1.0))):
+		world_view.hover_caption = "Supprimer la station"
+	elif station.position.distance_to(position) <= maxf(world_view.station_radius(station) + 3.0, 12.0 / camera.zoom.x):
+		world_view.hover_caption = "Glissez le centre pour déplacer"
 
 func _insert_station(track_id: int, position: Vector2) -> void:
 	var error := graph.insert_station(track_id, position, lines)
@@ -1316,6 +1358,10 @@ func _refresh_network() -> void:
 	_stop_following()
 	dispatcher.rebuild_routes()
 	world_view.set_network(graph, lines, dispatcher.routes)
+	for line: TransitLine in lines:
+		if not line.tracks.is_empty() and not line.is_loop() and not dispatcher.routes[line.id]["terminal_ready"]:
+			_set_status("Pas assez de place aux terminus. Allongez la ligne ou réduisez les wagons.")
+			break
 	_update_connection_guidance()
 	_update_configuration_ui()
 
@@ -1352,7 +1398,13 @@ func _on_wagon_changed(value: float) -> void:
 			_set_status("Cette rame serait trop longue pour un segment. Allongez le tracé.")
 			_update_configuration_ui()
 			return
+	var previous := active_line.wagon_count
 	active_line.wagon_count = count
+	if not active_line.tracks.is_empty() and not active_line.is_loop() and not TrackGeometry.circuit(graph, active_line, lines)["terminal_ready"]:
+		active_line.wagon_count = previous
+		_set_status("Pas assez de place aux terminus. Allongez la ligne ou réduisez les wagons.")
+		_update_configuration_ui()
+		return
 	_refresh_network()
 	_update_configuration_ui()
 
@@ -1367,6 +1419,7 @@ func _update_configuration_ui() -> void:
 	_max_trains_slider.editable = dispatcher.route_capacity(active_line) > 0
 	_max_trains_slider.value = maxi(1, dispatcher.train_limit(active_line))
 	_dwell_slider.value = active_line.dwell_time
+	_dwell_slider.tooltip_text = tr("Arrêt minimum ; embarquement : jusqu'à 2 s de plus.")
 	_velocity_slider.value = active_line.cruise_velocity
 	_wagon_slider.value = active_line.wagon_count
 	_dispatch_value.text = "%.0f s" % active_line.dispatch_rate
@@ -1393,6 +1446,7 @@ func _on_line_color_changed(color: Color) -> void:
 		var button := child as Button
 		if button.button_pressed:
 			_style_line_tab(button, active_line.color)
+	world_view.refresh_illumination()
 	world_view.queue_redraw()
 	if _connect_drag_source_id >= 0:
 		_extend_stroke(_route_pointer)
