@@ -7,8 +7,43 @@ var _day_city: Color
 func _initialize() -> void:
 	_run.call_deferred()
 
+func _test_cached_halo_geometry() -> bool:
+	var touching := PackedVector2Array([Vector2.ZERO, Vector2(96, 0), Vector2(96, 96), Vector2(0, 96), Vector2.ZERO, Vector2(-96, 0), Vector2(-96, -96), Vector2(0, -96)])
+	var loops := WorldView._polygon_loops(touching)
+	if loops.size() != 2:
+		push_error("Point-touching corridor contours must split into two simple loops.")
+		return false
+	for loop: PackedVector2Array in loops:
+		if Geometry2D.triangulate_polygon(loop).is_empty():
+			push_error("Split corridor contours must triangulate.")
+			return false
+	var stroke := PackedVector2Array([Vector2(-96, 0), Vector2.ZERO, Vector2(96, 96), Vector2(192, 0), Vector2(96, -96), Vector2.ZERO, Vector2(0, 192)])
+	var pieces := WorldView._halo_polygons(stroke, 30.0)
+	var covers_rail := false
+	for piece: PackedVector2Array in pieces:
+		if Geometry2D.triangulate_polygon(piece).is_empty() or Geometry2D.is_point_in_polygon(Vector2(96, 0), piece):
+			push_error("Self-crossing corridor halos must triangulate without filling enclosed holes.")
+			return false
+		covers_rail = covers_rail or Geometry2D.is_point_in_polygon(Vector2(-48, 0), piece)
+	if not covers_rail:
+		push_error("Corridor splitting must preserve the original rail coverage.")
+		return false
+	var view := WorldView.new()
+	var junction := Station.new(0, Vector2(-256, -256))
+	var cells := {Vector2i(-1, -1): [{"position": junction.position, "radius": view.station_radius(junction)}]}
+	if view._junction_strength(Vector2(-255, -255), cells) != 0.0 or view._junction_strength(Vector2(256, 256), cells) != 1.0:
+		push_error("Junction illumination lookup must preserve negative-cell coordinates and distant full intensity.")
+		view.free()
+		return false
+	view.free()
+	return true
+
 func _run() -> void:
+	if not _test_cached_halo_geometry():
+		quit(1)
+		return
 	_main = load("res://scenes/main.tscn").instantiate()
+	_main.set("startup_layout_enabled", false)
 	root.add_child(_main)
 	# Pixel probes below use a fixed 1x render target; density/input has its own test.
 	root.content_scale_factor = 1.0
@@ -190,9 +225,10 @@ func _run() -> void:
 					return
 			_main.call("_cancel_gesture")
 	_main.call("_begin_world_interaction", view.station_handle_position(graph.stations[0], Vector2.RIGHT))
-	_main.call("_extend_stroke", Vector2(576.0, 144.0))
+	_main.set("_drawn_points", PackedVector2Array([graph.stations[0].position, Vector2(576, -192), Vector2(144, -192), graph.stations[1].position]))
+	_main.call("_extend_stroke", graph.stations[0].position)
 	if view.get("_preview_error").is_empty() or view.get("_preview_color") != Color("#d45c64"):
-		push_error("Crossing previews must expose invalid geometry and use the danger color.")
+		push_error("Invalid routes must expose rejected geometry and use the danger color.")
 		quit(1)
 		return
 	await process_frame
@@ -333,13 +369,14 @@ func _test_station_line_rings(view: WorldView, dispatcher: TransitDispatcher, ca
 	view.connection_hint_station_id = -1
 	var original_count := view.lines.size()
 	var palette := [Color("#58b8bd"), Color("#e98668"), Color("#8d83c7"), Color("#d0a84f")]
-	for count: int in [0, 1, 2, 4, 8]:
+	for count: int in [0, 1, 2, 3, 4, 8]:
 		view.lines.resize(original_count)
 		for index in range(count):
 			var line := TransitLine.new(original_count + index, palette[index % palette.size()])
 			line.stations = [station.id, station.id]
 			view.lines.append(line)
-		if view.station_line_colors(station).size() != count or not is_equal_approx(view.station_radius(station), 10.0 + 2.0 * maxi(1, count)):
+		var center_radius := 10.0 + maxi(0, count - 1)
+		if view.station_line_colors(station).size() != count or not is_equal_approx(view.station_radius(station), center_radius + 2.0 * maxi(1, count)):
 			push_error("Stations must have exactly one ring per serving line, even at loop endpoints.")
 			return false
 		for zoom: float in [1.0, 2.5]:
@@ -355,8 +392,11 @@ func _test_station_line_rings(view: WorldView, dispatcher: TransitDispatcher, ca
 				if image.get_pixelv(Vector2i(transform * station.position)).get_luminance() < 0.85:
 					push_error("Interchange rings must preserve the white station center.")
 					return false
+				if image.get_pixelv(Vector2i(transform * (station.position + Vector2(center_radius - 1.0, 0)))).get_luminance() < 0.85:
+					push_error("The white center must grow one radius pixel per additional serving line.")
+					return false
 				for index in range(count):
-					var radius := 10.0 + 2.0 * (count - index) - 1.0
+					var radius := center_radius + 2.0 * (count - index) - 1.0
 					var pixel := image.get_pixelv(Vector2i(transform * (station.position + Vector2(radius, 0))))
 					if _pixel_difference(pixel, palette[index % palette.size()].darkened(0.3)) > 0.08:
 						push_error("Station rings must match darkened line colors, oldest outside, at day/night and zoom: count=%s index=%s pixel=%s." % [count, index, pixel])
@@ -367,7 +407,7 @@ func _test_station_line_rings(view: WorldView, dispatcher: TransitDispatcher, ca
 			await process_frame
 			await RenderingServer.frame_post_draw
 			var transform := view.get_global_transform_with_canvas()
-			var inner := root.get_texture().get_image().get_pixelv(Vector2i(transform * (station.position + Vector2(11, 0))))
+			var inner := root.get_texture().get_image().get_pixelv(Vector2i(transform * (station.position + Vector2(center_radius + 1.0, 0))))
 			if _pixel_difference(inner, Color("#cb6d95").darkened(0.3)) > 0.08:
 				push_error("Station rings must update immediately when their line is recolored.")
 				return false
@@ -390,7 +430,7 @@ func _test_station_line_rings(view: WorldView, dispatcher: TransitDispatcher, ca
 				var transform := view.get_global_transform_with_canvas()
 				var image := root.get_texture().get_image()
 				for index in range(count):
-					var radius := 10.0 + 2.0 * (count - index) - 1.0
+					var radius := center_radius + 2.0 * (count - index) - 1.0
 					var expected: Color = palette[index % palette.size()] if index < count - 1 else Color("#cb6d95")
 					if _pixel_difference(image.get_pixelv(Vector2i(transform * (station.position + Vector2(radius, 0)))), expected.darkened(0.3)) > 0.08:
 						push_error("Interaction overlays must preserve station line rings: %s." % mode)

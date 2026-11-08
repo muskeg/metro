@@ -19,6 +19,55 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
   hosted on GitHub Pages.
 - English default; French can be selected live in Menu. Language is persisted
   through ConfigFile. Add all new UI messages to [ui.csv](./translations/ui.csv).
+- Menu provides Save / Load / Clear for multiple named local layouts, with
+  confirmation before overwrite/load/clear. Clear preserves saved layouts;
+  no autosave or cloud sync. Versioned JSON in `user://layouts` uses native
+  files on Windows/macOS and IndexedDB on Web. Layouts retain topology,
+  waypoint orientation, shared tracks, loops, colors, all line preferences and
+  camera/active-line selection. Trains/visits restart; pause, time, language and audio remain
+  session state. Browser storage can be cleared/evicted; warn when
+  `OS.is_userfs_persistent()` is false, never promise retention when true.
+  Names are at most 64 characters, files at most 16 MiB. See
+  [README.md](./README.md) and [DESIGN.md](./DESIGN.md) for storage details.
+  Menu Export/Import shares portable version-1 JSON: native file dialogs,
+  browser download/file upload. Current map exports; import validates then
+  confirms/fits, never overwrites local saves automatically. Use Save afterwards.
+  Same validator enforces bounded JSON/collections/coordinates/fleets/geometry,
+  exact grid, unique positions and safe track/train clearance before rendering.
+  No scripts, external resources or paths taken from file content. Exact
+  safety limits and platform caveats documented in README/DESIGN.
+- Desktop launches open the bundled **Metro demo**: 16 stations, three lines,
+  one loop, crossings only at interchanges. Load always offers the immutable
+  included original, separately from user saves with identical names; Save
+  writes user copies only. Clear starts empty but keeps the original available.
+  All startup/menu loads (including user saves) center full station, waypoint
+  and offset running-route bounds and fill one usable window dimension.
+  Preserve aspect ratio, 24-world-unit safety margin and 32px side/80px top/
+  112px bottom HUD space. Fit may zoom in or below 0.08; that lower fit becomes
+  the navigation floor. Stored framing remains in JSON but is overridden on
+  menu load. Empty loads use origin/1x; resizing does not refit manual views.
+  Dedicated -/+ and four-corner Fit controls above the dock provide 44px
+  targets and EN/FR tooltips. Fit ends following/gestures and closes sheets,
+  but preserves live trains, pause and topology. Watch mode hides controls.
+  The starter resource ships with Windows/macOS/Web without
+  relying on writable storage or browser persistence.
+  Web exports (including GitHub Pages) carry `montreal_startup` and instead
+  open bundled Montreal on every launch; saved layouts remain untouched and
+  all included presets stay accessible through Load.
+- Load also offers named real-network presets: Tokyo central JR (80 stations,
+  97 tracks, ten paths anchored by the full 30-station Yamanote loop; includes
+  Tokaido Tokyo–Odawara via Hiratsuka and Shonan-Shinjuku Akabane–Odawara
+  rapid / Akabane–Zushi local) and Montreal (68 stations,
+  69 tracks, four metro-only paths; no REM/exo, bus or projected connections).
+  Tokyo starts with `max_trains=2`; Montreal with 6 on green/orange/blue and 2
+  on yellow, all two-wagon trains. Desired interval 12s on Montreal allows
+  the requested fleets, progressively dispatched within existing service
+  headway/capacity rules. Fleet ceilings remain editable.
+  Original schematic coordinates, not copied artwork.
+  Tokyo replaces the former regional JR East map; central station sequences
+  are cross-checked against public route tables, with local/rapid patterns and
+  cropped endpoints explicit. Sources, exclusions and projected/continuation labels are documented in
+  [README.md](./README.md) and generated JSON metadata.
 - Minimalist map: off-white matte noon, cool dawn, peach sunset, blue hour and
   a very dark blue night gradient. World-anchored subtle procedural grain is
   filtered at overview zoom; no glass reflections. No station shadows.
@@ -28,6 +77,15 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
   No scenery or visible grid; the 48-pixel
   construction grid remains active.
   Earlier procedural-city iterations were deliberately removed, not unfinished.
+- Metro branding uses an orange/teal/purple transit M with station rings,
+  redrawn as self-contained SVG paths from the supplied image. Source mark and
+  wordmark: [assets/branding](./assets/branding). The in-game title uses both;
+  native/Web boot uses the stacked logo on cream paper. Native app icons,
+  favicon and Apple touch icon use the matching rounded paper tile.
+  [build_branding.gd](./scripts/tools/build_branding.gd) regenerates combined
+  logo/icon SVGs and repository 1024px icon/600x520 splash PNGs without external
+  graphics dependencies. Project settings and export presets wire all targets;
+  Web styles extend the standard Godot shell, not a copied custom shell.
 - Elastic station-to-station drawing from one neutral + handle; no Draw/Move
   mode buttons. Center drag moves a station. Each free section has at most one
   bend using cardinal/45-degree segments, independent of pointer history.
@@ -91,15 +149,19 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
   Camera pan/zoom and train following work; placement/move/delete are disabled.
   Entering cancels in-progress edits safely. No setting is persisted.
 - Lines are opaque color bands with darker running lanes by day and bounded
-  colored rail glow/bright cores at night. Shared-station junction illumination
+  colored rail glow/bright cores at night. Shared physical corridors are spaced
+  48 pixels center-to-center (28-pixel bands), leaving a visible gap. Trains and
+  rendering use the same separated geometry. Shared-station junction illumination
   fades away around the marker so crossings do not form a luminous cross.
   Lanes are at +/-8 pixels (16 apart); car width is 7. A tighter +/-7 attempt
   blocked shared curved routes and was rejected by simulation tests.
-- Stations retain a 10-pixel white center. Each serving line contributes one
+- Stations have a 10-pixel white center for zero/one line, growing by 1 pixel
+  of radius per additional serving line. Each serving line contributes one
   2-pixel ring in its color darkened by 30%, matching running lanes. Older lines
   (array order) sit outside newer lines; repeated loop endpoints count once.
-  Interchanges grow to radius 10 + 2 x line count (minimum 12), preserving center
-  and ring widths. No station glow or station shadows.
+  Interchanges grow to radius 10 + max(0, line count - 1) + 2 x max(1, line count):
+  12/15/18 pixels for one/two/three lines, preserving ring widths.
+  No station glow or station shadows.
   Unconnected/ghost stations keep neutral
   borders; night softens fills and lightens only neutral borders.
   Radius-aware picking, handles, selection/hover and route-target rings keep
@@ -116,9 +178,10 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
   Line controls expand inside the same rail above the tabs, height based on
   content (max 300px), with 1/2/3/5 columns at <620/620/760/1366px. Same-tab
   click folds controls; switching lines keeps them open. Redundant Line settings
-  button removed. Menu/help remain separate, mutually exclusive centered sheets.
+  button removed. Menu/help/layouts use mutually exclusive centered sheets.
   Settings use a direct content-sized stack, without scrolling. Help may scroll
-  on narrow displays. Top-left launch title is 48px, stays opaque for 10s, fades smoothly until 30s,
+  on narrow displays. Top-left launch branding is a 248x60px vector mark/wordmark
+  row, stays opaque for 10s, fades smoothly until 30s,
   then never returns during that launch. Its timer runs independently of pause,
   watch mode and HUD idle opacity; resizing/waking never restores it.
   Collapse/restore use icon-only 44px buttons: outlined bottom panel with a
@@ -140,6 +203,11 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
 - Per-line ColorPicker keeps free hue selection, hex input and presets, with
   RGB/mode/sampler controls hidden to fit small screens. No alpha. Recolor
   updates rails, trains, tabs and preview without redispatching trains.
+  Line details have a fixed labelled Collapse header above scrolling controls,
+  a wide swatch beside Line color, and confirmed Delete line. Deletion removes
+  exclusive tracks/stations, preserves shared and unrelated infrastructure,
+  reindexes surviving IDs and rebuilds service; the last deletion leaves an
+  empty editable line. Pause/camera persist and stale following/visits clear.
 - Original 48-second PCM music uses a consonant repeating eight-bar progression,
   a swung 80 BPM kick/snare groove, sparse melody and muted hats. Music starts
   at 0.4 volume; train effects have a separate volume.
@@ -218,13 +286,38 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
 - [transit_graph.gd](./scripts/sim/transit_graph.gd): stations/tracks and unordered
   station-pair lookup. IDs equal array indices. Deletions compact and remap all
   station/track references, route lists and lookup before rebuilding dispatch.
+- [layout_store.gd](./scripts/layout_store.gd): typed capture/restore and named
+  version-1 JSON files. SHA-256 filenames keep user names out of paths; complete
+  temporary writes are renamed over the destination. Types, finite coordinates,
+  grid/waypoints, unique physical pairs, line references/settings and camera
+  validate before constructing replacement state. Store failures are logged
+  and exposed via `error_message`; main supplies localized feedback. Player
+  names in the saved-layout OptionButton must never be auto-translated.
+  `_open_layouts` / `_request_layout_action` / `_request_clear_map` /
+  `_confirm_layout_operation` / `_replace_layout` in
+  [main.gd](./scripts/main.gd) handle sheets, accessible keyboard focus,
+  confirmations and complete dispatch/selection/follow reset on replacement.
+  `load_starter_layout` reads [metro_demo.json](./layouts/metro_demo.json)
+  through the same JSON validator; all export presets explicitly include
+  `layouts/*.json`. Load uses per-item resource-path String metadata for bundled originals,
+  never translated text matching; included labels translate live. Main's
+  `startup_layout_enabled` defaults true; tests constructing an empty fixture
+  set it false before adding the scene. Bundled `_replace_layout(..., true)`
+  fits station extents with HUD margins without changing the stored resource.
+  Optional `station_names` and `lines[].name` preserve factual names in
+  version-1 saves without breaking older unnamed snapshots. Named station
+  hover captions, service settings and compact-tab tooltips use untranslated
+  factual text; fragments retain their service name.
 - [transit_line.gd](./scripts/sim/transit_line.gd): ordered station and track IDs.
   Physical tracks are shared; waypoint orientation is canonical track a-to-b.
   Lines extend only at endpoints. A loop repeats its first station at the end;
   it cannot be extended, but its tracks can be redrawn. Empty fragments remain reusable.
 - Geometry edits validate all affected paths; invalid movement rolls back the
   full change. Moving a station reshapes its adjacent elbow from the gesture's
-  original path, keeping distant bends fixed. Off-station crossings are rejected.
+  original path, keeping distant bends fixed. Off-station crossings between
+  independent physical tracks are allowed globally without creating transfers
+  or shared signaling; each individual stroke still rejects self-intersection
+  and backtracking. A whole service may cross itself across different tracks.
 - [track_geometry.gd](./scripts/render/track_geometry.gd): canonical grid guides,
   elastic_path, preview rounding, shared-corridor offsets and route circuits.
   Original tight quadratic bends restored everywhere: 12px at stations,
@@ -320,7 +413,7 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
   to Stream (`0` in ProjectSettings, NOT AudioServer's enum value `1`).
   Sample playback threw browser AudioBuffer duplication errors on the generated
   48-second WAV's pause/unpause and loop restart.
-- [pages.yml](./.github/workflows/pages.yml): imports, tests simulation/audio/UI/localization,
+- [pages.yml](./.github/workflows/pages.yml): imports, tests simulation/audio/UI/localization/layouts,
   exports Web and uploads the Pages artifact on main pushes/PRs; only main
   pushes/manual runs deploy. Single-thread Web needs no COOP/COEP headers.
   [docs/](./docs/) contains README screenshots, ignored by Godot and excluded
@@ -351,7 +444,10 @@ godot --headless --path . --script res://tests/terminal_smoke.gd
 godot --headless --path . --script res://tests/intersection_smoke.gd
 godot --headless --path . --script res://tests/editing_smoke.gd
 godot --headless --path . --script res://tests/interface_smoke.gd
+godot --headless --path . --script res://tests/branding_smoke.gd
 godot --headless --path . --script res://tests/localization_smoke.gd
+godot --headless --path . --script res://tests/layout_smoke.gd
+godot --headless --path . --script res://tests/transfer_smoke.gd
 godot --headless --path . --script res://tests/audio_smoke.gd
 godot --headless --path . --script res://tests/urban_smoke.gd
 godot --path . --script res://tests/urban_smoke.gd --audio-driver Dummy
@@ -395,6 +491,812 @@ godot --headless --path . --export-release "Web" dist/web/index.html
   Windows log-file path if specifying one.
 
 ## Recent work and verification record
+
+### README refresh, current screenshots and commit preparation (2026-11-07)
+
+- Reviewed [README.md](./README.md) against the current presets, camera actions,
+  sharing/menu controls, branding and [Pages workflow](./.github/workflows/pages.yml).
+  Added logo preview, current zoom/fit/delete-line/save/share command rows,
+  corrected the fitted navigation floor and geographical-import wording,
+  removed stale benchmark/first-deployment claims and listed current CI tests.
+  Moved logo regeneration details into Development and separated Interface
+  from sharing/storage guidance.
+- Replaced day/night screenshots with actual fitted Montreal; added JR and
+  native sharing-menu captures in [docs/images](./docs/images). All four are
+  1180x740 and visually inspected. Capture shows current logo, four/ten-line
+  docks, zoom/fit controls, compact geometry and Save/Load/Clear/Export/Import.
+  [capture_readme.gd](./scripts/tools/capture_readme.gd) reproducibly loads the
+  bundled networks, advances service 60s, uses noon/midnight and captures actual
+  rendering without modifying presets or local saves. Excluded from exports
+  with other tools; command documented in README.
+- Native capture initially succeeded, but a rerun stalled awaiting
+  frame_post_draw; stopped its specific process. A foreground retry also
+  stalled, with a deprecated move_to_foreground warning. Final capture uses
+  grab_focus and explicit RenderingServer.force_draw(false), plus synchronized
+  camera/background framing; all four completed cleanly, removing an initial
+  stale-background edge in the JR capture.
+- Successful executable `/Applications/Godot.app/Contents/MacOS/Godot`:
+  `--path . --script res://scripts/tools/capture_readme.gd --audio-driver Dummy`,
+  `--headless --editor --path . --quit`;
+  `--headless --path . --script res://tests/<test>.gd` for
+  simulation_smoke, schedule_smoke, terminal_smoke, audio_smoke, interface_smoke,
+  branding_smoke, localization_smoke, layout_smoke, transfer_smoke, preset_smoke,
+  editing_smoke, loop_smoke, train_controls_smoke;
+  `--path . --script res://tests/visual_smoke.gd --audio-driver Dummy`.
+  All passed; logs checked for script/parse/assertion errors. Layout/transfer
+  negative-validation messages intentional. Full preset test verified 20 JR
+  trains after 30 simulated seconds and sustainable Montreal 6/6/2/6 fleets
+  after 600 simulated seconds. Fifty adversarial rejections took 5.0ms in this
+  run; timings are observations, not performance guarantees.
+- Fresh Windows/macOS/Web exports succeeded with the three export commands
+  in Validation and delivery. Verified Windows PE x86_64, Mac ZIP integrity,
+  universal x86_64/arm64 executable, strict deep codesign and packaged startup
+  `--headless --quit-after 10 --audio-driver Dummy`; all seven Web runtime/icon/
+  splash outputs nonempty. Export logs clean. Windows/Intel Mac interactive
+  runtime and Gatekeeper/notarization not run; browser not rerun in this
+  documentation task (prior branding browser checks remain recorded below).
+- README local links and exact PNG dimensions checked; `git --no-pager diff
+  --check` passed. Delivery scope: one local commit of the accumulated layout/
+  preset/interface/sharing/branding changes and this README refresh, as requested.
+  No push/deployment requested. Task-native processes stopped/completed;
+  extracted app, test screenshots and logs cleaned.
+
+### Shared vector logo and complete platform branding (2026-11-07)
+
+- Redrew the supplied three-color transit M and Metro lettering as SVG paths,
+  retaining station rings and rounded routes, without tracing raster texture,
+  embedding the image or requiring fonts. Source mark/wordmark and generated
+  complete logo/icon are in [assets/branding](./assets/branding). Reference
+  image remains untouched in dist and is not shipped.
+- [build_branding.gd](./scripts/tools/build_branding.gd) generates combined
+  SVGs, 1024px PNG app icon and 600x520 stacked boot logo using Godot's own SVG
+  rasterizer. PNG derivatives stay with source for ordinary/Pages exports.
+  [main.gd](./scripts/main.gd) uses two input-transparent TextureRects in a
+  248x60 HBoxContainer; unchanged 10/20/30-second opacity 1/0.5/0, independent
+  of HUD fade, pause and narrow-screen hiding. No new startup delay.
+- [project.godot](./project.godot) replaces the engine icon and boot splash.
+  [export_presets.cfg](./export_presets.cfg) sets Windows/macOS icon overrides
+  and adds cream paper, purple text, teal progress, responsive splash and
+  theme-color/description to the default Web shell. Exporter supplies matching
+  favicon and 180px Apple touch icon. README/DESIGN explain sources/regeneration.
+- Added [branding_smoke.gd](./tests/branding_smoke.gd) to Pages CI: self-contained
+  vectors rasterize, platform settings/boot wiring, exact raster sizes, rounded
+  transparency and all three colors at 16/32/64/180/256/512px. Updated interface
+  assertions for actual vector textures and mouse filtering rather than a
+  font-size proxy; existing fade/responsive/control behavior passed.
+- Successful executable `/Applications/Godot.app/Contents/MacOS/Godot`:
+  `--headless --path . --script res://scripts/tools/build_branding.gd` (including
+  clean regeneration), `--headless --editor --path . --quit`,
+  `--headless --path . --script res://tests/branding_smoke.gd`,
+  `--headless --path . --script res://tests/interface_smoke.gd`,
+  `--headless --path . --script res://tests/layout_smoke.gd`.
+  Initial generator boot logged missing splash before creating it; subsequent
+  import/regeneration clean. Changed test image reads to imported Texture2D
+  images after raw Image.load_from_file warnings. Layout negative errors intentional.
+- Fresh exports succeeded using all three export commands above. Windows PE
+  x86_64 contains actual Metro PNG icon resources at 16/32/48/64/128/256px;
+  extracted 256px icon visually verified. Mac archive integrity, universal
+  x86_64/arm64 binary, strict deep codesign verification and packaged startup
+  `--headless --quit-after 10 --audio-driver Dummy` passed; extracted ICNS
+  pixels match source. Each actual Windows/Mac/Web pack loaded brand assets,
+  verified title size/fade/phone hiding and preserved starter preset.
+- Web browser verified cream stacked loading logo/progress, successful normal
+  startup with Montreal and the vector in-game title; favicon/touch PNGs decode
+  at 1024/180px. Exported full-size icon pixels match source; raw PNG bytes
+  differ because of encoding, not artwork. Splash PNG matches exactly.
+  A deliberately delayed WASM route captured loading but stalled across tool
+  calls; removing interception and reloading launched normally.
+- `git --no-pager diff --check` passed. No commit/deployment. Windows/Intel Mac
+  interactive runtime, Gatekeeper/notarization and full service/performance
+  suites not run for branding changes.
+  Browser reset to blank and preview stopped; task verification helpers,
+  extracted app/icons and logs cleaned.
+
+### Portable layout sharing and hardened imports (2026-11-07)
+
+- Menu Export/Import shares the current editable network as version-1 JSON.
+  [layout_transfer.gd](./scripts/layout_transfer.gd) uses native file dialogs
+  and browser download/file upload; [layout_store.gd](./scripts/layout_store.gd)
+  supplies the shared full-precision codec and temporary-file/rename writer.
+  [main.gd](./scripts/main.gd) confirms validated imports before replacing and
+  fitting the map. Cancel/rejection preserves the live map; importing never
+  overwrites local saves. Use Save explicitly to retain an imported copy.
+- Security review reported no code-execution/path-injection vulnerabilities;
+  its scope excluded denial-of-service/crash findings. Independently hardened
+  that boundary: JSON only, no imported scripts/resources/HTML/destination
+  paths; UTF-8 and lexical limits checked before JSON parsing, then schema,
+  finite numbers, references, exact grid, unique positions, cardinal/diagonal
+  geometry, per-track self-intersection/backtracking and train/station clearance.
+  Independent-track crossings remain permitted.
+- Limits: 16 MiB, depth 16, 32,768 JSON tokens, 4,096 raw bytes per string,
+  128-byte numeric tokens; 256 stations, 512 tracks, 16 lines, 64 total requested
+  trains; 32 waypoints per track/2,048 total, 512 anchors per line/4,096 service
+  anchors, 2,048 total station calls; coordinates +/-48,000 and 200,000 units
+  each for physical/service length. Recognized labels: 160 characters, no
+  control characters. Same limits protect local saves/loads. These bound known
+  application risks, not unknown engine/browser vulnerabilities.
+- Added [transfer_smoke.gd](./tests/transfer_smoke.gd) to Pages CI; EN/FR sharing
+  messages and README/DESIGN documentation. Reduced phone menu row spacing to
+  keep all actions visible without shrinking 44px targets.
+- Successful executable `/Applications/Godot.app/Contents/MacOS/Godot`:
+  `--headless --editor --path . --quit`;
+  `--headless --path . --script res://tests/transfer_smoke.gd`,
+  and the same command for `layout_smoke.gd`, `editing_smoke.gd`,
+  `interface_smoke.gd`, `localization_smoke.gd`;
+  `--path . --script res://tests/preset_smoke.gd --audio-driver Dummy -- jr-east montreal render-only`.
+  Covered all preset/menu/file round-trips, exact camera/settings, confirmation/
+  cancel, invalid/missing/unwritable files, malicious data and exact thresholds.
+  Fifty adversarial rejections took 3.1 ms in the final run (observation only).
+  Negative-validation errors intentional; no final script/assertion errors.
+  Fixed initial writer variable error, test active-line assumptions, default
+  JSON precision loss and phone overflow. Control-name test uses a tab rather
+  than relying on a GDScript NUL literal.
+- Fresh Windows/macOS/Web exports succeeded with the three export commands
+  above. Verified PE x86_64, ZIP integrity, universal Mac executable, strict
+  deep codesign, packaged Mac startup with
+  `--headless --quit-after 10 --audio-driver Dummy`, and nonempty Web assets.
+  Each actual exported pack passed menu import, all preset round-trips,
+  sharing controls and coordinate/depth rejection checks.
+- Final Web browser: uploaded/confirmed Montreal and JR JSON, observed fitted
+  maps and rejection of a valid-schema 1e30 coordinate without replacing
+  Montreal; file chooser cancellation removed its temporary input. Captured
+  exported JSON Blob (68 stations, then 80 stations/ten JR services) and actual
+  download filename `Metro-layout.json`. Download-event wait timed out in the
+  browser harness, so saving the download to disk is not verified; a later
+  short-wait Blob probe ran before the frame, and the 1.5-second probe succeeded.
+- `git --no-pager diff --check` passed. No commit/deployment. Windows/Intel Mac
+  runtime, interactive native file dialogs, Gatekeeper/notarization and full
+  service/performance suites were not run for sharing changes.
+  Browser reset to blank, preview server stopped, task helpers/app/logs cleaned.
+
+### Full-window layout fitting and camera controls (2026-11-07)
+
+- Startup and every confirmed menu Load now fit the complete network, including
+  user saves. Replaced saved-camera-centered, zoom-out-only fitting with bounds
+  of stations, physical waypoints and offset running-route points, grown by 24
+  world units. Fit fills exactly one usable window dimension (aspect ratio
+  preserved, no cropping), with 32px side, 80px top and 112px bottom clearance
+  for HUD/camera actions. Fits after rebuilding routes so separated corridors
+  are included. Layout JSON retains saved camera for schema compatibility,
+  but UI Load deliberately replaces framing. Clear remains origin/1x.
+- Added 44px minus, plus and four-corner Fit controls above the bottom dock
+  with EN/FR tooltips; remain available when dock collapsed and hide in Watch.
+  Fit closes sheets, cancels gestures/following and resets camera smoothing
+  without rebuilding service, modifying topology, restarting trains or pause.
+  Camera zoom can exceed the preset's saved zoom or go below normal 0.08
+  minimum for large phone layouts. Store the fitted navigation floor until
+  next replacement/fit so zoom-in/out can return without a discontinuity.
+  Empty fit restores normal floor; one station respects 6x maximum.
+- Entry points: scripts/main.gd _replace_layout, _fit_layout_to_window,
+  _fit_window, _zoom_camera, creation/positioning of _zoom_controls;
+  translations/ui.csv and imported EN/FR resources. Updated README/DESIGN
+  and current-state memory to supersede exact saved-camera restoration.
+- Tests verify demo/Tokyo/Montreal full station/bend/corridor bounds at
+  390x640, 760x520, 1180x740 and 1920x1080: no crop, exactly full dimension,
+  correctly centered usable viewport, huge-map zoom round-trip, actual button
+  signals and fit after manual pan. Added empty/single-node fit, preserved
+  trains/pause and ended following, responsive 44px controls and EN/FR labels.
+  Initial assertion assumed demo must zoom in on a narrow window; corrected
+  it to viewport-dependent fitting and retained exact output-size assertions.
+- Successful executable `/Applications/Godot.app/Contents/MacOS/Godot`:
+  `--headless --editor --path . --quit`;
+  `--headless --path . --script res://tests/layout_smoke.gd`;
+  `--headless --path . --script res://tests/interface_smoke.gd`;
+  `--headless --path . --script res://tests/localization_smoke.gd`;
+  `--path . --script res://tests/preset_smoke.gd --audio-driver Dummy -- jr-east montreal render-only`.
+  Layout smoke negative-validation errors intentional; final empty/single-node
+  additions passed on rerun. Native day/night preset/menu render checks passed;
+  render-only does not verify ten-minute fleet filling.
+- Fresh releases using same Godot executable:
+  `--headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  `--headless --path . --export-release "macOS" dist/Metro-macOS.zip`,
+  `--headless --path . --export-release "Web" dist/web/index.html`.
+  Clean logs; PE x86_64, ZIP integrity, universal Mac binary, strict deep
+  codesign verification and packaged Mac startup
+  `--headless --quit-after 10 --audio-driver Dummy` passed. All three actual
+  packs tested exact full usable-window dimension for all included layouts
+  and actual zoom/fit button signals. Web assets nonempty. Local browser
+  confirmed enlarged auto-fitted Montreal and actual plus/minus/fit clicks
+  restoring its complete view. `git --no-pager diff --check` passed.
+  Browser reset to blank, task server stopped; helper/app/logs cleaned.
+- No commit/deployment. Windows/Intel Mac runtime, Gatekeeper/notarization,
+  full service/performance suites not rerun. Manual camera views are not
+  automatically changed on resize; use Fit again for the new window size.
+
+### Tokaido and both southern Shonan-Shinjuku branches (2026-11-07)
+
+- Expanded [build_jr_east.gd](./scripts/tools/build_jr_east.gd) and generated
+  [jr_east.json](./layouts/jr_east.json): Tokaido Tokyo–Odawara local (16
+  calls, including Hiratsuka), Shonan-Shinjuku Akabane–Odawara rapid and
+  Akabane–Zushi local. User selected both southern branches; northern regional
+  extensions remain excluded. Rapid is not special rapid: it skips Nishi-Oi,
+  Shin-Kawasaki, Hodogaya and Higashi-Totsuka but serves every Tokaido station
+  south of Totsuka. Zushi local includes those four and Kita-Kamakura/Kamakura.
+  Stop patterns checked against public Tokaido JR East and Shonan-Shinjuku
+  station/service tables, linked in JSON/README. No timetable claims.
+- Retained all original seven services, original 59 station coordinates and
+  Yamanote loop. Now 80 distinct stations, 97 physical tracks, ten services,
+  max two trains each with two wagons. Shared interchanges/physical tracks
+  reuse IDs and existing side-by-side rendering; express bypasses use original
+  guides rather than coinciding distinct rails or passing through local markers.
+  Southwest coast extends through Hiratsuka to Odawara; Zushi branches east
+  after Ofuna. Camera (-576,576), zoom 0.08 fits native 1180x740 HUD margins.
+  Included catalog label/path retained; Montreal/demo/user saves untouched.
+- [preset_smoke.gd](./tests/preset_smoke.gd) checks all ten exact stop sequences,
+  topology totals, explicit rapid/local exclusions, shared Hiratsuka and
+  southern side-by-side separation, train clearance, two actual trains on each
+  new service, save round-trip, menu load, selection, clear and native day/night.
+  Initial new Tokyo–Shimbashi guide overlapped Keiyo's departure: moved west
+  and retained no-positive-length-collinear-overlap assertion. Initial headless
+  menu test had an uninitialized tiny viewport (negative usable Rect2):
+  explicitly size 1180x740/1x and await layout before loading. Corrected tests
+  passed, without weakening fit/separation checks.
+- Successful Godot executable: `/Applications/Godot.app/Contents/MacOS/Godot`.
+  `--headless --path . --script res://scripts/tools/build_jr_east.gd --quit-after 120`;
+  `--headless --path . --script res://tests/preset_smoke.gd -- jr-east render-only`;
+  `--path . --script res://tests/preset_smoke.gd --audio-driver Dummy -- jr-east`.
+  Final native 30 simulated seconds: 20 actual trains, parse 3.1ms, route +
+  separation validation 780.3ms, simulation 7909.6ms, menu/cache 1400.6ms.
+  Inline `python3 -` waypoint orientation/point-containment audit: no new
+  strict off-station intersections or new tracks through unrelated markers.
+  Browser fresh Web export: loaded Tokyo through real menu, checked overview,
+  separate southern corridors, ten tabs and visible Hiratsuka hover label.
+- Fresh exports succeeded:
+  `--headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  `--headless --path . --export-release "macOS" dist/Metro-macOS.zip`,
+  `--headless --path . --export-release "Web" dist/web/index.html`.
+  Clean logs, PE x86_64, ZIP integrity, universal x86_64/arm64 Mac,
+  strict deep codesign verification and packaged Mac
+  `--headless --quit-after 10 --audio-driver Dummy` startup passed.
+  All three actual packs verified 80/97/10 topology, Hiratsuka membership,
+  Odawara/Zushi endpoints, two-train/two-wagon settings and unchanged
+  platform startup (Web Montreal, desktop demo). Web assets nonempty;
+  `git --no-pager diff --check` passed. Browser restored to blank, local
+  server stopped, temporary pack helper/app/logs cleaned.
+- Windows/Intel Mac runtime, Gatekeeper/notarization, Montreal full service
+  regression and detailed performance profiling not rerun; no commit/deploy.
+  Web logo customization was explained (custom boot splash/icon and HTML
+  shell); no logo asset supplied and no branding files changed.
+
+### Pages startup and clearer line controls (2026-11-07)
+
+- Web export now carries `montreal_startup`; `LayoutStore.load_starter_layout()`
+  loads included Montreal for that feature, otherwise Metro demo. The existing
+  Pages workflow exports Web, so no domain checks, CI-only file rewrites or
+  local-save changes are needed. Both originals stay available in Load.
+  Updated export preset, layout startup test, README and DESIGN.
+  Verified actual exported main scenes: Web 68 stations/four lines/fleets
+  6/6/2/6; Windows/macOS demo 16 stations/three lines.
+- Line controls now have a fixed, labelled Collapse header above the scrolling
+  body, an 80-pixel color swatch immediately beside Line color, and Delete line.
+  User chose deletion of exclusive tracks AND stations, preserving shared
+  infrastructure. `TransitGraph.remove_line()` removes only the deleted
+  service's exclusive tracks and disconnected exclusive stations, preserves
+  unrelated infrastructure, and reindexes surviving topology/line IDs.
+  Confirmation supports cancellation; surviving preferences/pause/camera
+  remain, following and routes/visits are rebuilt, pending arrival feedback
+  with obsolete line IDs is discarded. Last deletion creates one empty line.
+  EN/FR actions and confirmation added through translations/ui.csv/import.
+- Entry points: scripts/main.gd line-sheet creation, resize and deletion;
+  scripts/sim/transit_graph.gd remove_line; scripts/layout_store.gd startup;
+  export_presets.cfg Web feature; tests/interface_smoke.gd,
+  tests/localization_smoke.gd and tests/layout_smoke.gd.
+- Successful validation used `/Applications/Godot.app/Contents/MacOS/Godot`:
+  `--headless --editor --path . --quit` (translations/script import);
+  `--path . --script res://tests/interface_smoke.gd --audio-driver Dummy`;
+  `--headless --path . --script res://tests/editing_smoke.gd`;
+  `--headless --path . --script res://tests/localization_smoke.gd`;
+  `--headless --path . --script res://tests/layout_smoke.gd`.
+  Layout validation failures are intentional negative fixtures. Fixed a test
+  lookup that still assumed the old line-popup ScrollContainer root: initial
+  run logged SCRIPT ERROR despite printing success; corrected lookup and
+  subsequent native runs passed. Tests cover real collapse input, fixed header
+  during scrolling, visible footer on phones/laptops, picker, EN/FR, reversed
+  shared track/waypoint retention, interchange-only sharing, unrelated rails,
+  cancellation, last-line deletion, save/restore and stale visit/follow cleanup.
+- Local browser check of the fresh Web export verified automatic Montreal,
+  labelled controls, real swatch/picker opening and confirmed deletion of the
+  green line while retaining orange/blue/yellow. Native responsive tests cover
+  390x640 through 3840x2160 and Retina-scaled input. A browser wait for a
+  nonexistent status element timed out; canvas then showed normal initialized
+  gameplay. No deployment or commit; production Pages changes only on next
+  workflow deployment. Windows/Intel Mac runtime and Gatekeeper/notarization
+  remain unrun; full service/performance suite not rerun for these UI changes.
+- Final state/arrival-ID regression:
+  `--headless --path . --script res://tests/interface_smoke.gd` passed.
+  A final native rerun stopped producing output and was stopped after several
+  minutes; earlier native UI runs and browser checks passed, but that final
+  native run did not complete. Initial headless rerun exposed a new fixture
+  depending on inherited viewport sizing; explicitly set 760x520/1x and wait
+  for layout before real-input tests. Corrected headless suite passed.
+- Final fresh releases passed using the Godot executable above:
+  `--headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  `--headless --path . --export-release "macOS" dist/Metro-macOS.zip`,
+  `--headless --path . --export-release "Web" dist/web/index.html`.
+  Clean export logs, Windows PE x86_64, ZIP integrity, universal x86_64/arm64
+  Mac binary, `codesign --verify --deep --strict` and packaged Mac
+  `--headless --quit-after 10 --audio-driver Dummy` startup verified.
+  All actual packs checked for platform-specific startup and latest control
+  nodes; Web pack also tested green deletion: 43 stations/43 tracks/three
+  surviving lines, preserving shared interchanges. Web assets nonempty;
+  `git --no-pager diff --check` passed. Browser restored to blank, task server
+  stopped, temporary exported apps/helper/logs/screenshots cleaned.
+
+### Minimum practical Montreal spacing and larger fleets (2026-11-07)
+
+- User requested maximum compactness with two-wagon trains and actual fleets
+  of six on green/orange/blue, two on yellow. Retained 48-unit base spacing:
+  ordinary diagonal intervals use two grid steps (135.8 units) and horizontal
+  western intervals three (144 units), the shortest valid grid lengths under
+  the existing train-length-plus-40 clearance rule. Preserved defining bends
+  and all 68 names/interchanges/four paths rather than flattening the shape.
+  Shortened north orange tail and blue doglegs; yellow now uses a 240-unit
+  east segment then two diagonal steps. Tokyo/demo/player saves untouched.
+- Yellow individual train-fit was insufficient for simultaneous terminal
+  clearance: tested horizontal 3–8 / diagonal 2–4 grid-step combinations
+  against actual dispatcher capacity. Shortest supporting two trains was
+  horizontal five / diagonal two (375.8 total units). Smaller attempted
+  yellow variants capped service at one; did not weaken capacity checks.
+  Initial blue bend edit failed cardinal/45-degree validation; corrected
+  explicit grid bends before exporting.
+- [build_montreal.gd](./scripts/tools/build_montreal.gd) initializes max fleets
+  6/6/2/6 and desired interval 12s, retaining two wagons. Existing minimum
+  headway/cycle calculations and progressive dispatch remain unchanged.
+  [preset_smoke.gd](./tests/preset_smoke.gd) now tests actual counts, sustainable
+  service fleets, wagon counts, minimum-grid fit and compact yellow coordinates.
+  Montreal full test runs 600 simulated seconds to cover progressive fleet
+  ramp-up; JR retains 30 seconds. Updated README/DESIGN/current-state memory.
+- Successful commands used `/Applications/Godot.app/Contents/MacOS/Godot`:
+  `--headless --path . --script res://scripts/tools/build_montreal.gd`;
+  `--path . --script res://tests/preset_smoke.gd --audio-driver Dummy -- montreal`;
+  `--headless --path . --script res://tests/preset_smoke.gd -- montreal render-only`
+  (additional final minimum-spacing assertions).
+  Full test verified 20 actual trains with counts 6/6/2/6, ongoing arrivals,
+  save round-trip, menu load/selection/clear and native day/night rendering.
+  Load/cache 166ms; 600 simulated seconds 212.609s. Desired fleets 6/6/2/6;
+  capacities 37/43/3/16. Initial 90-second check was too early for ramp-up
+  (long-line service headways 67.1/77.5 seconds); ten-minute test passed.
+- Fresh exports passed using the same Godot executable:
+  `--headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  `--headless --path . --export-release "macOS" dist/Metro-macOS.zip`,
+  `--headless --path . --export-release "Web" dist/web/index.html`.
+  Clean export logs, PE x86_64, ZIP integrity, universal Mac binary, strict
+  deep codesign verification and packaged startup
+  `--headless --quit-after 10 --audio-driver Dummy` passed; Web assets nonempty.
+  All three actual packs verified for compact geometry, 68 stations, two
+  wagons and 6/6/2/6 fleet settings. `git --no-pager diff --check` passed.
+  Inline `python3 -` JSON waypoint audit compared all distinct-track segment
+  pairs using strict orientation-sign intersections: all 80 schematic
+  segments passed with no unintended off-station crossings.
+  Temporary probes/helper/logs/extracted app cleaned.
+  Browser, Windows/Intel Mac runtime, Gatekeeper/notarization and detailed
+  profiling not rerun. No commit/deployment.
+
+### Further compacting Montreal with two wagons (2026-11-07)
+
+- User requested tighter again, then chose keeping two wagons with extra
+  spacing on the shortest sections. Base spacing now 48 rather than 96 units;
+  all stations/bends/camera uniformly halved except the horizontal
+  Angrignon–De l'Eglise tail, whose four sections stay 144 units to satisfy
+  existing train-clearance checks. Shape/diagonals/interchanges retained;
+  68 stations, four lines, max two trains and two wagons unchanged.
+  Regenerated [montreal.json](./layouts/montreal.json) through
+  [build_montreal.gd](./scripts/tools/build_montreal.gd).
+- Initial uniform halving failed four green-line clearance assertions.
+  Did not weaken checks or shorten trains; user-approved local spacing fixed
+  the issue. Updated exact compact-coordinate assertions in
+  [preset_smoke.gd](./tests/preset_smoke.gd), README and DESIGN.
+- Passed with `/Applications/Godot.app/Contents/MacOS/Godot`:
+  `--headless --path . --script res://scripts/tools/build_montreal.gd`;
+  `--path . --script res://tests/preset_smoke.gd --audio-driver Dummy -- montreal`.
+  Clean native day/night frames, actual menu/save/clear, eight trains and
+  full 30-second service check. Load/cache 157.6ms, simulation 3.733s.
+- Fresh Windows/macOS/Web exports passed using the same Godot executable:
+  `--headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  `--headless --path . --export-release "macOS" dist/Metro-macOS.zip`,
+  `--headless --path . --export-release "Web" dist/web/index.html`.
+  Clean logs, PE x86_64, ZIP integrity, universal Mac binary, strict deep
+  codesign and packaged startup `--headless --quit-after 10 --audio-driver Dummy`
+  verified; Web assets nonempty. All three actual packs verified for compact
+  geometry, 68 stations/four lines and two wagons. `git --no-pager diff --check`
+  passed. Temporary helper/logs/extracted app cleaned.
+  Browser, Windows/Intel Mac runtime, Gatekeeper and profiling not rerun.
+  No commit/deployment.
+
+### Tightening Montreal station spacing (2026-11-07)
+
+- User approved the shape but requested less space between stations.
+  Uniformly reduced [build_montreal.gd](./scripts/tools/build_montreal.gd)
+  base spacing 144→96 units (one third tighter), including every station
+  and explicit bend. Scaled saved camera center accordingly; retained 0.08
+  overview zoom so the tighter layout is visibly smaller at the same zoom.
+  Regenerated [montreal.json](./layouts/montreal.json). All 68 stations,
+  proportions, four paths, shared interchanges, colors and two-train ceilings
+  unchanged. Tokyo/demo/player saves untouched. README/DESIGN updated.
+- [preset_smoke.gd](./tests/preset_smoke.gd) now asserts exact compact
+  interchange coordinates alongside existing shape checks, train fit,
+  station counts/orders, service, naming, round-trip, menu load and clearing.
+  Successful commands using `/Applications/Godot.app/Contents/MacOS/Godot`:
+  `--headless --path . --script res://scripts/tools/build_montreal.gd`;
+  `--path . --script res://tests/preset_smoke.gd --audio-driver Dummy -- montreal`.
+  Native day/night frames passed with clean logs; eight trains still dispatch.
+  On-grid audit passed for all 68 stations. Measured load/cache 166ms,
+  30 simulated seconds 3.670s; not a frame-rate guarantee.
+- Fresh release exports succeeded with the same Godot executable:
+  `--headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  `--headless --path . --export-release "macOS" dist/Metro-macOS.zip`,
+  `--headless --path . --export-release "Web" dist/web/index.html`.
+  Clean export logs; PE x86_64, ZIP integrity, universal Mac architectures,
+  strict deep codesign and packaged startup
+  `--headless --quit-after 10 --audio-driver Dummy` verified. Web assets nonempty;
+  actual Windows/Mac/Web packs checked for new spacing, 68 stations/four paths.
+  `git --no-pager diff --check` passed. Temporary helper/logs/extracted app
+  cleaned. Browser, Windows/Intel Mac execution, Gatekeeper/notarization and
+  detailed profiling not rerun. No commit/deploy.
+
+### Separating overlapping JR services (2026-11-07)
+
+- User requested JR services/trains side by side where paths overlap.
+  Increased shared `TrackGeometry.CORRIDOR_SPACING` from 32 to 48 pixels
+  (28-pixel bands leave a 20-pixel gap on straight shared sections).
+  Existing circuit geometry owns this offset for both rendering and trains,
+  so shadows/halos, train paths and stop/service geometry agree. Applies to
+  shared physical tracks in all layouts; Montreal has no shared physical
+  tracks, so its accepted geometry/rendering remain unchanged.
+- [build_jr_east.gd](./scripts/tools/build_jr_east.gd) reroutes distinct coincident
+  sections: Joban bypasses the Ueno–Uguisudani segment, Chuo Rapid uses the
+  south side of its Nakano–Shinjuku local corridor, Saikyo runs inside the
+  western Yamanote arm. Regenerated [jr_east.json](./layouts/jr_east.json).
+  All seven exact station sequences, 59 nodes/69 tracks, 14 dispatched trains
+  and two-train ceilings preserved. Shared interchanges still converge and
+  may overlap locally; independent crossings are not simulated collisions.
+- [preset_smoke.gd](./tests/preset_smoke.gd) measures actual route-centerline
+  separation >=40 pixels at four JR shared sections, including three-service
+  Tokyo–Kanda, and rejects any positive-length collinear overlap between
+  distinct physical tracks. Initial route edit created a short coincident
+  Chuo/Saikyo approach; this exact audit caught it and final guides fixed it.
+- Successful commands used `/Applications/Godot.app/Contents/MacOS/Godot`:
+  `--headless --path . --script res://scripts/tools/build_jr_east.gd`;
+  `--path . --script res://tests/preset_smoke.gd --audio-driver Dummy`
+  (both presets, full service and native day/night frames);
+  `--headless --path . --script res://tests/simulation_smoke.gd`;
+  same headless command for `terminal_smoke.gd`, `loop_smoke.gd`,
+  `editing_smoke.gd` and `train_controls_smoke.gd`;
+  `--path . --script res://tests/visual_smoke.gd --audio-driver Dummy`;
+  `--path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy`.
+  Final clean results: Tokyo load/cache 550.1ms, 30 simulated seconds 4.742s;
+  Montreal load/cache 168.3ms, simulation 3.638s. Timing is not an FPS guarantee.
+  Browser JR menu load and overview inspected with visibly parallel services;
+  fresh console capture contained no errors. README/DESIGN updated.
+- Fresh releases passed with the same Godot executable:
+  `--headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  `--headless --path . --export-release "macOS" dist/Metro-macOS.zip`,
+  `--headless --path . --export-release "Web" dist/web/index.html`.
+  Clean logs, PE x86_64, ZIP integrity, universal Mac architectures, strict
+  deep codesign verification and packaged startup
+  `--headless --quit-after 10 --audio-driver Dummy` verified; Web assets nonempty.
+  All three actual packs verified for 48-pixel corridor spacing and the
+  59-station/seven-service JR preset. `git --no-pager diff --check` passed.
+  Temporary helper, logs, extracted app and local browser server cleaned.
+  Windows/Intel Mac execution, Gatekeeper/notarization, full six-minute
+  intersection suite, browser-night-specific inspection and detailed profiling
+  not run. No commit/deployment.
+
+### Restoring recognizable Montreal schematic geometry (2026-11-07)
+
+- User found Montreal visually unlike the supplied map. Compared the source
+  image and replaced arbitrary station columns with an original hand-positioned
+  schematic preserving the network's defining relationships: long diagonal
+  orange north arm, diagonal western arm and southwest U, downtown green axis,
+  horizontal Angrignon tail, northeast green zigzags, blue central dogleg and
+  yellow east/northeast branch. No source artwork, typography or map assets
+  copied. All 68 names, station order, interchanges, four colors and two-train
+  settings retained; Tokyo/demo/player saves untouched.
+- [build_montreal.gd](./scripts/tools/build_montreal.gd) now uses 144-unit base
+  spacing, explicit corner guides on six defining segments and centered
+  overview zoom 0.08. Regenerated [montreal.json](./layouts/montreal.json).
+  [preset_smoke.gd](./tests/preset_smoke.gd) checks diagonal arms, southwest
+  interchange ordering, horizontal green tail, blue dogleg and yellow heading,
+  alongside existing topology/service/save/menu/native rendering checks.
+  README/DESIGN updated.
+- Successful commands with `/Applications/Godot.app/Contents/MacOS/Godot`:
+  `--headless --path . --script res://scripts/tools/build_montreal.gd`;
+  `--path . --script res://tests/preset_smoke.gd --audio-driver Dummy -- montreal`.
+  Clean native day/night frames, eight trains, 68 stations/69 tracks/four paths.
+  Final benchmark parse 3.1ms, routes 114.9ms, load/cache 173.4ms, 30 simulated
+  seconds 3.718s; not a frame-rate guarantee. Separate strict segment-intersection
+  audit found zero unintended rail crossings.
+- Final browser menu load inspected at 1180x740: four-line map fits above the
+  line rail and preserves the defining diagonals/bends; fresh console capture
+  contains no errors. Native tests also render day/night. Source comparison is
+  visual, not pixel matching or a copy of the official illustration.
+- Fresh Windows/macOS/Web exports succeeded using the same Godot executable:
+  `--headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  `--headless --path . --export-release "macOS" dist/Metro-macOS.zip`,
+  `--headless --path . --export-release "Web" dist/web/index.html`.
+  Clean export logs, PE x86_64, ZIP integrity, universal Mac architectures,
+  strict deep codesign verification and packaged startup
+  `--headless --quit-after 10 --audio-driver Dummy` passed. Web assets nonempty;
+  all three actual packs verified for 68 stations/four lines and revised
+  interchange coordinates. Initial helper compared JSON floats to integer
+  arrays and falsely reported stale geometry; Vector2 comparisons corrected
+  the check and all packs passed. `git --no-pager diff --check` passed.
+- Temporary helper, logs, extracted app and browser server cleaned.
+  Windows/Intel Mac execution, Gatekeeper/notarization, browser-night-specific
+  inspection and detailed frame-time/audio profiling not run. No commit/deploy.
+
+### Simplifying Montreal to the existing metro (2026-11-07)
+
+- User requested only the current 68 metro stations. Removed all REM/exo
+  paths, regional/continuation nodes, projected airport connection and pedestrian
+  transfer metadata from [build_montreal.gd](./scripts/tools/build_montreal.gd);
+  regenerated [montreal.json](./layouts/montreal.json). Existing metro names,
+  coordinates, station order, colors and shared interchanges are unchanged.
+  Four paths, 68 unique stations, 69 tracks, two-train initial ceilings and
+  eight dispatched trains. Tokyo/demo and existing player saves are unchanged.
+- [preset_smoke.gd](./tests/preset_smoke.gd) verifies exact 68-node/four-line
+  scope, 27/31/3/12 calls, all nodes served by metro and unchanged interchange
+  memberships (Berri-UQAM three lines; Lionel-Groulx/Snowdon/Jean-Talon two).
+  README/DESIGN/current-state notes now describe metro-only Montreal.
+- Successful exact commands with `/Applications/Godot.app/Contents/MacOS/Godot`:
+  `--headless --path . --script res://scripts/tools/build_montreal.gd`;
+  `--path . --script res://tests/preset_smoke.gd --audio-driver Dummy -- montreal`.
+  Native day/night frames, service, two-train ceilings, names, save round-trip,
+  actual menu loading, selection and clearing passed with clean logs.
+  Measured parse 2.2ms, routes 218.8ms, menu/load/cache 354.9ms and
+  30 simulated seconds 3.604s. Historical regional-Montreal counts/timings
+  below are superseded; these measurements are not FPS guarantees.
+- Fresh exports passed using the same Godot executable:
+  `--headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  `--headless --path . --export-release "macOS" dist/Metro-macOS.zip`,
+  `--headless --path . --export-release "Web" dist/web/index.html`.
+  Clean logs, PE x86_64, ZIP integrity, universal Mac architectures,
+  `codesign --verify --deep --strict`, packaged Mac startup
+  `--headless --quit-after 10 --audio-driver Dummy` and nonempty Web assets
+  verified. All three actual release packs contain the new 68-station/four-line
+  metro-only resource. `git --no-pager diff --check` passed.
+  Temporary helper, logs and extracted verification app cleaned.
+  Windows/Intel Mac execution, Gatekeeper/notarization, browser execution and
+  detailed frame-time/audio profiling not rerun. No commit or deployment.
+
+### Replacing the regional preset with central Tokyo (2026-11-07)
+
+- User found the regional network unrecognizable and chose central Tokyo JR,
+  not Tokyo Metro/Toei or a combined subway network. Replaced the resource at
+  [jr_east.json](./layouts/jr_east.json), preserving its catalog path but renaming
+  its localized menu entry to Tokyo central JR. Existing player saves are not
+  deleted or altered. Montreal's JSON/generator and demo remain unchanged.
+- Rewrote [build_jr_east.gd](./scripts/tools/build_jr_east.gd) with explicit,
+  north-up hand-positioned stations: 59 stations, 69 tracks, seven paths,
+  max two trains per path (14 dispatched). Complete 30-station Yamanote loop
+  includes Takanawa Gateway. Adjacent crops: Keihin-Tohoku Akabane–Kamata
+  local, Chuo Rapid Nakano–Tokyo, Chuo-Sobu Local Nakano–Kinshicho,
+  Saikyo Akabane–Osaki, Joban Rapid Ueno–Kita-Senju and Keiyo Local
+  Tokyo–Shin-Kiba. These are preset boundaries, not promised real termini.
+  No regional suburbs, subway, airport links or official timetable.
+- Cross-checked each central sequence against public line station tables
+  referenced in the generator/JSON. JR East supplied PDF remains a source,
+  but regional coverage is intentionally abandoned. Geometry emphasizes
+  Shinjuku west, Ikebukuro north, Shinagawa south and the Chuo cross-city axis
+  inside a simple Yamanote oval; express guides bypass skipped local markers.
+  Use 144-unit station spacing and startup zoom 0.09 to fit laptop HUD margins.
+- [preset_smoke.gd](./tests/preset_smoke.gd) now asserts all seven exact station
+  sequences, 30-stop loop, 59-node scope, geographic orientation, simple loop,
+  inside-loop Chuo stations and HUD-safe fitted positions. Existing tests also
+  cover line capacity, max two trains, simulation, names, saving, menu load,
+  selection/clear and actual day/night rendering for both presets.
+  Pages CI runs both full benchmarks again; regional render-only shortcut removed.
+- Successful commands with `/Applications/Godot.app/Contents/MacOS/Godot`:
+  `--headless --editor --path . --quit`;
+  `--headless --path . --script res://scripts/tools/build_jr_east.gd`;
+  `--path . --script res://tests/preset_smoke.gd --audio-driver Dummy`;
+  `--headless --path . --script res://tests/localization_smoke.gd`;
+  `--headless --path . --script res://tests/layout_smoke.gd`.
+  Corrupt-save error fixtures are intentional. Initial 192-unit spacing clipped
+  Kamata at minimum zoom; a new HUD-fit check caught the exact boundary after
+  tightening spacing, so startup zoom was also reduced. Final tests are clean.
+- Final native benchmark: Tokyo parse 1.3ms, routes 374.7ms, load/cache 627.7ms,
+  30 simulated seconds 4.740s; Montreal load/cache 439.4ms, simulation 5.621s.
+  Former regional observations (31s load, 58s simulation) are superseded for
+  the bundled Tokyo entry; measured test time is not a FPS guarantee.
+  README/DESIGN/current-state notes updated accordingly.
+- Fresh release exports succeeded with the same Godot executable:
+  `--headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  `--headless --path . --export-release "macOS" dist/Metro-macOS.zip`,
+  `--headless --path . --export-release "Web" dist/web/index.html`.
+  Clean export logs; PE x86_64, ZIP integrity, universal Mac architectures,
+  `codesign --verify --deep --strict`, packaged Mac startup
+  `--headless --quit-after 10 --audio-driver Dummy` and nonempty Web assets
+  verified. Read all three preset JSON files from each actual release pack:
+  new 59-station Tokyo, unchanged 80-node Montreal and 16-node demo.
+- Inspected the final browser map at 1180x740: clean, untangled loop with
+  cross-city Chuo axes and all cropped tails visible above the line rail.
+  Actual menu loading produced no console errors. `git --no-pager diff --check`
+  passed. Local browser server, downloaded public HTML, diagnostic logs,
+  temporary verification helper and extracted app cleaned up; supplied PDFs
+  preserved. Windows/Intel Mac execution, Gatekeeper/notarization, browser
+  night-specific inspection and detailed frame-time/audio profiling not run.
+  No commit or deployment.
+
+### Real-network presets and independent rail crossings (2026-11-07)
+
+- Added reproducible generators [build_jr_east.gd](./scripts/tools/build_jr_east.gd)
+  and [build_montreal.gd](./scripts/tools/build_montreal.gd), generated
+  [jr_east.json](./layouts/jr_east.json) and [montreal.json](./layouts/montreal.json),
+  named topology, generic resource-path catalog loading, localized labels and
+  two-train initial ceilings. Demo remains the automatic startup layout.
+  Export filters include all JSON and exclude generator tools.
+- JR East uses the supplied map revision 2026-03-14; secondary checks cover
+  selected Joban/Narita/Sobu/Tsurumi/Musashino sequences. Corrected two misplaced
+  Sobu stations, separated Sotetsu Ebina/Shonandai branches and restored the
+  authentic Kita-Ayase–Ayase shuttle. Unnamed gray continuation stubs excluded.
+  Independent verification of every station sequence is still outstanding:
+  do not describe the preset as an exhaustive certified reproduction.
+- Montreal includes metro call counts 27/31/3/12, 68 unique metro stations,
+  partial REM/exo connections and explicitly projected airport branch.
+  Off-map continuation endpoints are labeled; buses and unnamed projected
+  blue-line stops excluded. Distinct pedestrian-transfer facilities remain
+  separate nodes, with metadata only, not passenger-routing simulation.
+- User explicitly allowed independent off-station crossings everywhere.
+  Updated simulation/editing/visual tests while preserving per-stroke
+  invalid geometry checks. Large JR rendering exposed Clipper outlines with
+  repeated-vertex pinches that Godot cannot triangulate. `_polygon_loops`
+  separates contours before hole subtraction; native day/night rendering now
+  passes. Junction intensity uses spatial cells and cached radii instead of
+  scanning all interchanges/line memberships per vertex. Original visuals
+  remain covered by pixel tests and an enclosed-hole regression.
+- Successful exact commands used `/Applications/Godot.app/Contents/MacOS/Godot`:
+  `--path . --script res://tests/preset_smoke.gd --audio-driver Dummy`
+  (both presets, full 30-second simulations and actual native day/night frames);
+  `--path . --script res://tests/visual_smoke.gd --audio-driver Dummy`;
+  `--path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy`;
+  `--headless --path . --script res://tests/layout_smoke.gd`;
+  the same headless command for `localization_smoke.gd`, `interface_smoke.gd`,
+  `editing_smoke.gd`, `simulation_smoke.gd` and `terminal_smoke.gd`.
+  Schedule smoke also passed during integration (regulated headway stddev
+  0.181s versus 6.864s unregulated). Layout corruption errors are intentional.
+  Initial test scripts exited zero despite halo assertions; those runs were
+  failures. Final native preset logs are clean. `render-only` skips the long
+  benchmark but still checks topology, service, loading and actual frames;
+  Pages CI runs full Montreal plus JR East `render-only`.
+- Final native observations: JR East 104 trains, parse 11.8ms, routes 15.209s,
+  menu/load/cache 30.960s, 30 simulated seconds 58.065s. Montreal 24 trains,
+  parse 2.4ms, routes 257.1ms, menu/load/cache 458.6ms, 30 simulated seconds
+  5.904s. These are measured test times, not FPS guarantees. JR East is not
+  real-time at this stress-test rate; broader simulation optimization remains.
+- Fresh Windows/macOS/Web release commands all succeeded with clean logs:
+  `--headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  `--headless --path . --export-release "macOS" dist/Metro-macOS.zip`,
+  `--headless --path . --export-release "Web" dist/web/index.html`.
+  Verified PE x86_64, ZIP integrity, universal Mac binary, strict deep signing,
+  packaged Mac startup (`--headless --quit-after 10 --audio-driver Dummy`),
+  nonempty Web assets and all three JSON resources inside each actual export
+  (Windows pack is embedded in the executable, not a separate Metro.pck).
+  Browser menu loading and fitted maps were inspected for JR East and Montreal;
+  fresh console capture showed no polygon errors after the fix.
+  `git --no-pager diff --check` passed. Temporary verification app, diagnostic
+  logs/helper and local browser server were cleaned up; supplied PDFs retained.
+- Remaining: independent JR station-by-station verification, Windows and Intel
+  Mac execution, Gatekeeper/notarization, browser-night-specific testing and
+  detailed CPU/GPU/audio/frame-time profiling. No commit or deployment.
+
+### Growing interchange white centers (2026-11-07)
+
+- User chose +1 pixel center radius per additional serving line while keeping
+  each colored ring 2 pixels thick. Single-line/unserved markers stay unchanged;
+  outer radii are now 12/15/18 pixels for one/two/three lines. Added shared
+  `TrackGeometry.station_center_radius` / `station_radius` helpers used by
+  [world_view.gd](./scripts/render/world_view.gd) and `station_stop_clearance`,
+  so rendering, picks/handles/overlays, night exclusions and train berths
+  agree. Colors, line ordering and loop membership remain unchanged.
+  README/DESIGN and current product notes updated.
+- Passed exact commands:
+  `/Applications/Godot.app/Contents/MacOS/Godot --path . --script res://tests/visual_smoke.gd --audio-driver Dummy`;
+  `/Applications/Godot.app/Contents/MacOS/Godot --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy`;
+  `/Applications/Godot.app/Contents/MacOS/Godot --headless --path . --script res://tests/terminal_smoke.gd`;
+  same headless script command for `res://tests/interface_smoke.gd` and
+  `res://tests/layout_smoke.gd`. Pixel assertions now measure expanded white
+  centers and all 2px rings at 0/1/2/3/4/8 lines, day/night, 1x/2.5x and
+  interaction overlays. Shared-terminal expected radii now 15/18; verified
+  berth/platform clearance, 1–6 wagon reversal and ongoing service. Layout
+  test's corrupt-input logs are intentional passing fixtures.
+- Fresh export commands:
+  `/Applications/Godot.app/Contents/MacOS/Godot --headless --path . --export-release "Windows Desktop" dist/Metro.exe`;
+  same command for `"macOS" dist/Metro-macOS.zip` and `"Web" dist/web/index.html`.
+  All succeeded with clean logs; Windows PE x86_64, universal Mac binary,
+  ZIP integrity, strict deep signing and packaged Mac startup
+  (`--headless --quit-after 30 --audio-driver Dummy`) verified, Web assets
+  nonempty. `git --no-pager diff --check` passed. Temporary captures and build
+  verification files cleaned. Windows/Intel Mac runtime, Gatekeeper and browser
+  runtime not checked for this sizing change; full schedule/intersection suites
+  unrun. No commit requested.
+
+### Shipping an automatically opened starter layout (2026-11-07)
+
+- User chose a small demo with intersecting lines/loop and automatic startup.
+  Added [metro_demo.json](./layouts/metro_demo.json): purple octagonal loop,
+  turquoise/coral diagonal approaches with offset bends, 16 stations and five shared
+  interchanges. All sections fit the selected two-wagon trains; no off-station
+  crossing. Original is read-only in `res://`, not seeded into `user://`, so
+  storage permissions/eviction and same-name user saves cannot remove it.
+  Main opens it quietly at each launch, offers it under Load with confirmation,
+  and preserves empty-map Clear. Demo framing zooms out for smaller viewports.
+  Startup failures show localized feedback rather than silently falling back.
+  Existing fixture tests explicitly disable demo startup.
+- Passed:
+  `/Applications/Godot.app/Contents/MacOS/Godot --headless --path . --script res://tests/layout_smoke.gd`;
+  same command for `res://tests/interface_smoke.gd`,
+  `res://tests/localization_smoke.gd`, `res://tests/editing_smoke.gd`,
+  `res://tests/loop_smoke.gd`, `res://tests/train_controls_smoke.gd` and
+  `res://tests/simulation_smoke.gd`;
+  `/Applications/Godot.app/Contents/MacOS/Godot --path . --script res://tests/visual_smoke.gd --audio-driver Dummy`.
+  Layout checks cover real startup, all geometry validation, every line running
+  after 180 simulated seconds, >=20 arrivals, immutable original after
+  edit/save/clear/reload, same-name user copies and 760x520/390x640 framing.
+  User rejected the initial cross-like orthogonal demo; rerouted both open
+  lines with diagonals and asymmetric bends. Tests require at least two
+  diagonal sections and two headings per open line. Reran layout smoke and
+  refreshed/verified all three exports after the reroute; inspected the final
+  diagonal demo in the browser.
+  Localization covers live included-label translation. Expected corrupt-input
+  fixtures log errors during the passing layout test.
+- Initial import found a loop-variable/parameter name collision; fixed before
+  tests/exports. Initial exact demo snapshot checks incorrectly treated
+  viewport-fitted/float32 zoom as immutable content; now compare all other
+  persisted fields exactly, constrain zoom and measure every station's fit.
+  One test variable needed an explicit Vector2 annotation after a Dictionary
+  lookup; corrected and rerun.
+- All three fresh exports succeeded with clean logs using
+  `/Applications/Godot.app/Contents/MacOS/Godot --headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  the same command for `"macOS" dist/Metro-macOS.zip` and `"Web" dist/web/index.html`.
+  Verified the demo JSON appears in all export logs, Windows PE x86_64,
+  universal Mac x86_64/arm64, ZIP integrity, deep strict codesign, extracted Mac
+  startup with `--headless --quit-after 30 --audio-driver Dummy` and nonempty
+  Web assets. Browser verified automatic demo rendering, Clear followed by
+  included Load/confirmation, and full phone-view framing. Temporary native
+  captures/extracted app and local server cleaned after validation.
+  `git --no-pager diff --check` passed. Windows runtime, Intel Mac runtime,
+  Gatekeeper/notarization, Safari and full long-running schedule/intersection
+  suites remain unrun. No commit or deployment requested.
+
+### Named layout persistence and clear-map menu (2026-11-07)
+
+- Added localized Menu Save/Load/Clear, named storage sheet, overwrite/load/clear
+  confirmations, restart-safe layout reconstruction and storage failure feedback.
+  Chose Godot `user://` with versioned JSON rather than SQLite or native file
+  dialogs because it shares one implementation across Windows, universal macOS
+  and Web/IndexedDB without dependencies. Saves include isolated stations,
+  empty lines, canonical/shared tracks, loops, bends, all line settings and view.
+  README/DESIGN describe local paths, limits and browser retention caveats.
+  Pages CI now runs [layout_smoke.gd](./tests/layout_smoke.gd).
+- Passed these exact commands (Godot 4.7.2):
+  `/Applications/Godot.app/Contents/MacOS/Godot --headless --editor --path . --quit`;
+  `/Applications/Godot.app/Contents/MacOS/Godot --headless --path . --script res://tests/layout_smoke.gd`;
+  the same script command for `res://tests/interface_smoke.gd`,
+  `res://tests/localization_smoke.gd`, `res://tests/editing_smoke.gd` and
+  `res://tests/loop_smoke.gd`. Layout tests cover multiple names, overwrite
+  cancellation/confirmation, complete loop/reversed-sharing/settings/view
+  round-trip, fresh game/store instances, clear and corrupt-load preservation,
+  responsive English/French sheets, invalid references/settings/JSON and
+  coordinate overflow. Their logged validation errors are deliberate fixtures.
+  Initial failures caught float32 minimum zoom and tall phone settings; fixed
+  by normalizing capture zoom and grouping the three menu actions in one row.
+- Local browser Web release verification used actual menu input and inspected
+  IndexedDB: saved two stations, reloaded page, loaded/confirmed and saved an
+  identical copy, then cleared/confirmed and saved an empty copy while original
+  saves remained. Browser startup takes longer than initial page navigation;
+  early automated clicks were lost, so repeated after engine readiness.
+  Native fixture files and browser test layouts were cleaned.
+- Fresh release export commands:
+  `/Applications/Godot.app/Contents/MacOS/Godot --headless --path . --export-release "Windows Desktop" dist/Metro.exe`;
+  `/Applications/Godot.app/Contents/MacOS/Godot --headless --path . --export-release "macOS" dist/Metro-macOS.zip`;
+  `/Applications/Godot.app/Contents/MacOS/Godot --headless --path . --export-release "Web" dist/web/index.html`.
+  All succeeded with clean logs; verified Windows PE x86_64, ZIP integrity,
+  universal Mac x86_64/arm64, deep strict ad-hoc codesign, nonempty Web assets
+  and extracted Mac binary startup with `--headless --quit-after 10 --audio-driver Dummy`.
+  `git --no-pager diff --check` passed. Windows runtime, Intel Mac runtime,
+  Gatekeeper/notarization, Safari/private-mode/eviction behavior and full
+  simulation/graphical suites remain unrun. Release outputs are ignored.
 
 ### Committing accumulated lighting, editing and menu refinements (2026-11-07)
 

@@ -46,6 +46,24 @@ func remove_track(track_id: int, lines: Array[TransitLine]) -> void:
 	tracks.remove_at(track_id)
 	_reindex(lines)
 
+func remove_line(line_id: int, lines: Array[TransitLine]) -> void:
+	assert(line_id >= 0 and line_id < lines.size())
+	var removed := lines[line_id]
+	lines.remove_at(line_id)
+	for index in range(lines.size()):
+		lines[index].id = index
+	for index in range(tracks.size() - 1, -1, -1):
+		if removed.tracks.has(index) and not lines.any(func(line: TransitLine) -> bool: return line.tracks.has(index)):
+			tracks.remove_at(index)
+	_reindex(lines)
+	for station_id in range(stations.size() - 1, -1, -1):
+		if not removed.stations.has(station_id):
+			continue
+		var shared := lines.any(func(line: TransitLine) -> bool: return line.stations.has(station_id))
+		var connected := tracks.any(func(track: Track) -> bool: return track.a == station_id or track.b == station_id)
+		if not shared and not connected:
+			remove_station(station_id, lines)
+
 func remove_station(station_id: int, lines: Array[TransitLine]) -> void:
 	assert(station_id >= 0 and station_id < stations.size())
 	for line: TransitLine in lines:
@@ -129,6 +147,7 @@ func _split_lines(lines: Array[TransitLine], station_id: int, track_id: int) -> 
 		line.stations.assign(fragments[0])
 		for index in range(1, fragments.size()):
 			var extra := TransitLine.new(lines.size(), line.color)
+			extra.display_name = line.display_name
 			extra.dispatch_rate = line.dispatch_rate
 			extra.dwell_time = line.dwell_time
 			extra.cruise_velocity = line.cruise_velocity
@@ -208,28 +227,6 @@ func path_error(from_id: int, to_id: int, points: PackedVector2Array, open_end: 
 		for previous in range(1, index - 1):
 			if _segments_conflict(points[previous - 1], points[previous], points[index - 1], points[index]):
 				return "Une ligne ne peut pas se croiser elle-même."
-	var existing := track_between(from_id, to_id) if to_id >= 0 else null
-	for track: Track in tracks:
-		if existing != null and existing.id == track.id:
-			continue
-		var other := track.waypoints
-		if other.size() < 2:
-			other = PackedVector2Array([stations[track.a].position, stations[track.b].position])
-		for index in range(1, points.size()):
-			for previous in range(1, other.size()):
-				if not _segments_conflict(points[index - 1], points[index], other[previous - 1], other[previous]):
-					continue
-				var shared_station := -1
-				for endpoint: int in [from_id, to_id]:
-					if endpoint == track.a or endpoint == track.b:
-						shared_station = endpoint
-						break
-				if shared_station >= 0:
-					var center := stations[shared_station].position
-					var intersection: Variant = Geometry2D.segment_intersects_segment(points[index - 1], points[index], other[previous - 1], other[previous])
-					if intersection is Vector2 and intersection.distance_to(center) < 1.0:
-						continue
-				return "Les croisements hors station ne sont pas encore permis. Passez par une station."
 	return ""
 
 func _segments_conflict(a: Vector2, b: Vector2, c: Vector2, d: Vector2) -> bool:

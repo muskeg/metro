@@ -104,6 +104,7 @@ func _run() -> void:
 	_check(is_equal_approx(TrackGeometry.length(split[0]) + TrackGeometry.length(split[1]), TrackGeometry.length(bend)), "Insertion must preserve the drawn centerline.")
 
 	var main: Node = load("res://scenes/main.tscn").instantiate()
+	main.set("startup_layout_enabled", false)
 	root.add_child(main)
 	await process_frame
 	var main_graph: TransitGraph = main.get("graph")
@@ -302,6 +303,7 @@ func _test_tight_station_corners() -> void:
 
 func _test_sharp_rail_picking() -> void:
 	var main: Node = load("res://scenes/main.tscn").instantiate()
+	main.set("startup_layout_enabled", false)
 	root.add_child(main)
 	await process_frame
 	var graph: TransitGraph = main.get("graph")
@@ -321,6 +323,7 @@ func _test_sharp_rail_picking() -> void:
 
 func _test_rail_gizmo_reach() -> void:
 	var main: Node = load("res://scenes/main.tscn").instantiate()
+	main.set("startup_layout_enabled", false)
 	root.add_child(main)
 	await process_frame
 	var graph: TransitGraph = main.get("graph")
@@ -374,6 +377,7 @@ func _test_rail_gizmo_reach() -> void:
 
 func _test_station_connect_priority() -> void:
 	var main: Node = load("res://scenes/main.tscn").instantiate()
+	main.set("startup_layout_enabled", false)
 	root.add_child(main)
 	await process_frame
 	main.set_process(false)
@@ -410,6 +414,7 @@ func _test_station_connect_priority() -> void:
 
 func _test_short_rail_reshaping() -> void:
 	var main: Node = load("res://scenes/main.tscn").instantiate()
+	main.set("startup_layout_enabled", false)
 	root.add_child(main)
 	await process_frame
 	var graph: TransitGraph = main.get("graph")
@@ -470,6 +475,7 @@ func _test_short_rail_reshaping() -> void:
 
 func _test_local_rail_reshaping() -> void:
 	var main: Node = load("res://scenes/main.tscn").instantiate()
+	main.set("startup_layout_enabled", false)
 	root.add_child(main)
 	await process_frame
 	var graph: TransitGraph = main.get("graph")
@@ -518,6 +524,7 @@ func _test_local_rail_reshaping() -> void:
 
 func _test_elastic_edits() -> void:
 	var main: Node = load("res://scenes/main.tscn").instantiate()
+	main.set("startup_layout_enabled", false)
 	root.add_child(main)
 	await process_frame
 	var graph: TransitGraph = main.get("graph")
@@ -549,13 +556,19 @@ func _test_elastic_edits() -> void:
 	main.call("_select_line", 0)
 	main.call("_begin_world_interaction", committed[1])
 	main.call("_update_track_edit", Vector2(192.0, 480.0))
-	_check(not main.call("_track_edit_error").is_empty(), "A crossing bend edit must be marked invalid before release.")
+	var crossing_path := PackedVector2Array([graph.stations[0].position, Vector2(192, 192), Vector2(192, 480), Vector2(576, 480), graph.stations[1].position])
+	_check(graph.path_error(0, 1, crossing_path).is_empty(), "A path may cross another independent rail without an interchange.")
+	main.call("_cancel_gesture")
+	main.call("_begin_world_interaction", committed[1])
+	main.call("_update_track_edit", Vector2(-192.0, 0.0))
+	_check(not main.call("_track_edit_error").is_empty(), "A reversing bend edit must be marked invalid before release.")
 	_check(not view.get("_preview_error").is_empty(), "Invalid route feedback must be sent to the renderer.")
-	main.call("_end_world_interaction", Vector2(192.0, 480.0))
+	main.call("_end_world_interaction", Vector2(-192.0, 0.0))
 	_check(graph.tracks[0].waypoints == committed and main.get("_editing_track_id") == -1, "An invalid bend edit must preserve the original rail atomically.")
 	main.call("_update_hover", Vector2.ZERO)
 	main.call("_begin_world_interaction", Vector2(32.0, 0.0))
-	main.call("_pin_route_bend", Vector2(192.0, 480.0))
+	main.call("_pin_route_bend", Vector2(384.0, 0.0))
+	main.call("_pin_route_bend", Vector2(192.0, 0.0))
 	main.call("_end_world_interaction", Vector2(576.0, 192.0))
 	_check(main.get("_connect_drag_source_id") == 0 and graph.tracks[0].waypoints == committed, "An invalid destination must keep the preview available for correction without changing the rail.")
 	main.call("_cancel_gesture")

@@ -95,7 +95,11 @@ func _run_test() -> void:
 	graph.add_station(Vector2(288.0, -192.0))
 	graph.add_station(Vector2(288.0, 384.0))
 	var crossing := PackedVector2Array([Vector2(288.0, -192.0), Vector2(288.0, 384.0)])
-	_check(not graph.path_error(2, 3, crossing).is_empty(), "Unsignalled crossings should be refused explicitly.")
+	_check(graph.path_error(2, 3, crossing).is_empty(), "Independent tracks may cross away from stations without creating an interchange.")
+	var original_station_count := graph.stations.size()
+	var crossing_track := graph.add_track(2, 3)
+	crossing_track.waypoints = crossing
+	_check(graph.stations.size() == original_station_count and graph.track_between(0, 2) == null, "A visual crossing must not join the two lines or add a false station.")
 	var self_cross := PackedVector2Array([Vector2.ZERO, Vector2(288.0, 192.0), Vector2(0.0, 192.0), Vector2(288.0, 0.0), Vector2(576.0, 192.0)])
 	_check(not graph.path_error(0, 1, self_cross).is_empty(), "Self-crossing strokes must be rejected.")
 
@@ -139,6 +143,7 @@ func _run_test() -> void:
 	_check(dispatcher.arrival_count >= previous_arrivals + 4, "Both shared lines must continue serving stations after shape-preserving deletion.")
 
 	var main: Node = load("res://scenes/main.tscn").instantiate()
+	main.set("startup_layout_enabled", false)
 	root.add_child(main)
 	await process_frame
 	var main_graph: TransitGraph = main.get("graph")
