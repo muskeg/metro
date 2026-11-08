@@ -507,6 +507,30 @@ godot --headless --path . --export-release "Web" dist/web/index.html
 
 ## Recent work and verification record
 
+### Android SDK setup failure (2026-11-07)
+
+- Reported release run 42443264042 failed in `setup-android@v3` because
+  its default package list includes the unavailable legacy `tools` package.
+  Verified upstream action.yml defaults and source: the action splits the
+  `packages` input on spaces and installs each entry with sdkmanager.
+  [releases.yml](./.github/workflows/releases.yml) now explicitly requests
+  `platform-tools build-tools;35.0.1 platforms;android-35`; removed the
+  redundant later sdkmanager call. Java/Godot settings and all other targets
+  remain unchanged. Updated [guide](./docs/guide.md#releases-github).
+- Passed Ruby YAML parsing and structural assertions for the exact package
+  list, Android-only condition and absence of duplicate SDK installation;
+  `bash -n` on all release-build shell steps and `git diff --check`.
+  No game code changed; smoke tests and actionlint were not rerun.
+- Fresh exports passed with `/Applications/Godot.app/Contents/MacOS/Godot`:
+  `--headless --editor --path . --quit`,
+  `--headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  `--headless --path . --export-release "macOS" dist/Metro-macOS.zip`.
+  Verified fresh modification times, Windows PE x86-64, Mac ZIP integrity,
+  executable and PCK; no script/parser errors.
+  Android SDK installation/export and the corrected Actions job have not
+  been run locally; a new workflow run from the fixed commit is required.
+  No commit or push.
+
 ### Smoke-suite review and runtime refactoring (2026-11-07)
 
 - Reviewed all 17 smoke scripts and measured all 15 headless scripts before

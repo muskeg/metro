@@ -120,13 +120,14 @@ jobs:
       - name: Set up Android SDK
         if: matrix.target == 'android'
         uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools build-tools;35.0.1 platforms;android-35'
 
       - name: Configure Android export tools
         if: matrix.target == 'android'
         shell: bash
         run: |
           set -euo pipefail
-          sdkmanager "platform-tools" "build-tools;35.0.1" "platforms;android-35"
           mkdir -p "$HOME/.config/godot"
           python3 - <<'PY'
           import json
