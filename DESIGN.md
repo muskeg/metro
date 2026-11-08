@@ -148,7 +148,7 @@ demandent confirmation, sans sauvegarde automatique. Vider conserve les fichiers
 Le demarrage desktop ouvre [metro_demo.json](./layouts/metro_demo.json), reseau de
 16 stations avec une boucle et deux lignes ouvertes qui se croisent uniquement
 aux correspondances. Ce JSON en `res://` est inclus explicitement dans les
-trois presets d'export. Le preset Web utilise la feature `montreal_startup` :
+six presets d'export. Le preset Web utilise la feature `montreal_startup` :
 `LayoutStore.load_starter_layout()` choisit alors
 [montreal.json](./layouts/montreal.json), y compris sur GitHub Pages.
 Le choix est propre a l'export, sans detection de domaine ni stockage utilisateur.

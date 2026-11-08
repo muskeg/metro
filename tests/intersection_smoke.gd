@@ -1,6 +1,7 @@
 extends SceneTree
 
 var _failed := false
+var _exercised := 0
 
 func _initialize() -> void:
 	_run.call_deferred()
@@ -11,6 +12,10 @@ func _check(condition: bool, message: String) -> void:
 		_failed = true
 
 func _run() -> void:
+	if OS.get_cmdline_user_args().size() > 1:
+		push_error("Intersection smoke accepts at most one scenario prefix.")
+		quit(1)
+		return
 	var graph := TransitGraph.new()
 	for position: Vector2 in [Vector2(-576, 0), Vector2.ZERO, Vector2(576, 0), Vector2(0, -576), Vector2(0, 576)]:
 		graph.add_station(position)
@@ -110,6 +115,7 @@ func _run() -> void:
 		screenshot_dispatcher.add_line(line)
 	screenshot_dispatcher.rebuild_routes()
 	_exercise(screenshot_dispatcher, "Screenshot layout with terminal queues and tight bends")
+	_check(_exercised > 0, "Intersection selector must match at least one scenario.")
 	if _failed:
 		quit(1)
 	else:
@@ -119,6 +125,7 @@ func _run() -> void:
 func _exercise(dispatcher: TransitDispatcher, label: String) -> void:
 	if not OS.get_cmdline_user_args().is_empty() and not label.begins_with(OS.get_cmdline_user_args()[0]):
 		return
+	_exercised += 1
 	var count := dispatcher.lines.size()
 	var first_half: Array[int] = []
 	var final: Array[int] = []

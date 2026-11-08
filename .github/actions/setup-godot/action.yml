@@ -1,0 +1,43 @@
+name: Set up Godot
+description: Install Godot and matching export templates on Linux or macOS
+inputs:
+  version:
+    description: Stable Godot version
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Install Godot and export templates
+      shell: bash
+      env:
+        GODOT_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        release="https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable"
+        case "$RUNNER_OS" in
+          Linux)
+            archive="Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+            templates="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+            ;;
+          macOS)
+            archive="Godot_v${GODOT_VERSION}-stable_macos.universal.zip"
+            templates="$HOME/Library/Application Support/Godot/export_templates/${GODOT_VERSION}.stable"
+            ;;
+          *)
+            echo "::error::Unsupported Godot build runner: $RUNNER_OS"
+            exit 1
+            ;;
+        esac
+        curl --fail --location --retry 3 "$release/$archive" -o "$RUNNER_TEMP/godot.zip"
+        curl --fail --location --retry 3 "$release/Godot_v${GODOT_VERSION}-stable_export_templates.tpz" -o "$RUNNER_TEMP/templates.tpz"
+        mkdir -p "$RUNNER_TEMP/godot" "$templates"
+        unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP/godot"
+        if [ "$RUNNER_OS" = Linux ]; then
+          mv "$RUNNER_TEMP/godot/Godot_v${GODOT_VERSION}-stable_linux.x86_64" "$RUNNER_TEMP/godot/godot"
+        else
+          ln -s "$RUNNER_TEMP/godot/Godot.app/Contents/MacOS/Godot" "$RUNNER_TEMP/godot/godot"
+        fi
+        chmod +x "$RUNNER_TEMP/godot/godot"
+        echo "$RUNNER_TEMP/godot" >> "$GITHUB_PATH"
+        unzip -j -q "$RUNNER_TEMP/templates.tpz" 'templates/*' -d "$templates"
+        "$RUNNER_TEMP/godot/godot" --version

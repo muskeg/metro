@@ -1,0 +1,280 @@
+name: Build and publish Metro release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version (for example 1.0.0 or v1.0.0)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  GODOT_VERSION: 4.7.2
+
+concurrency:
+  group: metro-release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Validate release version
+        id: version
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_VERSION" =~ ^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::Version must be MAJOR.MINOR.PATCH, optionally prefixed with v."
+            exit 1
+          fi
+          version="${RELEASE_VERSION#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Reject an existing release tag
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG"; then
+            echo "::error::Tag $RELEASE_TAG already exists. Choose a new version."
+            exit 1
+          else
+            status=$?
+            if [ "$status" -ne 2 ]; then
+              exit "$status"
+            fi
+          fi
+
+      - name: Set up Godot
+        uses: ./.github/actions/setup-godot
+        with:
+          version: ${{ env.GODOT_VERSION }}
+
+      - name: Import project
+        run: godot --headless --editor --path . --quit
+
+      - name: Run extended smoke tests
+        run: bash tests/run_smoke.sh extended
+
+  build:
+    needs: validate
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: windows
+            runner: ubuntu-24.04
+            preset: Windows Desktop
+          - target: macos
+            runner: macos-15
+            preset: macOS
+          - target: linux
+            runner: ubuntu-24.04
+            preset: Linux
+          - target: web
+            runner: ubuntu-24.04
+            preset: Web
+          - target: android
+            runner: ubuntu-24.04
+            preset: Android
+          - target: ios
+            runner: macos-15
+            preset: iOS
+    env:
+      RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+      TARGET: ${{ matrix.target }}
+      EXPORT_PRESET: ${{ matrix.preset }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Godot
+        uses: ./.github/actions/setup-godot
+        with:
+          version: ${{ env.GODOT_VERSION }}
+
+      - name: Set up Java
+        if: matrix.target == 'android'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        if: matrix.target == 'android'
+        uses: android-actions/setup-android@v3
+
+      - name: Configure Android export tools
+        if: matrix.target == 'android'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager "platform-tools" "build-tools;35.0.1" "platforms;android-35"
+          mkdir -p "$HOME/.config/godot"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          version = ".".join(os.environ["GODOT_VERSION"].split(".")[:2])
+          settings = Path.home() / ".config/godot" / f"editor_settings-{version}.tres"
+          settings.write_text(
+              '[gd_resource type="EditorSettings" format=3]\n\n[resource]\n'
+              f'export/android/java_sdk_path = {json.dumps(os.environ["JAVA_HOME"])}\n'
+              f'export/android/android_sdk_path = {json.dumps(os.environ["ANDROID_HOME"])}\n'
+          )
+          PY
+
+      - name: Set build version
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          project = Path("project.godot")
+          text = project.read_text()
+          if "[application]\n" not in text:
+              raise SystemExit("project.godot is missing its application section")
+          project.write_text(text.replace(
+              "[application]\n",
+              '[application]\n\nconfig/version="' + os.environ["RELEASE_VERSION"] + '"\n',
+              1,
+          ))
+          PY
+
+      - name: Import project
+        run: godot --headless --editor --path . --quit
+
+      - name: Export and verify release asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release dist/package
+          name="Metro-${RELEASE_VERSION}"
+          case "$TARGET" in
+            windows)
+              godot --headless --path . --export-release "$EXPORT_PRESET" dist/package/Metro.exe
+              test -s dist/package/Metro.exe
+              (cd dist/package && zip "../release/${name}-windows-x86_64.zip" Metro.exe)
+              ;;
+            macos)
+              godot --headless --path . --export-release "$EXPORT_PRESET" "dist/release/${name}-macos-universal.zip"
+              ;;
+            linux)
+              godot --headless --path . --export-release "$EXPORT_PRESET" dist/package/Metro.x86_64
+              test -s dist/package/Metro.x86_64
+              chmod +x dist/package/Metro.x86_64
+              tar -czf "dist/release/${name}-linux-x86_64.tar.gz" -C dist/package Metro.x86_64
+              tar -tzf "dist/release/${name}-linux-x86_64.tar.gz"
+              ;;
+            web)
+              mkdir -p dist/package/web
+              godot --headless --path . --export-release "$EXPORT_PRESET" dist/package/web/index.html
+              for file in index.html index.js index.wasm index.pck; do
+                test -s "dist/package/web/$file"
+              done
+              (cd dist/package/web && zip -r "../../release/${name}-web.zip" .)
+              ;;
+            android)
+              godot --headless --path . --export-release "$EXPORT_PRESET" "dist/release/${name}-android-unsigned.apk"
+              unzip -t "dist/release/${name}-android-unsigned.apk"
+              ;;
+            ios)
+              mkdir -p dist/package/ios
+              godot --headless --path . --export-release "$EXPORT_PRESET" dist/package/ios/Metro.zip
+              test -s dist/package/ios/Metro.xcodeproj/project.pbxproj
+              test -s dist/package/ios/Metro.pck
+              (cd dist/package/ios && zip -r "../../release/${name}-ios-xcode-unsigned.zip" .)
+              ;;
+            *)
+              echo "::error::Unknown release target: $TARGET"
+              exit 1
+              ;;
+          esac
+          for archive in dist/release/*.zip; do
+            if [ -f "$archive" ]; then
+              unzip -t "$archive"
+            fi
+          done
+          for asset in dist/release/*; do
+            test -s "$asset"
+          done
+
+      - name: Upload release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: dist/release/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [validate, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+      RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+      RELEASE_COMMIT: ${{ github.sha }}
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist/release
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist/release
+          name="Metro-${RELEASE_VERSION}"
+          assets=(
+            "${name}-windows-x86_64.zip"
+            "${name}-macos-universal.zip"
+            "${name}-linux-x86_64.tar.gz"
+            "${name}-web.zip"
+            "${name}-android-unsigned.apk"
+            "${name}-ios-xcode-unsigned.zip"
+          )
+          for asset in "${assets[@]}"; do
+            test -s "$asset"
+          done
+          sha256sum "${assets[@]}" > SHA256SUMS.txt
+          cat > "$RUNNER_TEMP/release-notes.txt" <<'EOF'
+          Builds for Windows x86_64, macOS Intel/Apple Silicon, Linux x86_64, Web, Android and iOS.
+
+          The macOS app is ad-hoc signed, not notarized.
+          Android is an unsigned APK: sign it before installing.
+          iOS is an unsigned Xcode project with bundled engine/game data, not an IPA. Replace the placeholder team ID in Signing & Capabilities and sign/build with Xcode before installing.
+          Serve the Web archive over HTTP; opening index.html directly is unsupported.
+          SHA256SUMS.txt contains checksums for all six assets.
+          EOF
+          gh release create "$RELEASE_TAG" "${assets[@]}" SHA256SUMS.txt \
+            --target "$RELEASE_COMMIT" --title "Metro $RELEASE_VERSION" \
+            --notes-file "$RUNNER_TEMP/release-notes.txt" --draft
+          gh release edit "$RELEASE_TAG" --draft=false

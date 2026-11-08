@@ -273,6 +273,54 @@ func _test_large_map_navigation() -> void:
 	pan.delta = Vector2(80, -40)
 	main.call("_unhandled_input", pan)
 	_check(camera.position.is_equal_approx(Vector2(47000, -47500)), "Panning must remain unbounded and zoom-scaled far beyond the initial map.")
+	camera.position = Vector2.ZERO
+	camera.zoom = Vector2.ONE
+	var graph: TransitGraph = main.get("graph")
+	var station_count := graph.stations.size()
+	var first_touch := InputEventScreenTouch.new()
+	first_touch.index = 4
+	first_touch.position = Vector2(600, 440)
+	first_touch.pressed = true
+	main.call("_input", first_touch)
+	_check(graph.stations.size() == station_count, "A touch that may become a two-finger gesture must not place a station immediately.")
+	var second_touch := InputEventScreenTouch.new()
+	second_touch.index = 9
+	second_touch.position = Vector2(700, 440)
+	second_touch.pressed = true
+	main.call("_input", second_touch)
+	_check(main.get("_touch_navigation_active") and main.get("_panning"), "Two-finger touches on the map must start camera navigation.")
+	_check(graph.stations.size() == station_count, "Starting a two-finger gesture must not leave a station from the first touch.")
+	var first_drag := InputEventScreenDrag.new()
+	first_drag.index = 4
+	first_drag.position = Vector2(590, 450)
+	main.call("_input", first_drag)
+	var second_drag := InputEventScreenDrag.new()
+	second_drag.index = 9
+	second_drag.position = Vector2(730, 450)
+	main.call("_input", second_drag)
+	_check(camera.position != Vector2.ZERO, "Moving two fingers together must pan the camera.")
+	_check(camera.zoom.x > 1.0, "Moving two fingers apart must zoom in.")
+	var release_touch := InputEventScreenTouch.new()
+	release_touch.index = 9
+	release_touch.position = second_drag.position
+	release_touch.pressed = false
+	main.call("_input", release_touch)
+	_check(not main.get("_touch_navigation_active") and not main.get("_panning"), "Lifting a finger must end the current touch navigation gesture.")
+	release_touch = InputEventScreenTouch.new()
+	release_touch.index = 4
+	release_touch.position = first_drag.position
+	release_touch.pressed = false
+	main.call("_input", release_touch)
+	_check(not main.get("_touch_navigation_sequence") and main.get("_touch_points").is_empty(), "Ending a touch sequence must release all tracked pointers.")
+	var tap := InputEventScreenTouch.new()
+	tap.index = 12
+	tap.position = Vector2(600, 440)
+	tap.pressed = true
+	main.call("_input", tap)
+	_check(graph.stations.size() == station_count, "A single touch must wait for release before placing its station.")
+	tap.pressed = false
+	main.call("_input", tap)
+	_check(graph.stations.size() == station_count + 1, "A single-finger tap must still place a station.")
 	main.call("_zoom_camera", 1000.0)
 	_check(camera.zoom.is_equal_approx(Vector2.ONE * 6.0), "Expanded overview must preserve existing close-up zoom.")
 	main.queue_free()
@@ -603,8 +651,11 @@ func _test_quiet_interface(main: Node) -> void:
 	main.call("_update_ui_idle", 20.0)
 	var touch := InputEventScreenTouch.new()
 	touch.pressed = true
+	touch.position = main.get("_settings_button").get_global_rect().get_center()
 	main.call("_input", touch)
 	_check(is_equal_approx(ui.modulate.a, 1.0), "Touch must restore controls without a keyboard.")
+	touch.pressed = false
+	main.call("_input", touch)
 	await _click_control(handle)
 	_check(not main.get("_dock_collapsed") and main.get("_main_panel").visible, "Tapping the bottom handle must expand the rail.")
 	_check(graph.stations.size() == count and main.get("active_line") == active and main.get("paused") == paused, "Collapsing controls must not edit, switch lines or change pause.")

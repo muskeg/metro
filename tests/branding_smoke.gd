@@ -50,6 +50,18 @@ func _run() -> void:
 		_check(presets.get_value(section, "application/icon", "") == directory + "metro-icon.png", "Desktop exporters must override the engine icon.")
 	var head: String = presets.get_value("preset.2.options", "html/head_include", "")
 	_check(head.contains("#f7f0e4") and head.contains("#status-splash") and head.contains("theme-color"), "Web loader must share the Metro paper palette and responsive splash.")
+	var platforms := ["Windows Desktop", "macOS", "Web", "Linux", "Android", "iOS"]
+	for index: int in range(platforms.size()):
+		var section := "preset." + str(index)
+		_check(presets.get_value(section, "platform", "") == platforms[index], "Every release platform must have its expected export preset.")
+		_check(presets.get_value(section, "include_filter", "") == "layouts/*.json", "All release platforms must bundle the included networks.")
+		var exclusions: String = presets.get_value(section, "exclude_filter", "")
+		for excluded: String in ["tests/*", "dist/*", "docs/*", "scripts/tools/*"]:
+			_check(exclusions.split(",").has(excluded), "Every release must exclude development resources: " + excluded)
+	_check(presets.get_value("preset.3.options", "binary_format/embed_pck", false), "Linux must embed its game data in the executable.")
+	_check(not presets.get_value("preset.4.options", "package/signed", true), "Android release artifacts must be explicitly unsigned.")
+	_check(presets.get_value("preset.4.options", "launcher_icons/main_192x192", "") == directory + "metro-icon.png", "Android must use the Metro icon.")
+	_check(presets.get_value("preset.5.options", "application/export_project_only", false), "Unsigned iOS releases must export an Xcode project, not an IPA.")
 	if _failed:
 		quit(1)
 	else:

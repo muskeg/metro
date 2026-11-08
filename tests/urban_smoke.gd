@@ -56,9 +56,9 @@ func _run_test() -> void:
 				if not backdrop._visible_world_rect().encloses(Rect2(center - visible_size * 0.5, visible_size)):
 					_fail("The solid backdrop must cover the viewport when panning and zooming.")
 					return
-				await process_frame
-				await process_frame
 				if DisplayServer.get_name() != "headless":
+					await process_frame
+					await process_frame
 					await RenderingServer.frame_post_draw
 					var image := root.get_texture().get_image()
 					for y in range(0, image.get_height(), 7):

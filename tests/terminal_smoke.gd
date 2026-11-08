@@ -11,6 +11,12 @@ func _check(condition: bool, message: String) -> void:
 		failed = true
 
 func _run() -> void:
+	var args := OS.get_cmdline_user_args()
+	if args.size() > 1 or (not args.is_empty() and args[0] != "--fast"):
+		push_error("Usage: terminal_smoke.gd [-- --fast]")
+		quit(1)
+		return
+	var fast := args.has("--fast")
 	for wagons in range(1, 7):
 		for endpoint: Vector2 in [Vector2(576, 0), Vector2(0, 576), Vector2(576, 576)]:
 			var graph := TransitGraph.new()
@@ -73,6 +79,8 @@ func _run() -> void:
 				if failed:
 					quit(1)
 					return
+				if fast and reversals >= 4 and dispatcher.arrival_count >= 6:
+					break
 			_check(reversals >= 4 and dispatcher.arrival_count >= 6, "Protected terminal service must keep reversing and serving both ends without deadlock.")
 			var owners := dispatcher._terminal_owners.duplicate()
 			dispatcher.process(2.0, true)
@@ -117,11 +125,16 @@ func _run() -> void:
 	short_service.add_line(short_line)
 	short_service.rebuild_routes()
 	_check(short_service.route_capacity(short_line) == 1, "Short lines without room to clear one terminal before the other must avoid opposing-terminal deadlock.")
-	short_service.process(120.0, false)
+	for second in range(120):
+		short_service.process(1.0, false)
+		if fast and short_service.arrival_count >= 4:
+			break
 	_check(short_service.arrival_count >= 4, "A short single-train line must keep reversing rather than deadlock at its terminal locks.")
 	if failed:
 		quit(1)
 	else:
+		if fast:
+			print("Fast terminal checks: all wagon/orientation fixtures reached reversal/arrival thresholds; full 120s soaks not run.")
 		print("Terminal smoke passed: in-place cab reversal, visible two-lane convergence, one-train protection and sustained service for 1-6 wagons.")
 		quit()
 
