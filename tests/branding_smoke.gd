@@ -60,6 +60,9 @@ func _run() -> void:
 			_check(exclusions.split(",").has(excluded), "Every release must exclude development resources: " + excluded)
 	_check(presets.get_value("preset.3.options", "binary_format/embed_pck", false), "Linux must embed its game data in the executable.")
 	_check(not presets.get_value("preset.4.options", "package/signed", true), "Android release artifacts must be explicitly unsigned.")
+	_check(not presets.get_value("preset.4.options", "gradle_build/use_gradle_build", true), "Android APK releases must use the prebuilt template without Gradle.")
+	for setting: String in ["gradle_build/min_sdk", "gradle_build/target_sdk"]:
+		_check(presets.get_value("preset.4.options", setting, "") == "", "Non-Gradle Android exports must retain the template SDK versions: " + setting)
 	_check(presets.get_value("preset.4.options", "launcher_icons/main_192x192", "") == directory + "metro-icon.png", "Android must use the Metro icon.")
 	_check(presets.get_value("preset.5.options", "application/export_project_only", false), "Unsigned iOS releases must export an Xcode project, not an IPA.")
 	if _failed:

@@ -334,6 +334,8 @@ godot --headless --path . --export-release "Web" dist/web/index.html
 - **Linux** : exécutable x86_64 avec les données du jeu intégrées.
 - **Android** : APK ARMv7 / ARM64 non signé. Il faut Java 17, les outils du
   SDK Android et les chemins correspondants dans les réglages de Godot.
+  L'export utilise le template Godot sans Gradle : les versions SDK minimale
+  et cible restent celles du template, sans surcharge dans le preset.
   L'APK doit être signé avant installation.
 - **iOS** : projet Xcode avec les données du jeu et les bibliothèques du moteur.
   Le preset exporte uniquement le projet, sans IPA ni signature Apple.

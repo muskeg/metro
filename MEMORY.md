@@ -507,6 +507,29 @@ godot --headless --path . --export-release "Web" dist/web/index.html
 
 ## Recent work and verification record
 
+### Non-Gradle Android SDK override correction (2026-11-07)
+
+- Reported run 42447153570 reached export but Godot rejected the explicit
+  target SDK override with Gradle disabled. Removed `gradle_build/target_sdk`
+  from [export_presets.cfg](./export_presets.cfg), retaining the intended
+  prebuilt unsigned APK export. The template now supplies its SDK versions.
+  Added [branding_smoke.gd](./tests/branding_smoke.gd) regression checks:
+  Gradle remains disabled and both minimum/target SDK overrides are empty.
+  Updated [guide](./docs/guide.md#exporter). SDK installation workflow unchanged.
+- Passed using `/Applications/Godot.app/Contents/MacOS/Godot`:
+  `--headless --editor --path . --quit`,
+  `--headless --path . --script res://tests/branding_smoke.gd`,
+  `--headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  `--headless --path . --export-release "macOS" dist/Metro-macOS.zip`.
+  Verified fresh modification times, Windows MZ header, Mac ZIP integrity,
+  app executable and PCK; no script/parser errors. `git diff --check` passed.
+- Attempted `--headless --path . --export-release "Android"
+  dist/Metro-android-unsigned.apk`: exit 1 because local Java/Android SDK
+  paths, platform-tools and build-tools are missing. The reported target
+  SDK override error no longer appears. Actual Android export still needs
+  a new Actions run from the fixed revision. Other smoke tests not rerun;
+  no commit or push.
+
 ### Android SDK package setup correction (2026-11-07)
 
 - The current clean checkout still used `setup-android@v3` without a packages
