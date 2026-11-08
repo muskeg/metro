@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>Metro transit M</title>
+  <rect width="512" height="512" rx="100" fill="#f7f0e4"/><g fill="none" stroke-width="24" stroke-linecap="round" stroke-linejoin="round">
+    <path stroke="#8a77b5" d="M200 141H312"/>
+    <path stroke="#e9805d" d="M48 408H66Q104 408 104 370V126C104 70 163 64 189 113L256 284"/>
+    <path stroke="#59a8ae" d="M256 284L323 113C349 64 408 70 408 126V370Q408 408 446 408H464"/>
+    <path stroke="#59a8ae" d="M156 408V237Q156 216 167 235L211 326Q230 365 256 365"/>
+    <path stroke="#8a77b5" d="M256 365Q282 365 301 326L345 235Q356 216 356 237V370Q356 408 394 408H464"/>
+  </g>
+  <g stroke-width="9" fill="#f7f0e4">
+    <circle cx="104" cy="270" r="14" stroke="#e9805d"/>
+    <circle cx="200" cy="141" r="14" stroke="#e9805d"/>
+    <circle cx="312" cy="141" r="14" stroke="#59a8ae"/>
+    <circle cx="256" cy="284" r="14" stroke="#59a8ae"/>
+    <circle cx="408" cy="270" r="14" stroke="#59a8ae"/>
+    <circle cx="256" cy="365" r="14" stroke="#8a77b5"/>
+  </g>
+</svg>

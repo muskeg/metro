@@ -12,6 +12,7 @@ func _check(condition: bool, message: String) -> void:
 
 func _run() -> void:
 	var main: Node = load("res://scenes/main.tscn").instantiate()
+	main.set("startup_layout_enabled", false)
 	root.add_child(main)
 	root.size = Vector2i(1440, 900)
 	await process_frame

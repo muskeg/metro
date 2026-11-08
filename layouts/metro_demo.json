@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "name": "Metro demo",
+  "stations": [
+    [-384, -192], [-192, -384], [0, -384], [192, -384],
+    [384, -192], [384, 192], [192, 384], [0, 384],
+    [-192, 384], [-384, 192], [-768, 384], [0, -192],
+    [672, -576], [-576, -768], [0, 96], [576, 768]
+  ],
+  "tracks": [
+    {"a": 0, "b": 1, "waypoints": []},
+    {"a": 1, "b": 2, "waypoints": []},
+    {"a": 2, "b": 3, "waypoints": []},
+    {"a": 3, "b": 4, "waypoints": []},
+    {"a": 4, "b": 5, "waypoints": []},
+    {"a": 5, "b": 6, "waypoints": []},
+    {"a": 6, "b": 7, "waypoints": []},
+    {"a": 7, "b": 8, "waypoints": []},
+    {"a": 8, "b": 9, "waypoints": []},
+    {"a": 9, "b": 0, "waypoints": []},
+    {"a": 10, "b": 9, "waypoints": [[-768, 384], [-576, 384], [-384, 192]]},
+    {"a": 9, "b": 11, "waypoints": []},
+    {"a": 11, "b": 3, "waypoints": []},
+    {"a": 3, "b": 12, "waypoints": [[192, -384], [384, -576], [672, -576]]},
+    {"a": 13, "b": 1, "waypoints": []},
+    {"a": 1, "b": 11, "waypoints": []},
+    {"a": 11, "b": 14, "waypoints": []},
+    {"a": 14, "b": 7, "waypoints": []},
+    {"a": 7, "b": 15, "waypoints": [[0, 384], [384, 768], [576, 768]]}
+  ],
+  "lines": [
+    {
+      "color": "8d83c7",
+      "stations": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0],
+      "dispatch_rate": 24, "dwell_time": 3, "cruise_velocity": 100,
+      "acceleration": 80, "braking": 100, "terminal_recovery": 4,
+      "wagon_count": 2, "max_trains": 6
+    },
+    {
+      "color": "58b8bd",
+      "stations": [10, 9, 11, 3, 12],
+      "dispatch_rate": 24, "dwell_time": 3, "cruise_velocity": 100,
+      "acceleration": 80, "braking": 100, "terminal_recovery": 4,
+      "wagon_count": 2, "max_trains": 4
+    },
+    {
+      "color": "e98668",
+      "stations": [13, 1, 11, 14, 7, 15],
+      "dispatch_rate": 27, "dwell_time": 3, "cruise_velocity": 100,
+      "acceleration": 80, "braking": 100, "terminal_recovery": 4,
+      "wagon_count": 2, "max_trains": 4
+    }
+  ],
+  "active_line": 0,
+  "camera": [0, -48],
+  "zoom": 0.32
+}

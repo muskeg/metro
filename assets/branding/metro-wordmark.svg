@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="180" viewBox="0 0 800 180">
+  <title>Metro wordmark</title>
+  <g fill="none" stroke="#59466d" stroke-width="24" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M28 148V32L102 148L176 32V148"/>
+    <path d="M322 32H240V148H322M240 90H315"/>
+    <path d="M360 32H458M409 32V148"/>
+    <path d="M510 148V32H552C610 32 610 94 552 94H510M552 94L600 148"/>
+    <ellipse cx="701" cy="90" rx="60" ry="62"/>
+  </g>
+</svg>

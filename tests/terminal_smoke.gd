@@ -95,11 +95,11 @@ func _run() -> void:
 		far_line_two.stations = [1]
 		var shared_lines: Array[TransitLine] = [shared_line, origin_line, far_line, far_line_two]
 		var shared_route := TrackGeometry.circuit(shared_graph, shared_line, shared_lines)
-		_check(is_equal_approx(shared_route["terminal_insets"][0], 14.0 + TrackGeometry.CAR_LENGTH * 0.5 + TrackGeometry.TERMINAL_GAP) and is_equal_approx(shared_route["terminal_insets"][1], 16.0 + TrackGeometry.CAR_LENGTH * 0.5 + TrackGeometry.TERMINAL_GAP), "Terminal offsets must independently follow each station's serving-line radius.")
+		_check(is_equal_approx(shared_route["terminal_insets"][0], 15.0 + TrackGeometry.CAR_LENGTH * 0.5 + TrackGeometry.TERMINAL_GAP) and is_equal_approx(shared_route["terminal_insets"][1], 18.0 + TrackGeometry.CAR_LENGTH * 0.5 + TrackGeometry.TERMINAL_GAP), "Terminal offsets must independently follow each station's serving-line radius.")
 		for stop_index in range(2):
 			var stop: float = shared_route["stops"][stop_index]
 			var station_id := 1 - stop_index
-			var radius := 16.0 if station_id == 1 else 14.0
+			var radius := 18.0 if station_id == 1 else 15.0
 			var center := TrackGeometry.point_at_distance(shared_route["points"], stop)
 			_check(center.distance_to(shared_graph.stations[station_id].position) >= radius + TrackGeometry.CAR_LENGTH * 0.5 + TrackGeometry.TERMINAL_GAP - 0.02, "Shared terminal cabs must also clear the larger rings.")
 			_check_platform_clearance(shared_route, wagons, stop, shared_graph.stations[station_id].position, radius)

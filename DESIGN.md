@@ -25,6 +25,14 @@ satisfaire, aucun compte a rebours. Le nom du jeu devient **Metro**.
   au lieu de se teleporter sur la voie inverse.
 - Carte minimaliste sans decor, blanc casse mat le jour et sombre la nuit.
   La grille de construction reste orthogonale mais invisible.
+- Identite Metro : M ferroviaire orange/turquoise/violet avec correspondances,
+  redessine en chemins SVG autonomes a partir de la reference fournie.
+  Symbole compact pour les icones ; symbole et mot-symbole vectoriels dans le
+  titre, avec le fondu existant (opaque 10s, disparu a 30s). Logo empile pour le
+  splash natif/Web sur papier creme. Les exports utilisent les PNG derives
+  des memes sources ; pas de police externe, de shell Web personnalise ni de
+  dependance graphique ajoutee. Le generateur est dans
+  [build_branding.gd](scripts/tools/build_branding.gd).
 - Le fond est dessine dans le monde et change de palette au fil de la journee.
   Les voies, trains et controles ne subissent pas la modulation sombre du
   decor. Phares et fenetres deviennent plus visibles la nuit.
@@ -55,9 +63,13 @@ une surcharge de modele. Les responsabilites de fichiers sont distinctes.
   plusieurs lignes. Les trains ne conservent pas de positions incoherentes.
 - Les chemins trop courts pour une rame ou les chevauchements de segments
   non partages sont refuses explicitement.
-- Les voies partagees sont espacees par ligne. Les croisements non connectes
-  sont refuses dans cette iteration : aucune rame ne doit traverser une autre
-  sur un croisement sans signalisation.
+- Les voies partagees sont espacees par ligne : centres de corridors a 48 pixels
+  (bandes de 28 pixels), pour conserver un espace visible. Simulation, trains,
+  ombres et illumination utilisent les memes chemins decales, pas un simple
+  decalage de couleur. Les croisements hors station
+  sont autorises pour tous les reseaux et restent purement visuels, sans creer
+  de correspondance ni signalisation commune. Chaque trace reste valide
+  individuellement : pas de retour sur ses pas ni d'auto-intersection.
 - Chaque ligne et chaque sens sont independants, meme aux stations communes.
   L'autorisation de mouvement suit la distance jusqu'a l'arriere de la rame
   precedente dans le meme circuit ; plusieurs trains peuvent etre entre stations.
@@ -99,7 +111,7 @@ une surcharge de modele. Les responsabilites de fichiers sont distinctes.
 - Le freinage respecte la station suivante et l'autorisation de mouvement.
   La regulation de service est distincte de cette securite. Le reglage
   d'intervalle reste un minimum souhaite ; le maximum de rames reste un plafond.
-  Simulation subdivisee a 60 Hz ; les croisements hors station restent refuses.
+  Simulation subdivisee a 60 Hz ; les croisements hors station restent independants.
 - Le fond atmospherique et les rails sont deux couches independantes. Les tests
   graphiques comparent les pixels : nuit tres sombre, rails illumines seulement
   la nuit, fond intact hors du halo local.
@@ -119,9 +131,119 @@ une surcharge de modele. Les responsabilites de fichiers sont distinctes.
 
 ## Limites assumees
 
+### Sauvegardes locales
+
+Menu propose plusieurs reseaux nommes, chargement et carte vide. Godot `user://`
+est commun aux releases Windows/macOS/Web : fichiers natifs ou IndexedDB,
+sans dependance SQLite, serveur ou dialogue de fichiers incompatible Web.
+Chaque nom correspond a un fichier JSON versionne (nom de fichier SHA-256 pour
+eviter les chemins saisis par le joueur), ecrit puis renomme pour remplacer
+une sauvegarde uniquement apres fermeture du fichier complet. Le chargement
+valide les types, references et reglages dans un nouveau graphe avant de
+remplacer l'etat vivant. Les voies partagees et leurs orientations sont
+reconstruites une seule fois ; les trains/visites repartent, pas leurs positions.
+Les reglages de ligne et la camera sont conserves, pas la langue, l'audio,
+l'heure ou la pause, qui restent ceux de la session. Charger/vider/remplacer
+demandent confirmation, sans sauvegarde automatique. Vider conserve les fichiers.
+Le demarrage desktop ouvre [metro_demo.json](./layouts/metro_demo.json), reseau de
+16 stations avec une boucle et deux lignes ouvertes qui se croisent uniquement
+aux correspondances. Ce JSON en `res://` est inclus explicitement dans les
+trois presets d'export. Le preset Web utilise la feature `montreal_startup` :
+`LayoutStore.load_starter_layout()` choisit alors
+[montreal.json](./layouts/montreal.json), y compris sur GitHub Pages.
+Le choix est propre a l'export, sans detection de domaine ni stockage utilisateur.
+Load distingue l'original inclus des fichiers utilisateur
+par metadata, pas par nom traduit : une copie du meme nom ne le masque pas.
+Save ne propose que les copies utilisateur ; vider laisse l'original accessible.
+Tout demarrage/chargement (inclus ou utilisateur) recentre et ajuste le zoom
+aux bornes de toutes les stations, waypoints et circuits decales des trains,
+avec 24 pixels monde de marge et 32 pixels ecran lateraux / 80 haut / 112 bas
+pour les controles. Une dimension remplit exactement l'espace disponible,
+sans deformation ni recadrage. Le zoom peut augmenter par rapport au JSON.
+Les reseaux immenses peuvent descendre sous 0.08 ; ce zoom ajuste devient
+leur plancher de navigation, permettant un aller-retour de zoom sans saut.
+Le schema conserve la camera sauvegardee pour compatibilite, mais le menu
+Load recadre toujours. Vider garde camera zero/zoom 1 ; redimensionner ensuite
+ne recadre pas automatiquement une vue deplacee manuellement.
+Les boutons zoom -/+ et ajustement (quatre coins) sont places au-dessus du
+rail, cotes et cibles de 44 pixels ; tooltips EN/FR. Ajuster ferme les feuilles,
+annule le geste/suivi et recadre sans reconstruire circuits ou trains, ni changer
+la pause. Masquer le HUD les masque aussi ; replier le rail les conserve.
+Le catalogue `LayoutStore.BUNDLED_LAYOUTS` relie chaque chemin `res://` a une
+cle traduite, et les options Load portent ce chemin en metadata. Les originaux
+restent distincts des fichiers utilisateur, meme en cas de nom identique.
+Les stations et lignes peuvent avoir un nom facultatif (`station_names` et
+`lines[].name` dans le JSON version 1), preserve par les sauvegardes ; les
+anciennes sauvegardes sans noms restent compatibles. Les noms factuels ne sont
+pas traduits comme des cles UI. Les fragments de ligne conservent leur nom.
+Export/Import dans Menu utilisent le meme JSON version 1 et validateur que les
+sauvegardes, avec precision numerique complete pour conserver le cadrage ajuste.
+`LayoutTransfer` gere les FileDialog natifs (destination explicite avec confirmation
+d'ecrasement) et JavaScriptBridge Web (download_buffer, input file et arrayBuffer).
+La selection Web borne la taille avant lecture ; callbacks conserves, generation
+pour ignorer une lecture obsolete, puis validation differee hors du callback JS.
+Pas de serveur, clipboard, script importe, load() de ressource externe ni chemin
+derive de donnees. Les octets sont uniquement parses comme JSON/UTF-8.
+Import valide dans un graphe separe puis demande confirmation avant installation,
+recadre, preserve pause/langue/audio et ne sauvegarde pas automatiquement.
+Annulation/erreur conservent la carte et les fichiers locaux. Export reutilise
+l'ecriture temporaire/rename des sauvegardes et signale les erreurs I/O.
+Le validateur borne les collections, coordonnees, longueur totale, flottes et
+complexite des geometries avant dispatcher/rendu ; les limites exactes sont dans
+LayoutStore et README. Pre-scan lexical borne profondeur, chaines et jetons
+avant allocations du parseur JSON. Positions uniques, grille exacte, tracés
+sans retour/croisement propre et longueurs suffisantes pour trains/marqueurs.
+Les voies independantes peuvent toujours se croiser. Un JSON avec noms ressemblant
+a du code/HTML reste du texte de Label, jamais execute ni interprete comme chemin.
+Le preset Montreal contient uniquement les quatre lignes de metro et leurs
+68 stations existantes, avec correspondances partagees. REM/exo, bus,
+extremites de continuation et extensions projetees sont exclus.
+Sa geometrie est positionnee explicitement pour conserver les relations
+visuelles du reseau : bras orange diagonaux, retour au sud de Lionel-Groulx,
+axe vert du centre-ville et bras nord-est en decrochements, coude de la bleue
+entre Edouard-Montpetit et Outremont, branche jaune horizontale puis diagonale.
+Les stations utilisent un espacement de base de 48 pixels, avec des sections
+de 144 pixels sur la queue horizontale Angrignon–De l'Eglise pour conserver
+la place des trains a deux wagons ; les coudes qui
+definissent ces formes sont des waypoints explicites, pas des colonnes arbitraires
+ou des chemins elastiques recalcules sans contexte.
+Le preset Tokyo JR central remplace le reseau regional JR East : 80 stations,
+97 voies physiques et dix corridors, boucle Yamanote complete de 30 stations (Takanawa Gateway
+inclus) et axes centraux Chuo rapide/local, Keihin-Tohoku, Saikyo, Joban et
+Keiyo. Une extension sud-ouest ajoute Tokaido Tokyo–Odawara avec Hiratsuka et
+deux Shonan-Shinjuku depuis Akabane : Tokaido-bound rapid vers Odawara
+(tous les arrets Tokaido au sud de Totsuka, pas special rapid) et
+Yokosuka-bound local vers Zushi. Les correspondances et voies consecutives
+communes sont partagees ; les rapides ont des waypoints distincts pour
+contourner les stations locales sautees. Les sept lignes initiales et leurs
+coordonnees sont conservees ; cadrage centre (-576,576), zoom 0.08.
+Les stations sont positionnees explicitement sur un schema nord en haut,
+avec les grandes correspondances aux bons cotes de la boucle. Pas de placement
+automatique regional ; les axes rapides contournent les marqueurs des stations
+locales sautees. Les extremites sont des limites de cadrage, pas des terminus
+officiels. Tokyo initialise `max_trains` a 2 ; Montreal utilise 6 sur les
+lignes verte/orange/bleue et 2 sur la jaune, avec intervalle demande de 12s.
+Le service respecte toujours son intervalle minimal et sa capacite : ces
+reglages permettent les flottes demandees, mises en service progressivement.
+Le trajet jaune garde le minimum teste de 240 pixels horizontaux puis
+deux cases diagonales pour soutenir deux trains simultanes, pas seulement
+faire tenir une rame. Les plafonds restent modifiables.
+Les halos de corridors decomposent les contours qui se touchent en boucles
+simples avant de soustraire leurs trous. Les intensites aux correspondances
+utilisent un index spatial et des rayons caches ; l'apparence ne change pas,
+mais les grands presets evitent les recherches globales a chaque sommet.
+Les sources et limites figurent dans les JSON et le README. Les schemas sont
+originaux, pas une copie des illustrations officielles.
+Les tests qui construisent leur propre graphe desactivent le demarrage demo
+avant d'ajouter la scene ; le test de sauvegardes valide le vrai demarrage.
+Le Web depend des autorisations et de la retention du navigateur : avertissement
+si `OS.is_userfs_persistent()` est faux, sans promesse si vrai. Pas de cloud
+ni de synchronisation entre appareils. Voir [README.md](./README.md).
+
 Pas de vraie scene 3D, de simulation de voyageurs ou d'actifs sous licence.
-Les croisements ferroviaires independants et aiguillages complexes restent
-hors de cette iteration ; les correspondances se font aux stations.
+Les aiguillages complexes et conflits entre lignes restent hors de cette
+iteration ; les correspondances se font aux stations. Les croisements visuels
+hors station ne sont pas une simulation de passages a niveau.
 
 ## Langues et diversite de la carte
 
@@ -151,7 +273,7 @@ hors de cette iteration ; les correspondances se font aux stations.
   au-dessus des voies, sous les voitures.
 - Le monde n'a pas de bord fixe. Molette et pincement partagent le zoom
   0,08-6x, contre 0,45-6x auparavant, pour les grandes cartes. Pas d'import
-  geographique ni de certification de performances pour un reseau JR East complet.
+  geographique ni de garantie de performances pour les grandes cartes.
 - Les trains sont des miniatures vectorielles a voitures rectangulaires
   rapprochees et passages souples, sans roues decoratives ; seules les ombres
   solaires discretes les ancrent sur la surface mate.
@@ -374,6 +496,14 @@ hors de cette iteration ; les correspondances se font aux stations.
   contenu, plafonnee a 300 pixels ; les colonnes s'adaptent (une sur telephone,
   trois sur portable, cinq sur grand ecran). Retoucher la ligne active replie
   les reglages ; changer de ligne garde les reglages ouverts.
+  L'entete fixe comporte un bouton explicite Replier de 44 pixels ; le contenu
+  defile en dessous sans faire disparaitre ce bouton. La pastille de couleur
+  elargie est placee a cote du libelle Couleur de la ligne. Supprimer la ligne
+  demande confirmation et retire les trains, voies et stations exclusives ;
+  les interchanges, voies partagees et toute infrastructure independante restent.
+  `TransitGraph.remove_line()` reindexe les lignes/voies/stations survivantes.
+  La derniere suppression laisse une ligne vide ; pause et camera sont conservees,
+  les circuits et trains sont reconstruits comme lors des autres edits topologiques.
   Menu et Aide restent des feuilles, une seule surface detaillee ouverte a
   la fois. Fermer ou Echap rend tout l'espace a la carte sans mettre en pause.
   Sous 620 pixels, les feuilles passent a une colonne avec defilement ;
@@ -446,12 +576,14 @@ ne sont pas appliquees directement a un portable vu de pres.
 - Les voies physiques passent a +/-8 pixels du centre, au lieu de +/-11 :
   16 pixels entre les rames, pour des voitures de 7 pixels de large.
   Le rendu, l'apercu et la simulation partagent toujours le meme offset.
-- Stations : centre blanc de rayon 10 pixels, sans halo. Leur ombre solaire
-  discrete suit le cycle du jour, contrairement a une ombre fixe de bouton.
+- Stations : centre blanc de rayon 10 pixels pour zero/une ligne, puis
+  +1 pixel par ligne supplementaire, sans halo ni ombre.
   Chaque ligne desservie ajoute un anneau de 2 pixels dans sa couleur assombrie
   de 30 %. Ordre stable des lignes : anciennes a l'exterieur, nouvelles dedans.
-  Le rayon total est 10 + 2 x nombre de lignes (minimum 12). Les correspondances
-  grandissent sans comprimer le centre ; poignees et selections suivent ce rayon.
+  Le rayon total est 10 + max(0, lignes - 1) + 2 x max(1, lignes) :
+  12/15/18 pixels pour une/deux/trois lignes. Les correspondances grandissent
+  sans comprimer les anneaux ; poignees, selections et degagement des trains
+  suivent ce rayon via les helpers partages de TrackGeometry.
   Les boucles ne dupliquent pas l'anneau de leur station de fermeture.
   Recolorer ou retirer une ligne met a jour les anneaux immediatement.
   Sans ligne, la bordure reste neutre. La nuit, le blanc est legerement adouci

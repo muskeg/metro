@@ -157,9 +157,20 @@ func _refresh_illumination() -> void:
 	_illuminated_paths.clear()
 	_illumination_strengths.clear()
 	var junctions: Array[Station] = []
+	var junction_cells: Dictionary = {}
 	for station: Station in graph.stations:
 		if station_line_colors(station).size() > 1:
 			junctions.append(station)
+			var radius := station_radius(station)
+			var reach := radius + 40.0
+			var first := Vector2i(((station.position - Vector2.ONE * reach) / 256.0).floor())
+			var last := Vector2i(((station.position + Vector2.ONE * reach) / 256.0).floor())
+			for x in range(first.x, last.x + 1):
+				for y in range(first.y, last.y + 1):
+					var cell := Vector2i(x, y)
+					if not junction_cells.has(cell):
+						junction_cells[cell] = []
+					junction_cells[cell].append({"position": station.position, "radius": radius})
 	for line: TransitLine in lines:
 		if not _routes.has(line.id):
 			continue
@@ -184,10 +195,7 @@ func _refresh_illumination() -> void:
 				var steps := maxi(1, ceili(start.distance_to(path[index]) / 4.0)) if not junctions.is_empty() else 1
 				for step in range(1, steps + 1):
 					var point := start.lerp(path[index], float(step) / steps)
-					var strength := 1.0
-					for station: Station in junctions:
-						var radius := station_radius(station)
-						strength = minf(strength, smoothstep(radius + 24.0, radius + 40.0, point.distance_to(station.position)))
+					var strength := _junction_strength(point, junction_cells)
 					if strength < 1.0 or (not alpha.is_empty() and alpha[alpha.size() - 1] < 1.0) or step == steps:
 						sampled.append(point)
 						alpha.append(strength)
@@ -205,10 +213,7 @@ func _refresh_illumination() -> void:
 					halo.antialiased = true
 					var colors := PackedColorArray()
 					for vertex: Vector2 in polygon:
-						var strength := 1.0
-						for station: Station in junctions:
-							var radius := station_radius(station)
-							strength = minf(strength, smoothstep(radius + 24.0, radius + 40.0, vertex.distance_to(station.position)))
+						var strength := _junction_strength(vertex, junction_cells)
 						colors.append(Color(line.color, strength * 0.055))
 					halo.vertex_colors = colors
 					halo.z_index = -1
@@ -216,17 +221,27 @@ func _refresh_illumination() -> void:
 					add_child(halo)
 					_rail_halos.append(halo)
 
+func _junction_strength(point: Vector2, cells: Dictionary) -> float:
+	var strength := 1.0
+	var cell := Vector2i((point / 256.0).floor())
+	for junction: Dictionary in cells.get(cell, []):
+		var radius: float = junction["radius"]
+		strength = minf(strength, smoothstep(radius + 24.0, radius + 40.0, point.distance_to(junction["position"])))
+	return strength
+
 static func _halo_polygons(points: PackedVector2Array, width: float) -> Array[PackedVector2Array]:
 	var outlines := Geometry2D.offset_polyline(points, width * 0.5, Geometry2D.JOIN_ROUND, Geometry2D.END_ROUND)
 	var pieces: Array[PackedVector2Array] = []
 	var holes: Array[PackedVector2Array] = []
-	for polygon: PackedVector2Array in outlines:
-		if Geometry2D.is_polygon_clockwise(polygon):
-			holes.append(polygon)
-		else:
-			pieces.append(polygon)
+	for outline: PackedVector2Array in outlines:
+		for polygon: PackedVector2Array in _polygon_loops(outline):
+			if Geometry2D.is_polygon_clockwise(polygon):
+				holes.append(polygon)
+			else:
+				pieces.append(polygon)
 	# Split through each hole before subtraction so every result is a simple polygon.
-	for hole: PackedVector2Array in holes:
+	while not holes.is_empty():
+		var hole: PackedVector2Array = holes.pop_back()
 		var bounds := Rect2(hole[0], Vector2.ZERO)
 		for point: Vector2 in hole:
 			bounds = bounds.expand(point)
@@ -240,11 +255,38 @@ static func _halo_polygons(points: PackedVector2Array, width: float) -> Array[Pa
 			for limits: Vector2 in [Vector2(extent.position.x, split), Vector2(split, extent.end.x)]:
 				var box := PackedVector2Array([Vector2(limits.x, extent.position.y), Vector2(limits.y, extent.position.y), Vector2(limits.y, extent.end.y), Vector2(limits.x, extent.end.y)])
 				for half: PackedVector2Array in Geometry2D.intersect_polygons(piece, box):
-					cut.append_array(Geometry2D.clip_polygons(half, hole))
+					for clipped: PackedVector2Array in Geometry2D.clip_polygons(half, hole):
+						for polygon: PackedVector2Array in _polygon_loops(clipped):
+							if Geometry2D.is_polygon_clockwise(polygon):
+								holes.append(polygon)
+							else:
+								cut.append(polygon)
 		pieces = cut
 	for piece: PackedVector2Array in pieces:
 		assert(not Geometry2D.triangulate_polygon(piece).is_empty(), "A rail halo must resolve to simple, renderable polygons.")
 	return pieces
+
+static func _polygon_loops(polygon: PackedVector2Array) -> Array[PackedVector2Array]:
+	# Clipper can join contours at a repeated vertex; Godot cannot triangulate that pinch.
+	var pending: Array[PackedVector2Array] = [polygon]
+	var loops: Array[PackedVector2Array] = []
+	while not pending.is_empty():
+		var contour: PackedVector2Array = pending.pop_back()
+		var seen: Dictionary = {}
+		var split := false
+		for index in range(contour.size()):
+			if seen.has(contour[index]):
+				var first: int = seen[contour[index]]
+				pending.append(contour.slice(first, index))
+				var remainder := contour.slice(0, first)
+				remainder.append_array(contour.slice(index))
+				pending.append(remainder)
+				split = true
+				break
+			seen[contour[index]] = index
+		if not split and contour.size() >= 3:
+			loops.append(contour)
+	return loops
 
 func _draw_rail_illumination(line: TransitLine, night: float) -> void:
 	var paths: Array[PackedVector2Array] = _illuminated_paths[line.id]
@@ -264,7 +306,7 @@ func station_line_colors(station: Station) -> PackedColorArray:
 	return colors
 
 func station_radius(station: Station) -> float:
-	return 10.0 + 2.0 * maxi(1, station_line_colors(station).size())
+	return TrackGeometry.station_radius(station_line_colors(station).size())
 
 func _draw_network_station(station: Station) -> void:
 	var colors := station_line_colors(station)
@@ -272,9 +314,10 @@ func _draw_network_station(station: Station) -> void:
 	if colors.is_empty():
 		_draw_station(station.position, fill, Color("#34464f").lerp(Color("#819ca9"), _night_strength()))
 		return
+	var center_radius := TrackGeometry.station_center_radius(colors.size())
 	for index in range(colors.size()):
-		draw_circle(station.position, 10.0 + 2.0 * (colors.size() - index), colors[index].darkened(0.3))
-	draw_circle(station.position, 10.0, fill)
+		draw_circle(station.position, center_radius + 2.0 * (colors.size() - index), colors[index].darkened(0.3))
+	draw_circle(station.position, center_radius, fill)
 
 func set_rail_anchor(points: PackedVector2Array, position: Vector2) -> void:
 	rail_anchor = TrackGeometry.insertion_point(points, position)
@@ -371,13 +414,17 @@ func _draw_gizmos() -> void:
 			_draw_handle(rail_anchor, accent, "+", scale)
 			_draw_handle(rail_move_position(), ink, "diamond", scale)
 		caption_position = rail_anchor + Vector2(18.0, 54.0) * scale
-	if not hover_caption.is_empty():
-		_draw_caption(caption_position, hover_caption, scale)
+	var caption := tr(hover_caption)
+	if hovered_station_id >= 0 and hovered_station_id < graph.stations.size() and not graph.stations[hovered_station_id].display_name.is_empty():
+		caption = graph.stations[hovered_station_id].display_name + ("\n" + caption if not caption.is_empty() else "")
+	if not caption.is_empty():
+		_draw_caption(caption_position, caption, scale, false)
 
-func _draw_caption(position: Vector2, caption: String, scale: float) -> void:
+func _draw_caption(position: Vector2, caption: String, scale: float, translate: bool = true) -> void:
+	var text := tr(caption) if translate else caption
 	var paragraph := TextParagraph.new()
-	paragraph.width = minf(ThemeDB.fallback_font.get_string_size(tr(caption), HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x, minf(360.0, get_viewport_rect().size.x - 32.0))
-	paragraph.add_string(tr(caption), ThemeDB.fallback_font, 16)
+	paragraph.width = minf(ThemeDB.fallback_font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x, minf(360.0, get_viewport_rect().size.x - 32.0))
+	paragraph.add_string(text, ThemeDB.fallback_font, 16)
 	var size := paragraph.get_size()
 	var screen := get_global_transform_with_canvas() * position
 	screen.x = clampf(screen.x, 10.0, maxf(10.0, get_viewport_rect().size.x - size.x - 16.0))

@@ -21,6 +21,8 @@ const WorldViewScript := preload("res://scripts/render/world_view.gd")
 const TransitGraphScript := preload("res://scripts/sim/transit_graph.gd")
 const TransitLineScript := preload("res://scripts/sim/transit_line.gd")
 const DispatcherScript := preload("res://scripts/dispatch/dispatcher.gd")
+const LayoutStoreScript := preload("res://scripts/layout_store.gd")
+const LayoutTransferScript := preload("res://scripts/layout_transfer.gd")
 
 @onready var camera: Camera2D = $Camera2D
 @onready var canvas_modulate: CanvasModulate = $CanvasModulate
@@ -59,10 +61,12 @@ var _drag_start_paths: Dictionary = {}
 var _panel_status: RichTextLabel
 var _line_label: Label
 var _line_color_picker: ColorPickerButton
+var _close_line_button: Button
+var _delete_line_button: Button
 var _main_panel: PanelContainer
 var _toolbar: HBoxContainer
 var _toolbar_actions: HBoxContainer
-var _brand: Label
+var _brand: HBoxContainer
 var _line_popup: PanelContainer
 var _help_popup: PanelContainer
 var _status_panel: Panel
@@ -83,6 +87,10 @@ var _restore_ui_button: Button
 var _collapse_dock_button: Button
 var _collapsed_dock_button: Button
 var _dock_collapsed := false
+var _zoom_controls: HBoxContainer
+var _zoom_in_button: Button
+var _zoom_out_button: Button
+var _fit_window_button: Button
 var _ui_idle_seconds := 0.0
 var _title_seconds := 0.0
 var _first_connection_completed := false
@@ -110,6 +118,7 @@ var _quit_dialog: ConfirmationDialog
 var _delete_dialog: ConfirmationDialog
 var _delete_station_id := -1
 var _delete_track_id := -1
+var _delete_line_id := -1
 var _updating_line_controls: bool = false
 var _language_selector: OptionButton
 var _status_source := ""
@@ -117,6 +126,23 @@ var _status_arguments: Array = []
 var _status_arguments_are_keys := false
 const SETTINGS_PATH := "user://settings.cfg"
 var settings_path := SETTINGS_PATH
+var layout_store := LayoutStoreScript.new()
+var startup_layout_enabled := true
+var _minimum_camera_zoom := 0.08
+var _layout_popup: PanelContainer
+var _layout_name: LineEdit
+var _saved_layouts: OptionButton
+var _layout_action: Button
+var _layout_heading: Label
+var _layout_saving := false
+var _layout_dialog: ConfirmationDialog
+var _pending_layout_operation := ""
+var _pending_layout_name := ""
+var _pending_layout_bundled := ""
+var _pending_import: Dictionary = {}
+var _layout_transfer: Node
+var _export_layout_button: Button
+var _import_layout_button: Button
 
 func _ready() -> void:
 	_load_language()
@@ -127,9 +153,20 @@ func _ready() -> void:
 	add_child(world_view)
 	world_view.set_network(graph, lines)
 	_create_interface()
+	_layout_transfer = LayoutTransferScript.new()
+	_layout_transfer.imported.connect(_request_imported_layout)
+	_layout_transfer.failed.connect(_on_transfer_failed)
+	_layout_transfer.exported.connect(func() -> void: _set_status("Réseau exporté."))
+	add_child(_layout_transfer)
 	_create_line()
 	_refresh_network()
 	_update_configuration_ui()
+	if startup_layout_enabled:
+		var starter := layout_store.load_starter_layout()
+		if starter.is_empty():
+			_set_status("Impossible de charger le réseau inclus. Utilisez Charger pour réessayer.")
+		else:
+			_replace_layout(starter, true)
 	get_window().mouse_exited.connect(_on_pointer_exited)
 
 func _configure_display() -> void:
@@ -332,10 +369,17 @@ func _create_interface() -> void:
 	_toolbar.add_theme_constant_override("separation", 12)
 	_toolbar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ui_root.add_child(_toolbar)
-	_brand = _label("METRO", 48, UI_INK)
-	_brand.theme = ui_root.theme
+	_brand = HBoxContainer.new()
+	_brand.add_theme_constant_override("separation", 8)
 	_brand.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_brand.add_theme_stylebox_override("normal", _button_style(UI_PAPER))
+	for artwork: String in ["res://assets/branding/metro-mark.svg", "res://assets/branding/metro-wordmark.svg"]:
+		var texture := TextureRect.new()
+		texture.texture = load(artwork)
+		texture.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		texture.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		texture.custom_minimum_size = Vector2(60, 60) if artwork.ends_with("metro-mark.svg") else Vector2(180, 60)
+		texture.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_brand.add_child(texture)
 	layer.add_child(_brand)
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -394,19 +438,50 @@ func _create_interface() -> void:
 	_collapsed_dock_button.tooltip_text = "Afficher les lignes"
 	_collapsed_dock_button.hide()
 	ui_root.add_child(_collapsed_dock_button)
+	_zoom_controls = HBoxContainer.new()
+	_zoom_controls.add_theme_constant_override("separation", 4)
+	ui_root.add_child(_zoom_controls)
+	_zoom_out_button = _button("-", _zoom_camera.bind(1.0 / 1.25))
+	_zoom_out_button.tooltip_text = "Zoom arrière"
+	_zoom_in_button = _button("+", _zoom_camera.bind(1.25))
+	_zoom_in_button.tooltip_text = "Zoom avant"
+	_fit_window_button = _button("", _fit_window)
+	_fit_window_button.tooltip_text = "Ajuster à la fenêtre"
+	_fit_window_button.draw.connect(_draw_fit_icon)
+	for button: Button in [_zoom_out_button, _zoom_in_button, _fit_window_button]:
+		button.custom_minimum_size = Vector2(44, 44)
+		button.size_flags_horizontal = Control.SIZE_SHRINK_END
+		_zoom_controls.add_child(button)
 
-	var stack := _sheet_stack(_line_popup)
-	_line_stack = stack
-	stack.add_theme_constant_override("separation", 12)
+	var details_stack := VBoxContainer.new()
+	details_stack.add_theme_constant_override("separation", 12)
+	_line_popup.add_child(details_stack)
 	var line_details := HBoxContainer.new()
 	line_details.add_theme_constant_override("separation", 12)
 	_line_label = _label("LIGNE 01", 16, UI_INK)
 	_line_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	line_details.add_child(_line_label)
+	_close_line_button = _button("Replier", _close_sheets)
+	_close_line_button.tooltip_text = "Fermer les réglages de ligne"
+	_close_line_button.size_flags_horizontal = Control.SIZE_SHRINK_END
+	line_details.add_child(_close_line_button)
+	details_stack.add_child(line_details)
+	var details_body := PanelContainer.new()
+	details_body.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
+	details_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	details_stack.add_child(details_body)
+	var stack := _sheet_stack(details_body)
+	_line_stack = stack
+	stack.add_theme_constant_override("separation", 12)
+	var color_row := HBoxContainer.new()
+	color_row.add_theme_constant_override("separation", 12)
+	var color_label := _label("Couleur de la ligne", 16, UI_INK)
+	color_row.add_child(color_label)
 	_line_color_picker = ColorPickerButton.new()
-	_line_color_picker.custom_minimum_size = Vector2(44.0, 44.0)
+	_line_color_picker.custom_minimum_size = Vector2(80.0, 44.0)
+	_line_color_picker.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	_line_color_picker.edit_alpha = false
-	_line_color_picker.tooltip_text = "Couleur de la ligne"
+	_line_color_picker.tooltip_text = "Choisir la couleur de la ligne"
 	_line_color_picker.color_changed.connect(_on_line_color_changed)
 	var picker := _line_color_picker.get_picker()
 	picker.theme = ui_root.theme
@@ -420,13 +495,8 @@ func _create_interface() -> void:
 	picker.add_theme_constant_override("sv_width", 220)
 	for color: Color in LINE_COLORS:
 		picker.add_preset(color)
-	line_details.add_child(_line_color_picker)
-	var close_line := _button("v", _close_sheets)
-	close_line.tooltip_text = "Fermer les réglages de ligne"
-	close_line.custom_minimum_size.x = 44.0
-	close_line.size_flags_horizontal = Control.SIZE_SHRINK_END
-	line_details.add_child(close_line)
-	stack.add_child(line_details)
+	color_row.add_child(_line_color_picker)
+	stack.add_child(color_row)
 	_add_sheet_feedback(stack)
 	_line_grid = GridContainer.new()
 	_line_grid.columns = 2
@@ -438,6 +508,9 @@ func _create_interface() -> void:
 	_dwell_slider = _add_slider(_line_grid, "Arrêt en station", 0.0, 12.0, 3.0, _on_dwell_changed, "_dwell_value")
 	_velocity_slider = _add_slider(_line_grid, "Vitesse de croisière", 40.0, 220.0, 100.0, _on_velocity_changed, "_velocity_value")
 	_wagon_slider = _add_slider(_line_grid, "Wagons par train", 1.0, 6.0, 2.0, _on_wagon_changed, "_wagon_value")
+	_delete_line_button = _button("Supprimer la ligne", _request_delete_line)
+	_delete_line_button.size_flags_horizontal = Control.SIZE_SHRINK_END
+	stack.add_child(_delete_line_button)
 
 	_status_panel = Panel.new()
 	_status_panel.add_theme_stylebox_override("panel", _panel_style())
@@ -503,6 +576,50 @@ func _create_interface() -> void:
 	_settings_grid.add_child(_hide_ui_button)
 	if not OS.has_feature("web"):
 		_settings_grid.add_child(_button("Quitter le jeu", _confirm_quit))
+	var layout_controls := HBoxContainer.new()
+	layout_controls.add_theme_constant_override("separation", 8)
+	_settings_grid.add_child(layout_controls)
+	var save_layout_button := _button("Enregistrer", _open_layouts.bind(true))
+	save_layout_button.tooltip_text = "Enregistrer un réseau"
+	layout_controls.add_child(save_layout_button)
+	var load_layout_button := _button("Charger", _open_layouts.bind(false))
+	load_layout_button.tooltip_text = "Charger un réseau"
+	layout_controls.add_child(load_layout_button)
+	var clear_map_button := _button("Vider", _request_clear_map)
+	clear_map_button.tooltip_text = "Vider la carte"
+	layout_controls.add_child(clear_map_button)
+	var transfer_controls := HBoxContainer.new()
+	transfer_controls.add_theme_constant_override("separation", 8)
+	_settings_grid.add_child(transfer_controls)
+	_export_layout_button = _button("Exporter", _export_layout)
+	_export_layout_button.tooltip_text = "Exporter un réseau"
+	transfer_controls.add_child(_export_layout_button)
+	_import_layout_button = _button("Importer", _import_layout)
+	_import_layout_button.tooltip_text = "Importer un réseau"
+	transfer_controls.add_child(_import_layout_button)
+
+	_layout_popup = _make_sheet(ui_root)
+	var layout_stack := _sheet_stack(_layout_popup, false)
+	_sheet_heading(layout_stack, "RÉSEAUX")
+	_layout_heading = _label("Nom du réseau", 16, UI_MUTED)
+	layout_stack.add_child(_layout_heading)
+	_layout_name = LineEdit.new()
+	_layout_name.max_length = 64
+	_layout_name.custom_minimum_size.y = 44.0
+	_layout_name.text_submitted.connect(func(_text: String) -> void: _request_layout_action())
+	layout_stack.add_child(_layout_name)
+	_saved_layouts = OptionButton.new()
+	_saved_layouts.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
+	_saved_layouts.custom_minimum_size.y = 44.0
+	_saved_layouts.clip_text = true
+	_saved_layouts.item_selected.connect(func(index: int) -> void: _layout_name.text = _saved_layouts.get_item_text(index))
+	layout_stack.add_child(_saved_layouts)
+	_layout_action = _button("Enregistrer", _request_layout_action)
+	layout_stack.add_child(_layout_action)
+	var persistence_note := _label("Les réseaux restent sur cet appareil. Dans le navigateur, effacer les données du site efface les sauvegardes.", 16, UI_MUTED)
+	persistence_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	layout_stack.add_child(persistence_note)
+	_layout_popup.minimum_size_changed.connect(_resize_interface.call_deferred)
 
 	_quit_dialog = ConfirmationDialog.new()
 	_quit_dialog.title = "Quitter Metro"
@@ -516,8 +633,15 @@ func _create_interface() -> void:
 	_delete_dialog.ok_button_text = "Supprimer"
 	_delete_dialog.cancel_button_text = "Annuler"
 	_delete_dialog.confirmed.connect(_apply_delete)
-	_style_delete_dialog()
+	_style_delete_dialog(_delete_dialog)
 	ui_root.add_child(_delete_dialog)
+	_layout_dialog = ConfirmationDialog.new()
+	_layout_dialog.title = "RÉSEAUX"
+	_layout_dialog.cancel_button_text = "Annuler"
+	_layout_dialog.confirmed.connect(_confirm_layout_operation)
+	_layout_dialog.canceled.connect(_cancel_layout_operation)
+	_style_delete_dialog(_layout_dialog)
+	ui_root.add_child(_layout_dialog)
 	_resize_interface()
 
 func _on_viewport_resized() -> void:
@@ -531,23 +655,27 @@ func _resize_interface() -> void:
 	var narrow := viewport_size.x < 620.0
 	_brand.visible = not narrow and not _ui_hidden and _title_seconds < 30.0
 	_brand.position = Vector2(16.0, 16.0)
-	_brand.size = Vector2(_brand.get_combined_minimum_size().x, 44.0)
+	_brand.size = _brand.get_combined_minimum_size()
 	_toolbar.position = Vector2(16.0, 16.0)
 	_toolbar.size = Vector2(width, 44.0)
 	_line_grid.columns = 1 if narrow else (5 if viewport_size.x >= 1366.0 else (3 if viewport_size.x >= 760.0 else 2))
 	_settings_grid.columns = 1 if narrow else 2
-	var desired_height := minf(300.0, _line_stack.get_combined_minimum_size().y + 8.0)
+	_settings_grid.add_theme_constant_override("v_separation", 8 if narrow else 16)
+	var desired_height := minf(300.0, _line_stack.get_combined_minimum_size().y + _close_line_button.get_combined_minimum_size().y + 20.0)
 	var details_height := minf(desired_height, maxf(0.0, viewport_size.y - 148.0)) if _line_popup.visible else 0.0
 	_line_popup.custom_minimum_size.y = details_height
 	_main_panel.size = Vector2(viewport_size.x, 60.0 + (details_height + 8.0 if _line_popup.visible else 0.0))
 	_main_panel.position = Vector2(0.0, viewport_size.y - _main_panel.size.y)
+	_zoom_controls.size = _zoom_controls.get_combined_minimum_size()
+	var zoom_bottom := viewport_size.y - 60.0 if _dock_collapsed else _main_panel.position.y
+	_zoom_controls.position = Vector2(viewport_size.x - _zoom_controls.size.x - 16.0, zoom_bottom - _zoom_controls.size.y - 4.0)
 	for handle: Button in [_collapsed_dock_button, _restore_ui_button]:
 		handle.size = handle.get_combined_minimum_size()
 		var x := viewport_size.x - handle.size.x - 16.0 if handle == _collapsed_dock_button else (viewport_size.x - handle.size.x) * 0.5
 		handle.position = Vector2(x, viewport_size.y - handle.size.y - 8.0)
 	var sheet_width := minf(640.0, width)
-	for sheet: PanelContainer in [_settings_popup, _help_popup]:
-		var sheet_height := sheet.get_combined_minimum_size().y if sheet == _settings_popup else minf(340.0, maxf(0.0, viewport_size.y - 32.0))
+	for sheet: PanelContainer in [_settings_popup, _help_popup, _layout_popup]:
+		var sheet_height := sheet.get_combined_minimum_size().y if sheet != _help_popup else minf(340.0, maxf(0.0, viewport_size.y - 32.0))
 		sheet.size = Vector2(sheet_width, sheet_height)
 		sheet.position = (viewport_size - sheet.size) * 0.5
 	_resize_notification()
@@ -584,7 +712,7 @@ func _wake_interface() -> void:
 	_ui_root.modulate.a = 1.0
 
 func _update_ui_idle(delta: float) -> void:
-	if _ui_hidden or _any_sheet_open() or _quit_dialog.visible or _delete_dialog.visible or _line_color_picker.get_popup().visible or _connect_drag_source_id >= 0 or _dragging_station_id >= 0 or _editing_track_id >= 0 or _panning or _space_down:
+	if _ui_hidden or _any_sheet_open() or _quit_dialog.visible or _delete_dialog.visible or _layout_dialog.visible or _line_color_picker.get_popup().visible or _connect_drag_source_id >= 0 or _dragging_station_id >= 0 or _editing_track_id >= 0 or _panning or _space_down:
 		_wake_interface()
 		return
 	var fade_delta := maxf(0.0, _ui_idle_seconds + delta - UI_IDLE_SECONDS) - maxf(0.0, _ui_idle_seconds - UI_IDLE_SECONDS)
@@ -599,10 +727,10 @@ func _toggle_line_settings() -> void:
 	_toggle_sheet(_line_popup)
 
 func _any_sheet_open() -> bool:
-	return _line_popup.visible or _settings_popup.visible or _help_popup.visible
+	return _line_popup.visible or _settings_popup.visible or _help_popup.visible or _layout_popup.visible
 
 func _close_sheets() -> void:
-	for sheet: PanelContainer in [_line_popup, _settings_popup, _help_popup]:
+	for sheet: PanelContainer in [_line_popup, _settings_popup, _help_popup, _layout_popup]:
 		sheet.hide()
 	_line_color_picker.get_popup().hide()
 	for button: Button in [_settings_button, _help_button]:
@@ -623,7 +751,7 @@ func _toggle_sheet(sheet: PanelContainer) -> void:
 			_dock_collapsed = false
 			_main_panel.show()
 			_collapsed_dock_button.hide()
-		elif sheet == _settings_popup:
+		elif sheet == _settings_popup or sheet == _layout_popup:
 			_settings_button.set_pressed_no_signal(true)
 		else:
 			_help_button.set_pressed_no_signal(true)
@@ -712,7 +840,7 @@ func _button(text: String, callback: Callable) -> Button:
 	button.pressed.connect(callback)
 	return button
 
-func _style_delete_dialog() -> void:
+func _style_delete_dialog(dialog: ConfirmationDialog) -> void:
 	var theme := _interface_theme()
 	var panel := _panel_style()
 	panel.set_corner_radius_all(0)
@@ -720,13 +848,13 @@ func _style_delete_dialog() -> void:
 	theme.set_stylebox("panel", "AcceptDialog", panel)
 	theme.set_constant("buttons_min_height", "AcceptDialog", 44)
 	theme.set_constant("buttons_min_width", "AcceptDialog", 112)
-	_delete_dialog.borderless = true
+	dialog.borderless = true
 	for state: String in ["normal", "hover", "pressed", "hover_pressed", "focus"]:
 		var button := theme.get_stylebox(state, "Button").duplicate() as StyleBoxFlat
 		button.set_corner_radius_all(0)
 		theme.set_stylebox(state, "Button", button)
-	_delete_dialog.theme = theme
-	_delete_dialog.get_label().autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	dialog.theme = theme
+	dialog.get_label().autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 
 func _edge_handle(tooltip: String, callback: Callable) -> Button:
 	var handle := _button("", callback)
@@ -760,6 +888,16 @@ func _draw_dock_icon(button: Button, collapsed: bool) -> void:
 		center + Vector2(-3, -2), center + Vector2(0, -2 + 3 * direction),
 		center + Vector2(3, -2),
 	]), color, 1.5, true)
+
+func _draw_fit_icon() -> void:
+	var center := _fit_window_button.size * 0.5
+	var color := _fit_window_button.get_theme_color("font_color")
+	for corner: Vector2 in [Vector2(-1, -1), Vector2(1, -1), Vector2(1, 1), Vector2(-1, 1)]:
+		var point := center + corner * 9.0
+		_fit_window_button.draw_polyline(PackedVector2Array([
+			point - Vector2(corner.x * 6.0, 0), point,
+			point - Vector2(0, corner.y * 6.0)
+		]), color, 1.5, true)
 
 func _draw_edge_handle(handle: Button) -> void:
 	var color := UI_INK.lerp(Color("#dce5e4"), _night_strength(time_of_day))
@@ -859,6 +997,7 @@ func _refresh_line_selector() -> void:
 	for line: TransitLine in lines:
 		var button := Button.new()
 		button.text = tr("Ligne %02d") % (line.id + 1)
+		button.tooltip_text = line.display_name
 		button.custom_minimum_size = Vector2(96.0, 44.0)
 		button.toggle_mode = true
 		button.button_group = _line_button_group
@@ -922,6 +1061,8 @@ func _toggle_ui() -> void:
 	_close_sheets()
 	_quit_dialog.hide()
 	_delete_dialog.hide()
+	_layout_dialog.hide()
+	_cancel_layout_operation()
 	_clear_hover()
 	_ui_hidden = not _ui_hidden
 	_ui_root.visible = not _ui_hidden
@@ -1288,7 +1429,7 @@ func _on_pointer_exited() -> void:
 
 func _update_hover(position: Vector2) -> void:
 	world_view.station_preview_visible = false
-	if _ui_hidden or _followed_train != null or _panning or _space_down or _any_sheet_open() or _quit_dialog.visible or _delete_dialog.visible or _connect_drag_source_id >= 0 or _dragging_station_id >= 0 or _editing_track_id >= 0:
+	if _ui_hidden or _followed_train != null or _panning or _space_down or _any_sheet_open() or _quit_dialog.visible or _delete_dialog.visible or _layout_dialog.visible or _connect_drag_source_id >= 0 or _dragging_station_id >= 0 or _editing_track_id >= 0:
 		_clear_hover()
 		return
 	world_view.view_zoom = camera.zoom
@@ -1393,13 +1534,32 @@ func _request_delete(station_id: int, track_id: int) -> void:
 		_set_status("Sélectionnez une station ou survolez un rail à supprimer.")
 		return
 	_cancel_gesture()
+	_delete_line_id = -1
 	_delete_station_id = station_id
 	_delete_track_id = track_id if station_id < 0 else -1
 	_delete_dialog.dialog_text = "Supprimer cette station ? Les voies voisines seront reconnectées en conservant leur tracé." if station_id >= 0 else "Supprimer ce rail ? Les lignes touchées seront séparées."
 	_delete_dialog.popup_centered(Vector2i(mini(430, int(get_viewport_rect().size.x) - 32), 180))
 
+func _request_delete_line() -> void:
+	_cancel_gesture()
+	_line_color_picker.get_popup().hide()
+	_delete_station_id = -1
+	_delete_track_id = -1
+	_delete_line_id = active_line.id
+	_delete_dialog.dialog_text = "Supprimer cette ligne, ses trains, ses voies et stations exclusives ? Les voies et stations partagées seront conservées."
+	_delete_dialog.popup_centered(Vector2i(mini(430, int(get_viewport_rect().size.x) - 32), 180))
+
 func _apply_delete() -> void:
-	if _delete_station_id >= 0:
+	if _delete_line_id >= 0:
+		var next_line := _delete_line_id
+		graph.remove_line(_delete_line_id, lines)
+		if lines.is_empty():
+			lines.append(TransitLineScript.new(0, LINE_COLORS[0]))
+		active_line = lines[mini(next_line, lines.size() - 1)]
+		_previous_arrival_count = dispatcher.arrival_count
+		dispatcher.last_arrival_line_id = -1
+		_close_sheets()
+	elif _delete_station_id >= 0:
 		graph.remove_station(_delete_station_id, lines)
 	elif _delete_track_id >= 0:
 		graph.remove_track(_delete_track_id, lines)
@@ -1407,6 +1567,7 @@ func _apply_delete() -> void:
 		return
 	_delete_station_id = -1
 	_delete_track_id = -1
+	_delete_line_id = -1
 	selected_station_id = -1
 	_clear_hover()
 	dispatcher.lines.assign(lines)
@@ -1473,7 +1634,9 @@ func _update_configuration_ui() -> void:
 		return
 	_updating_line_controls = true
 	_line_color_picker.color = active_line.color
-	_line_label.text = tr("LIGNE %02d") % (active_line.id + 1)
+	_line_label.text = active_line.display_name if not active_line.display_name.is_empty() else tr("LIGNE %02d") % (active_line.id + 1)
+	_line_label.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
+	_line_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	_dispatch_slider.value = active_line.dispatch_rate
 	_max_trains_slider.max_value = maxi(1, dispatcher.route_capacity(active_line))
 	_max_trains_slider.editable = dispatcher.route_capacity(active_line) > 0
@@ -1528,7 +1691,7 @@ func _update_connection_guidance() -> void:
 	if not graph.tracks.is_empty():
 		_first_connection_completed = true
 	world_view.connection_hint_station_id = -1
-	if not _first_connection_completed and not graph.stations.is_empty() and not _ui_hidden and _followed_train == null and not _any_sheet_open() and not _panning and not _space_down and _connect_drag_source_id < 0 and _dragging_station_id < 0 and _editing_track_id < 0 and not _quit_dialog.visible and not _delete_dialog.visible:
+	if not _first_connection_completed and not graph.stations.is_empty() and not _ui_hidden and _followed_train == null and not _any_sheet_open() and not _panning and not _space_down and _connect_drag_source_id < 0 and _dragging_station_id < 0 and _editing_track_id < 0 and not _quit_dialog.visible and not _delete_dialog.visible and not _layout_dialog.visible:
 		world_view.connection_hint_station_id = graph.stations[0].id
 
 func _refresh_status_translation() -> void:
@@ -1569,6 +1732,10 @@ func _on_language_selected(index: int) -> void:
 	_update_configuration_ui()
 	_update_status()
 	_refresh_status_translation()
+	for item_index in range(_saved_layouts.item_count):
+		var bundled: Variant = _saved_layouts.get_item_metadata(item_index)
+		if bundled is String and LayoutStoreScript.BUNDLED_LAYOUTS.has(bundled):
+			_saved_layouts.set_item_text(item_index, tr(LayoutStoreScript.BUNDLED_LAYOUTS[bundled]))
 	var settings := ConfigFile.new()
 	var error := settings.load(settings_path)
 	if error != OK and error != ERR_FILE_NOT_FOUND:
@@ -1585,8 +1752,188 @@ func _toggle_pause() -> void:
 func _toggle_settings() -> void:
 	_toggle_sheet(_settings_popup)
 
+func _open_layouts(saving: bool) -> void:
+	_close_sheets()
+	_toggle_sheet(_layout_popup)
+	_layout_saving = saving
+	_layout_heading.text = "Nom du réseau" if saving else "Réseaux enregistrés"
+	_layout_name.visible = saving
+	_layout_name.text = ""
+	_layout_action.text = "Enregistrer" if saving else "Charger"
+	_saved_layouts.clear()
+	var saved_names := layout_store.names()
+	for saved_name: String in saved_names:
+		_saved_layouts.add_item(saved_name)
+		_saved_layouts.set_item_metadata(_saved_layouts.item_count - 1, false)
+	if not saving:
+		for path: String in LayoutStoreScript.BUNDLED_LAYOUTS:
+			_saved_layouts.add_item(tr(LayoutStoreScript.BUNDLED_LAYOUTS[path]))
+			_saved_layouts.set_item_metadata(_saved_layouts.item_count - 1, path)
+	_saved_layouts.disabled = _saved_layouts.item_count == 0
+	if _saved_layouts.item_count > 0:
+		_saved_layouts.select(0)
+	_layout_action.disabled = not saving and _saved_layouts.item_count == 0
+	if not layout_store.error_message.is_empty():
+		_set_status("Impossible de lire les sauvegardes. Vérifiez le stockage disponible.")
+	if OS.has_feature("web") and not OS.is_userfs_persistent():
+		_set_status("Le stockage du navigateur est indisponible. Les sauvegardes ne survivront pas à la fermeture.")
+	_resize_interface()
+	if saving:
+		_layout_name.grab_focus()
+	elif _saved_layouts.item_count > 0:
+		_saved_layouts.grab_focus()
+
+func _request_layout_action() -> void:
+	var layout_name := _layout_name.text.strip_edges() if _layout_saving else (_saved_layouts.get_item_text(_saved_layouts.selected) if _saved_layouts.selected >= 0 else "")
+	if not layout_store.valid_name(layout_name):
+		_set_status("Saisissez un nom de réseau (1 à 64 caractères).")
+		return
+	_pending_layout_name = layout_name
+	var bundled: Variant = _saved_layouts.get_item_metadata(_saved_layouts.selected) if not _layout_saving else false
+	_pending_layout_bundled = bundled if bundled is String else ""
+	if _layout_saving and not layout_store.exists(layout_name):
+		_save_layout(layout_name)
+		_cancel_layout_operation()
+		return
+	_pending_layout_operation = "save" if _layout_saving else "load"
+	_layout_dialog.dialog_text = "Remplacer le réseau enregistré sous ce nom ?" if _layout_saving else "Charger ce réseau ? La carte actuelle sera remplacée. Les modifications non enregistrées seront perdues."
+	_layout_dialog.ok_button_text = "Remplacer" if _layout_saving else "Charger"
+	_popup_layout_confirmation()
+
+func _request_clear_map() -> void:
+	_cancel_gesture()
+	_pending_layout_operation = "clear"
+	_pending_layout_name = ""
+	_pending_layout_bundled = ""
+	_layout_dialog.dialog_text = "Vider la carte ? Les modifications non enregistrées seront perdues. Les réseaux enregistrés seront conservés."
+	_layout_dialog.ok_button_text = "Vider"
+	_popup_layout_confirmation()
+
+func _popup_layout_confirmation() -> void:
+	_wake_interface()
+	_layout_dialog.popup_centered(Vector2i(mini(430, int(get_viewport_rect().size.x) - 32), 200))
+
+func _cancel_layout_operation() -> void:
+	_pending_layout_operation = ""
+	_pending_layout_name = ""
+	_pending_layout_bundled = ""
+	_pending_import = {}
+
+func _confirm_layout_operation() -> void:
+	match _pending_layout_operation:
+		"save": _save_layout(_pending_layout_name)
+		"load":
+			var restored := layout_store.load_bundled_layout(_pending_layout_bundled) if not _pending_layout_bundled.is_empty() else layout_store.load_layout(_pending_layout_name)
+			if restored.is_empty():
+				_set_status("Impossible de charger ce réseau. Le fichier est absent, invalide ou incompatible.")
+			else:
+				_replace_layout(restored, true)
+		"clear":
+			var empty_lines: Array[TransitLine] = [TransitLineScript.new(0, LINE_COLORS[0])]
+			_replace_layout({"graph": TransitGraphScript.new(), "lines": empty_lines, "active_line": 0, "camera": Vector2.ZERO, "zoom": 1.0})
+		"import":
+			_replace_layout(_pending_import, true)
+			_set_status("Réseau importé. Enregistrez une copie pour le conserver sur cet appareil.")
+	_cancel_layout_operation()
+
+func _export_layout() -> void:
+	_cancel_gesture()
+	_layout_transfer.export_layout(layout_store.capture(graph, lines, active_line.id, camera.position, camera.zoom.x))
+
+func _on_transfer_failed(message: String) -> void:
+	if message.contains("safety limit") or message.contains("storage limit") or message.contains("16 MiB limit"):
+		_set_status("Réseau refusé : limites de sécurité dépassées (16 Mio, 256 stations, 512 voies, 16 lignes, 64 trains). Simplifiez le réseau ; voir README pour les limites de géométrie.")
+	else:
+		_set_status("Impossible de transférer ce réseau. Vérifiez le fichier JSON et son emplacement (16 Mio maximum).")
+
+func _import_layout() -> void:
+	_cancel_gesture()
+	_cancel_layout_operation()
+	_layout_transfer.import_layout()
+
+func _request_imported_layout(restored: Dictionary) -> void:
+	_cancel_layout_operation()
+	_pending_import = restored
+	_pending_layout_operation = "import"
+	_layout_dialog.dialog_text = "Importer ce réseau ? La carte actuelle sera remplacée. Les modifications non enregistrées seront perdues. Les sauvegardes existantes seront conservées."
+	_layout_dialog.ok_button_text = "Importer"
+	_popup_layout_confirmation()
+
+func _save_layout(layout_name: String) -> void:
+	_cancel_gesture()
+	var snapshot := layout_store.capture(graph, lines, active_line.id, camera.position, camera.zoom.x)
+	if not layout_store.save_layout(layout_name, snapshot):
+		_set_status("Impossible d'enregistrer ce réseau. Vérifiez le stockage disponible.")
+		return
+	_close_sheets()
+	if OS.has_feature("web") and not OS.is_userfs_persistent():
+		_set_status("Le stockage du navigateur est indisponible. Les sauvegardes ne survivront pas à la fermeture.")
+
+func _replace_layout(restored: Dictionary, fit_view: bool = false) -> void:
+	_cancel_gesture()
+	_stop_following()
+	_close_sheets()
+	_delete_dialog.hide()
+	_delete_station_id = -1
+	_delete_track_id = -1
+	_delete_line_id = -1
+	selected_station_id = -1
+	_clear_hover()
+	graph = restored["graph"]
+	lines.assign(restored["lines"])
+	active_line = lines[restored["active_line"]]
+	dispatcher = DispatcherScript.new(graph)
+	dispatcher.lines.assign(lines)
+	_previous_arrival_count = 0
+	_first_connection_completed = not graph.tracks.is_empty()
+	camera.position = restored["camera"]
+	camera.zoom = Vector2.ONE * restored["zoom"]
+	_minimum_camera_zoom = minf(0.08, camera.zoom.x)
+	_status_source = ""
+	_status_seconds = 0.0
+	_panel_status.text = ""
+	_refresh_network()
+	_refresh_line_selector()
+	if fit_view:
+		_fit_layout_to_window()
+	camera.reset_smoothing()
+	world_view.set_dynamic_state(dispatcher.metros, camera.position, camera.zoom, time_of_day, dispatcher.visits)
+
+func _fit_layout_to_window() -> void:
+	if graph.stations.is_empty():
+		camera.position = Vector2.ZERO
+		camera.zoom = Vector2.ONE
+		_minimum_camera_zoom = 0.08
+		return
+	var bounds := Rect2(graph.stations[0].position, Vector2.ZERO)
+	for station: Station in graph.stations:
+		bounds = bounds.expand(station.position)
+	for track: Track in graph.tracks:
+		for point: Vector2 in TrackGeometry.anchors(graph, track):
+			bounds = bounds.expand(point)
+	for route: Dictionary in dispatcher.routes.values():
+		for point: Vector2 in route["points"]:
+			bounds = bounds.expand(point)
+	bounds = bounds.grow(24.0)
+	var viewport_size := get_viewport_rect().size
+	var usable := Rect2(Vector2(32, 80), (viewport_size - Vector2(64, 192)).max(Vector2.ONE))
+	camera.zoom = Vector2.ONE * minf(6.0, minf(usable.size.x / bounds.size.x, usable.size.y / bounds.size.y))
+	camera.position = bounds.get_center() - (usable.get_center() - viewport_size * 0.5) / camera.zoom
+	_minimum_camera_zoom = minf(0.08, camera.zoom.x)
+
+func _fit_window() -> void:
+	_wake_interface()
+	_cancel_gesture()
+	_stop_following()
+	_close_sheets()
+	_clear_hover()
+	_fit_layout_to_window()
+	camera.reset_smoothing()
+	world_view.set_dynamic_state(dispatcher.metros, camera.position, camera.zoom, time_of_day, dispatcher.visits)
+
 func _zoom_camera(factor: float) -> void:
-	camera.zoom = (camera.zoom * factor).clamp(Vector2(0.08, 0.08), Vector2(6.0, 6.0))
+	_wake_interface()
+	camera.zoom = (camera.zoom * factor).clamp(Vector2.ONE * _minimum_camera_zoom, Vector2.ONE * 6.0)
 
 func _toggle_fullscreen() -> void:
 	var is_fullscreen := DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN

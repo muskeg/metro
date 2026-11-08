@@ -14,7 +14,9 @@ func _run() -> void:
 	await _test_quiet_guidance()
 	await _test_interchange_input()
 	await _test_large_map_navigation()
+	await _test_line_deletion()
 	var main: Node = load("res://scenes/main.tscn").instantiate()
+	main.set("startup_layout_enabled", false)
 	root.add_child(main)
 	_check(is_equal_approx(root.content_scale_factor, maxf(1.0, DisplayServer.screen_get_scale())), "UI density must match Retina/browser device scale.")
 	root.content_scale_factor = 1.0
@@ -29,6 +31,8 @@ func _run() -> void:
 	_check(panel.size.y <= 84 and panel.position.y > 700, "The route dock must leave the map open, not occupy a sidebar.")
 	_check(not main.get("_line_popup").visible and not main.get("_settings_popup").visible, "Detailed controls must start closed.")
 	var picker: ColorPickerButton = main.get("_line_color_picker")
+	_check(main.get("_close_line_button").text == "Replier" and main.get("_close_line_button").custom_minimum_size.y >= 44, "Line controls must have a labelled, touch-sized collapse action.")
+	_check(picker.custom_minimum_size.x >= 80 and picker.get_parent().get_child(0).text == "Couleur de la ligne", "The color swatch must be visibly labelled and wide enough to recognize.")
 	_check(not picker.edit_alpha and not picker.get_picker().edit_alpha, "Solid line colors must not expose transparency.")
 	_check(picker.get_picker().get_presets().size() >= 6, "The picker must offer the existing line palette as presets.")
 	var graph: TransitGraph = main.get("graph")
@@ -50,6 +54,9 @@ func _run() -> void:
 	main.set("paused", true)
 	var first_train := dispatcher.metros[0]
 	var distance := first_train.distance
+	main.call("_follow_train", first_train)
+	main.get("_fit_window_button").pressed.emit()
+	_check(main.get("_followed_train") == null and main.get("paused") and dispatcher.metros[0] == first_train and first_train.distance == distance, "Fit must end following without restarting trains or changing pause.")
 	var color := Color("#cb6d95")
 	picker.color_changed.emit(color)
 	var lines: Array = main.get("lines")
@@ -138,8 +145,80 @@ func _run() -> void:
 		print("Interface smoke passed: readable responsive HUD, exclusive sheets, picker, line overflow, real input and preserved trains.")
 		quit()
 
+func _test_line_deletion() -> void:
+	var main: Node = load("res://scenes/main.tscn").instantiate()
+	main.set("startup_layout_enabled", false)
+	root.add_child(main)
+	main.set_process(false)
+	root.content_scale_factor = 1.0
+	root.min_size = Vector2i.ZERO
+	root.size = Vector2i(760, 520)
+	await process_frame
+	await process_frame
+	var graph: TransitGraph = main.get("graph")
+	for position: Vector2 in [Vector2.ZERO, Vector2(576, 0), Vector2(576, 576), Vector2(-576, 0), Vector2(576, 1152), Vector2(0, 576), Vector2(-576, 576)]:
+		graph.add_station(position)
+	var lines: Array[TransitLine] = main.get("lines")
+	for station_id in [0, 1, 2, 5, 0]:
+		_check(lines[0].append_station(graph, station_id), "Deletion fixture loop must build.")
+	for station_ids: Array in [[1, 0, 3], [2, 4]]:
+		main.call("_create_line")
+		for station_id: int in station_ids:
+			_check(lines.back().append_station(graph, station_id), "Shared deletion fixture must build.")
+	var shared := graph.track_between(0, 1)
+	var original_path := PackedVector2Array([Vector2.ZERO, Vector2(576, 0)])
+	shared.waypoints = original_path
+	var unrelated := graph.add_track(0, 6)
+	var exclusive_station := graph.stations[5]
+	var interchange := graph.stations[2]
+	var retained_line := lines[1]
+	retained_line.dispatch_rate = 23.0
+	main.call("_select_line", 0)
+	main.call("_refresh_network")
+	var dispatcher: TransitDispatcher = main.get("dispatcher")
+	dispatcher.process(1.0, false)
+	main.call("_follow_train", dispatcher.metros[0])
+	main.set("paused", true)
+	main.call("_toggle_line_settings")
+	await process_frame
+	await _click_control(main.get("_close_line_button"))
+	_check(not main.get("_line_popup").visible and main.get("_main_panel").visible, "Collapse must close settings without hiding the line tabs.")
+	main.call("_toggle_line_settings")
+	main.get("_delete_line_button").pressed.emit()
+	var dialog: ConfirmationDialog = main.get("_delete_dialog")
+	_check(dialog.visible and lines.size() == 3 and graph.stations.size() == 7, "Delete line must request confirmation before changing infrastructure.")
+	dialog.canceled.emit()
+	dialog.hide()
+	_check(lines.size() == 3 and graph.stations.has(exclusive_station), "Cancel must preserve the complete line.")
+	dispatcher.arrival_count = 4
+	dispatcher.last_arrival_line_id = 2
+	main.get("_delete_line_button").pressed.emit()
+	dialog.hide()
+	dialog.confirmed.emit()
+	_check(lines.size() == 2 and lines[0] == retained_line and retained_line.id == 0 and retained_line.dispatch_rate == 23.0, "Surviving lines must be renumbered without losing preferences.")
+	_check(graph.stations.size() == 6 and not graph.stations.has(exclusive_station) and graph.stations.has(interchange), "Deletion must remove exclusive stations but keep shared interchanges.")
+	_check(graph.tracks.size() == 4 and graph.tracks.has(shared) and shared.waypoints == original_path and graph.tracks.has(unrelated), "Shared reversed tracks and unrelated infrastructure must remain unchanged.")
+	_check(main.get("active_line") == retained_line and main.get("_followed_train") == null and main.get("paused"), "Deletion must select a survivor, clear stale following and preserve pause.")
+	_check(dispatcher.metros.is_empty() and dispatcher.visits.is_empty(), "Deletion must rebuild routes without retaining old train IDs or platform visits.")
+	_check(main.get("_previous_arrival_count") == dispatcher.arrival_count and dispatcher.last_arrival_line_id == -1, "Deletion must discard pending arrival feedback using obsolete line IDs.")
+	var store := LayoutStore.new()
+	var snapshot := store.capture(graph, lines, 0, Vector2.ZERO, 1.0)
+	_check(not store.restore(snapshot).is_empty(), "The reindexed network must remain saveable and loadable.")
+	while lines.size() > 1:
+		main.call("_request_delete_line")
+		dialog.hide()
+		dialog.confirmed.emit()
+	main.call("_request_delete_line")
+	dialog.hide()
+	dialog.confirmed.emit()
+	_check(lines.size() == 1 and lines[0].stations.is_empty() and main.get("active_line") == lines[0], "Deleting the last line must leave a usable empty default line.")
+	_check(graph.tracks.has(unrelated), "Deleting all services must still preserve unrelated physical infrastructure.")
+	main.queue_free()
+	await process_frame
+
 func _test_interchange_input() -> void:
 	var main: Node = load("res://scenes/main.tscn").instantiate()
+	main.set("startup_layout_enabled", false)
 	root.add_child(main)
 	await process_frame
 	main.set_process(false)
@@ -171,6 +250,7 @@ func _test_interchange_input() -> void:
 
 func _test_large_map_navigation() -> void:
 	var main: Node = load("res://scenes/main.tscn").instantiate()
+	main.set("startup_layout_enabled", false)
 	root.add_child(main)
 	var density := root.content_scale_factor
 	var window_size := root.size
@@ -209,7 +289,7 @@ func _test_responsive_layout(main: Node) -> void:
 		var bounds := Rect2(Vector2.ZERO, Vector2(viewport_size))
 		_check(main.get("_line_scroll").size.x >= 96.0, "Even a phone must leave room for a full line tab.")
 		_check_dock_overflow(main)
-		for name: String in ["_main_panel", "_toolbar"]:
+		for name: String in ["_main_panel", "_toolbar", "_zoom_controls"]:
 			var control: Control = main.get(name)
 			_check(bounds.encloses(control.get_global_rect()), "%s must fit %s: %s" % [name, viewport_size, control.get_global_rect()])
 		for name: String in ["_line_popup", "_settings_popup", "_help_popup"]:
@@ -223,6 +303,14 @@ func _test_responsive_layout(main: Node) -> void:
 			if name == "_line_popup":
 				_check(main.get("_main_panel").get_global_rect().encloses(sheet.get_global_rect()), "Line controls must be inside the bottom rail, not in a floating popup.")
 				_check(sheet.get_global_rect().end.y <= main.get("_dock_row").get_global_rect().position.y, "Integrated controls must leave the line tabs accessible.")
+				var close: Button = main.get("_close_line_button")
+				var close_rect := close.get_global_rect()
+				var scroll: ScrollContainer = main.get("_line_stack").get_parent()
+				scroll.scroll_vertical = 10000
+				await process_frame
+				_check(close.get_global_rect() == close_rect and bounds.encloses(close_rect), "The labelled collapse button must remain fixed and visible while settings scroll.")
+				_check(scroll.get_global_rect().encloses(main.get("_delete_line_button").get_global_rect()), "Scrolling to the end must expose the complete delete-line action.")
+				scroll.scroll_vertical = 0
 			else:
 				_check(sheet.get_global_rect().get_center().is_equal_approx(main.get_viewport_rect().size * 0.5), "%s must be centered on the actual viewport: %s." % [name, sheet.get_global_rect()])
 				if name == "_settings_popup":
@@ -233,7 +321,7 @@ func _test_responsive_layout(main: Node) -> void:
 		_check(slider.size.y >= 32.0, "Sliders need a usable pointer target.")
 		_check(main.get("_dispatch_value").get_theme_font_size("font_size") >= 16, "Values must not shrink on small viewports.")
 		_check(main.get("_help_label").get_theme_font_size("font_size") >= 16, "Help must not shrink on small viewports.")
-		for name: String in ["_pause_button", "_settings_button", "_collapse_dock_button", "_hide_ui_button"]:
+		for name: String in ["_pause_button", "_settings_button", "_collapse_dock_button", "_hide_ui_button", "_zoom_in_button", "_zoom_out_button", "_fit_window_button"]:
 			var button: Button = main.get(name)
 			_check(button.size.y >= 44 and button.get_theme_font_size("font_size") >= 16, "HUD actions need readable text and 44px targets.")
 		var locale := TranslationServer.get_locale()
@@ -256,7 +344,7 @@ func _test_responsive_layout(main: Node) -> void:
 			await process_frame
 			await process_frame
 			_check(main.get("_wagon_slider").get_global_rect().end.y < main.get("_line_popup").get_global_rect().end.y, "All five line controls must fit without scrolling at laptop sizes.")
-			var details_scroll: ScrollContainer = main.get("_line_popup").get_child(0)
+			var details_scroll: ScrollContainer = main.get("_line_stack").get_parent()
 			_check(not details_scroll.get_v_scroll_bar().visible, "Integrated laptop controls must fit without a scrollbar: viewport=%s, scroll=%s, content=%s, panel=%s, style=%s." % [viewport_size, details_scroll.size, details_scroll.get_child(0).get_combined_minimum_size(), main.get("_line_popup").size, main.get("_line_popup").get_theme_stylebox("panel").get_minimum_size()])
 		main.call("_close_sheets")
 	var original_locale := TranslationServer.get_locale()
@@ -457,10 +545,13 @@ func _test_quiet_interface(main: Node) -> void:
 	main.set_process(false)
 	main.set("_title_seconds", 0.0)
 	main.call("_update_title_fade", 10.0)
-	var brand: Label = main.get("_brand")
+	var brand: HBoxContainer = main.get("_brand")
 	_check(is_equal_approx(brand.modulate.a, 1.0), "Metro title must remain opaque for the first ten seconds.")
 	_check(brand.get_parent() != main.get("_ui_root"), "Title fade must remain independent of the HUD idle fade.")
-	_check(brand.get_theme_font_size("font_size") == 48, "Launch title must use a prominent 48px size.")
+	_check(brand.get_child_count() == 2 and brand.size.y == 60, "Launch branding must show a 60px transit mark and vector wordmark.")
+	for artwork: TextureRect in brand.get_children():
+		_check(artwork.texture != null and artwork.texture.resource_path.begins_with("res://assets/branding/"), "Launch branding must use the shared vector artwork.")
+		_check(artwork.mouse_filter == Control.MOUSE_FILTER_IGNORE, "Logo artwork must not intercept map input.")
 	main.call("_update_title_fade", 10.0)
 	_check(is_equal_approx(brand.modulate.a, 0.5), "Metro title must be halfway faded at twenty seconds.")
 	main.call("_update_title_fade", 10.0)
@@ -619,6 +710,7 @@ func _test_help_feedback_layout(main: Node) -> void:
 
 func _test_quiet_guidance() -> void:
 	var main: Node = load("res://scenes/main.tscn").instantiate()
+	main.set("startup_layout_enabled", false)
 	root.add_child(main)
 	main.set_process(false)
 	var graph: TransitGraph = main.get("graph")

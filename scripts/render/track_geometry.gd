@@ -2,7 +2,7 @@ class_name TrackGeometry
 extends RefCounted
 
 const LANE_OFFSET := 8.0
-const CORRIDOR_SPACING := 32.0
+const CORRIDOR_SPACING := 48.0
 const CAR_LENGTH := 19.8
 const CAR_PITCH := CAR_LENGTH + 1.0
 const CAR_SCALE := CAR_LENGTH / 12.0
@@ -283,12 +283,18 @@ static func _terminal_lane(centerline: PackedVector2Array, offset: float, shared
 		shifted[index] = sampled[index].lerp(shifted[index], smoothstep(shared_length, terminal_length, distance))
 	return shifted
 
+static func station_center_radius(line_count: int) -> float:
+	return 10.0 + maxi(0, line_count - 1)
+
+static func station_radius(line_count: int) -> float:
+	return station_center_radius(line_count) + 2.0 * maxi(1, line_count)
+
 static func station_stop_clearance(station_id: int, lines: Array[TransitLine]) -> float:
 	var serving := 0
 	for line: TransitLine in lines:
 		if line.stations.has(station_id):
 			serving += 1
-	return 10.0 + 2.0 * maxi(1, serving) + CAR_LENGTH * 0.5 + TERMINAL_GAP
+	return station_radius(serving) + CAR_LENGTH * 0.5 + TERMINAL_GAP
 
 static func _approach_stop(points: PackedVector2Array, mark: float, position: Vector2, clearance: float) -> float:
 	var total := length(points)
