@@ -14,9 +14,10 @@ Detailed controls and commands: [docs/guide.md](./docs/guide.md). Decisions and 
 - Native Godot 4/GDScript relaxing transit builder, named **Metro**. No economy,
   failure pressure or network-wide demand simulation. Light bounded local
   passenger exchanges affect stop times without destinations or transfers.
-  Release targets: Windows x86_64 and
-  universal macOS (Intel x86_64 + Apple Silicon arm64), plus single-thread Web
-  hosted on GitHub Pages.
+  Release targets: Windows x86_64, universal macOS (Intel x86_64 + Apple Silicon
+  arm64), Linux x86_64, single-thread Web hosted on GitHub Pages, unsigned
+  Android ARMv7/ARM64 APK and unsigned iOS Xcode project archive (not an IPA).
+  Mobile artifacts require signing/building before installation.
 - English default; French can be selected live in Menu. Language is persisted
   through ConfigFile. Add all new UI messages to [ui.csv](./translations/ui.csv).
 - Menu provides Save / Load / Clear for multiple named local layouts, with
@@ -418,6 +419,13 @@ Detailed controls and commands: [docs/guide.md](./docs/guide.md). Decisions and 
   pushes/manual runs deploy. Single-thread Web needs no COOP/COEP headers.
   [docs/](./docs/) contains README screenshots, ignored by Godot and excluded
   from every export preset.
+- [releases.yml](./.github/workflows/releases.yml): manual versioned releases,
+  separate from Pages. Validates MAJOR.MINOR.PATCH (optional v), rejects existing
+  tags, tests once, then builds six targets using matching Godot/templates via
+  [setup-godot](./.github/actions/setup-godot/action.yml). Only the publication
+  job has contents-write permission. Publishes all six assets and SHA256SUMS
+  via a draft, then makes it public after upload. No signing secrets used;
+  iOS requires the documented placeholder team ID for project-only export.
 - Native CSV import has escaped keys enabled for multiline help. Dynamic/nested
   errors must be translated before formatting, not only static control labels.
   New elastic help uses standard quoted multiline CSV cells for version portability.
@@ -436,20 +444,8 @@ building.
 
 ```sh
 godot --headless --editor --path . --quit
-godot --headless --path . --script res://tests/simulation_smoke.gd
-godot --headless --path . --script res://tests/loop_smoke.gd
-godot --headless --path . --script res://tests/train_controls_smoke.gd
-godot --headless --path . --script res://tests/schedule_smoke.gd
-godot --headless --path . --script res://tests/terminal_smoke.gd
-godot --headless --path . --script res://tests/intersection_smoke.gd
-godot --headless --path . --script res://tests/editing_smoke.gd
-godot --headless --path . --script res://tests/interface_smoke.gd
-godot --headless --path . --script res://tests/branding_smoke.gd
-godot --headless --path . --script res://tests/localization_smoke.gd
-godot --headless --path . --script res://tests/layout_smoke.gd
-godot --headless --path . --script res://tests/transfer_smoke.gd
-godot --headless --path . --script res://tests/audio_smoke.gd
-godot --headless --path . --script res://tests/urban_smoke.gd
+bash tests/run_smoke.sh smoke
+bash tests/run_smoke.sh extended
 godot --path . --script res://tests/urban_smoke.gd --audio-driver Dummy
 godot --path . --script res://tests/interface_smoke.gd --audio-driver Dummy
 godot --path . --script res://tests/visual_smoke.gd --audio-driver Dummy
@@ -460,8 +456,27 @@ godot --headless --path . --export-release "Web" dist/web/index.html
 ```
 
 - Inspect output for parser/script errors even when the editor exits zero.
+- [run_smoke.sh](./tests/run_smoke.sh) is the shared CI/local entry point.
+  Default `smoke` runs 14 headless scripts; Pages/PRs use it. `extended` runs
+  all 15 headless scripts and all long service checks before release builds.
+  Set `GODOT_BIN` when Godot is not on PATH. The runner reports per-script
+  timings, rejects unknown modes and stops with the failed child's exit code.
+  Individual scripts without flags retain full service coverage. Fast
+  schedule mode omits the two 360s live-service tests and the two 1200s
+  headway comparisons; fast preset mode uses 30s rather than Montreal's
+  600s full-fleet soak. Fast terminal mode keeps all 18 wagon/orientation
+  fixtures and assertions, stopping at their existing reversal/arrival
+  thresholds instead of running the full 120s each. Graphical checks remain
+  separate and require a display. See [guide](./docs/guide.md#vérifier).
+- Dispatcher calls always subdivide at 1/60s; increasing the test's outer
+  timestep does not eliminate simulation work. Keep sustained headway,
+  deadlock and full-fleet regressions in extended coverage rather than
+  arbitrarily shortening them.
 - Intersection tests run six simulated minutes per scenario and can take several
   real minutes. A selector after `--` filters labels, for example `-- Screenshot`.
+  Unmatched selectors fail instead of reporting success without exercising
+  anything. Preset selectors are `jr-east`/`montreal`; `--fast` and
+  `render-only` alone run both presets, and cannot be combined.
 - Intersection checks cover full-train moving gaps, both directions, continued
   arrivals in the second half, shared terminals, nearby junctions, three lines,
   busy single-line termini and a layout reproducing the reported screenshot.
@@ -491,6 +506,122 @@ godot --headless --path . --export-release "Web" dist/web/index.html
   Windows log-file path if specifying one.
 
 ## Recent work and verification record
+
+### Smoke-suite review and runtime refactoring (2026-11-07)
+
+- Reviewed all 17 smoke scripts and measured all 15 headless scripts before
+  editing. Main bottlenecks: presets 233.398s, schedule 101.422s,
+  intersections 96.934s, terminal 25.229s and layout 23.572s.
+  User approved fast PRs/Pages and full extended checks for releases.
+  [pages.yml](./.github/workflows/pages.yml) and
+  [releases.yml](./.github/workflows/releases.yml) now share
+  [run_smoke.sh](./tests/run_smoke.sh), adding editing, loops, train controls
+  and urban coverage to CI, plus intersections before releases.
+- Removed the unrelated 600s regulation warmup by spawning its direct fixture.
+  Platform geometry checks reuse each closed boundary, avoid successful
+  diagnostic formatting and skip the identical second open-route circuit.
+  Loop directions and every wagon/stop/passenger sample remain covered.
+  Layout fitting loads/builds each preset once for the four viewport checks.
+  Preset menu loading uses 2s rather than another redundant 30s simulation
+  and explicitly checks that service starts. Train controls wait for actual
+  fleet counts with the original maximum deadlines. Urban math checks no
+  longer await render frames headlessly; graphical synchronization is intact.
+  Production simulation code is unchanged.
+- Measured, passed with
+  `GODOT_BIN=/Applications/Godot.app/Contents/MacOS/Godot bash tests/run_smoke.sh smoke`:
+  14 scripts in 75.870s. The previous ten-script CI selection took 396.516s:
+  80.9% faster despite broader quick coverage. Passed the same command with
+  `extended`: 15 scripts in 473.917s versus the 515.280s full baseline,
+  an 8.0% reduction without shortening the sustained release regressions.
+  Headway standard deviation remained regulated 0.181s vs unregulated
+  6.864s; the 25% improvement assertion passed. Timings are local observations,
+  not cross-machine performance guarantees. Expected layout/transfer
+  rejection errors occurred; neither suite had script/parser errors.
+- Passed using the same Godot executable:
+  `--path . --script res://tests/<test>_smoke.gd --audio-driver Dummy` for
+  urban (2.367s), interface (6.017s), visual (3.211s) and train_visual (2.193s).
+  All four actual graphical/pixel checks passed. Named PNG captures cleaned.
+  Runner manifests/default mode, missing executable, invalid modes and
+  child-failure propagation were verified. Actual schedule/preset/terminal
+  invalid arguments and unmatched intersection selectors exited 1;
+  preset `-- render-only` ran both presets successfully. The initial runner
+  harness used nonexistent `/usr/bin/echo`; corrected to `/bin/echo` and
+  reran successfully.
+- Passed: `bash -n tests/run_smoke.sh`, Ruby YAML parsing,
+  `actionlint .github/workflows/pages.yml .github/workflows/releases.yml`,
+  project import and `git diff --check`. actionlint was missing; installed
+  1.7.12 temporarily for validation, then cleaned.
+  Fresh exports passed with `/Applications/Godot.app/Contents/MacOS/Godot`:
+  `--headless --editor --path . --quit`,
+  `--headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  `--headless --path . --export-release "macOS" dist/Metro-macOS.zip`.
+  Verified refreshed modification times, Windows PE x86-64 and Mac archive
+  integrity, app executable and PCK. No export script/parser errors.
+  No Actions run, platform installation/runtime or Gatekeeper checks.
+  Release and smoke-suite changes included in the subsequent commit below.
+
+### Committing releases and smoke refactoring (2026-11-07)
+
+- Committed the six-platform release workflow, export presets, shared fast/
+  extended test runner, smoke refactoring and related documentation together.
+  No push. Prior full-suite, graphical and workflow validation above remains
+  applicable; tests were not rerun for this commit-only task.
+- Fresh pre-commit builds passed using
+  `/Applications/Godot.app/Contents/MacOS/Godot`:
+  `--headless --editor --path . --quit`,
+  `--headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  `--headless --path . --export-release "macOS" dist/Metro-macOS.zip`.
+  Verified fresh modification times, Windows PE x86-64 and Mac ZIP integrity,
+  executable and PCK; no script/parser errors. `git diff --check` passed.
+  Actions, Android SDK export, platform installation and Gatekeeper checks
+  remain unverified as detailed above.
+
+### Manual six-platform GitHub releases (2026-11-07)
+
+- Added [releases.yml](./.github/workflows/releases.yml) and a Linux/macOS
+  Godot setup composite action. Manual version input creates a new v-prefixed
+  tag at the selected commit; existing tags and invalid versions are rejected.
+  All smoke tests and matrix builds must pass before publication. Assets:
+  Windows ZIP, universal macOS ZIP, Linux executable tar.gz, Web ZIP, unsigned
+  Android APK and unsigned iOS Xcode project ZIP, plus SHA256SUMS.txt.
+  Android uses Java 17 and SDK 35/build-tools 35.0.1 without a Gradle build.
+  iOS uses project-only export with explicit placeholder team 0000000000.
+  Pages deployment remains unchanged. Usage and signing limits are in
+  [docs/guide.md](./docs/guide.md#releases-github).
+- Added Linux/Android/iOS presets with the existing bundled-layout and
+  development-resource exclusion rules. Extended
+  [branding_smoke.gd](./tests/branding_smoke.gd) to check all six presets,
+  Linux embedded data, Android icon/unsigned APK and iOS project-only mode.
+- Passed: `actionlint .github/workflows/pages.yml .github/workflows/releases.yml`,
+  Ruby YAML parsing, `bash -n` on every workflow/composite shell step, and
+  execution of the actual version-validation step with valid/malformed inputs.
+  actionlint was initially absent and installed in isolated task storage;
+  Python YAML parsing lacked PyYAML, so validation used existing Ruby YAML.
+- Passed using `/Applications/Godot.app/Contents/MacOS/Godot`:
+  `--headless --editor --path . --quit`;
+  `--headless --path . --script res://tests/<test>_smoke.gd` for simulation,
+  schedule, terminal, audio, interface, branding, localization, layout,
+  transfer and preset. Branding rerun after adding the preset assertions.
+  Negative layout/transfer errors were intentional; all ten scripts passed.
+- Fresh exports passed with the same executable:
+  `--headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  `--headless --path . --export-release "macOS" dist/Metro-macOS.zip`,
+  `--headless --path . --export-release "Linux" dist/Metro.x86_64`,
+  `--headless --path . --export-release "Web" dist/web/index.html`,
+  `--headless --path . --export-release "iOS" dist/ios/Metro.zip`.
+  Verified Windows PE x86-64, Linux ELF x86-64, Mac ZIP integrity, nonempty
+  Web runtime files and iOS project.pbxproj/PCK. Executed the exact workflow
+  export/packaging shell step for those five targets with a temporary 0.0.0
+  asset label; archive integrity checks passed.
+- Local Android export failed because Java SDK settings and Android
+  platform-tools/build-tools are absent. The workflow provisions these
+  explicitly, but its Android job still needs a real Actions run.
+  Godot also prints missing local Android build-tools on editor imports;
+  iOS export succeeded with an engine warning about boot_splash/fullsize.
+  No GitHub workflow/publication, signed mobile installation, platform runtime
+  or Gatekeeper checks performed. No commit or push. Temporary packaging
+  assets/reference downloads cleaned. Local documentation links and
+  `git diff --check` passed.
 
 ### Mobile two-finger navigation (2026-11-07)
 

@@ -33,7 +33,7 @@ func _run() -> void:
 	second.max_trains = 2
 	second.dispatch_rate = 8.0
 	second.dwell_time = 0.1
-	dispatcher.process(100.0, false)
+	_wait_for_fleets(dispatcher, [4, 2], 100.0)
 	_check(dispatcher.route_capacity(first) > 2 and dispatcher.train_limit(first) == 4, "Long two-station routes must support more than two trains.")
 	_check(_count(dispatcher, 0) == 4 and _count(dispatcher, 1) == 2, "Independent lines must respect their manual service caps.")
 	main.call("_select_line", 0)
@@ -47,12 +47,12 @@ func _run() -> void:
 			break
 	slider.value = 1.0
 	_check(first.max_trains == 1 and _count(dispatcher, 0) == 4 and dispatcher.metros.has(independent_train), "Reducing a limit must leave running and independent trains undisturbed.")
-	dispatcher.process(80.0, false)
+	_wait_for_fleets(dispatcher, [1, 2], 80.0)
 	_check(_count(dispatcher, 0) == 1 and _count(dispatcher, 1) == 2 and dispatcher.metros.has(independent_train), "Surplus trains must retire at termini without redispatching independent lines.")
 	var kept := dispatcher.metros[0]
 	slider.value = 3.0
 	_check(dispatcher.metros.has(kept), "Raising a limit must not interrupt existing trains.")
-	dispatcher.process(80.0, false)
+	_wait_for_fleets(dispatcher, [3, 2], 80.0)
 	_check(_count(dispatcher, 0) == 3 and _count(dispatcher, 1) == 2, "Raising the manual limit must allow further service.")
 	main.call("_select_line", 1)
 	_check(slider.value == 2.0, "Switching lines must restore their independent limit.")
@@ -133,6 +133,21 @@ func _count(dispatcher: TransitDispatcher, line_id: int) -> int:
 			total += 1
 	return total
 
+func _wait_for_fleets(dispatcher: TransitDispatcher, expected: Array[int], timeout: float) -> void:
+	var elapsed := 0.0
+	while true:
+		var ready := true
+		for line_id in range(expected.size()):
+			ready = ready and _count(dispatcher, line_id) == expected[line_id]
+		if ready:
+			return
+		if elapsed >= timeout:
+			break
+		var step := minf(1.0, timeout - elapsed)
+		dispatcher.process(step, false)
+		elapsed += step
+	_check(false, "Fleet setup must reach %s within %.0f simulated seconds." % [expected, timeout])
+
 func _test_loop_limit() -> void:
 	var graph := TransitGraph.new()
 	for position: Vector2 in [Vector2.ZERO, Vector2(576, 0), Vector2(576, 576), Vector2(0, 576)]:
@@ -145,7 +160,7 @@ func _test_loop_limit() -> void:
 	var dispatcher := TransitDispatcher.new(graph)
 	dispatcher.add_line(line)
 	dispatcher.rebuild_routes()
-	dispatcher.process(240.0, false)
+	_wait_for_fleets(dispatcher, [3], 240.0)
 	_check(dispatcher.metros.size() == 3, "The limit must count trains in both loop directions together (actual %s)." % dispatcher.metros.size())
 	_check(dispatcher.route_capacity(line) > 3, "Loop capacity must reflect its two physical circuits.")
 

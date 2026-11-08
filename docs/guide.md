@@ -319,6 +319,7 @@ mkdir -p dist/web
 godot --headless --editor --path . --quit
 godot --headless --path . --export-release "Windows Desktop" dist/Metro.exe
 godot --headless --path . --export-release "macOS" dist/Metro-macOS.zip
+godot --headless --path . --export-release "Linux" dist/Metro.x86_64
 godot --headless --path . --export-release "Web" dist/web/index.html
 ```
 
@@ -330,6 +331,14 @@ godot --headless --path . --export-release "Web" dist/web/index.html
   Pour l'essayer : `python3 -m http.server 8000 --directory dist/web`, puis
   ouvrez `http://localhost:8000/`. Un premier clic peut être nécessaire pour le son.
   La musique générée utilise le mode audio Stream dans le navigateur.
+- **Linux** : exécutable x86_64 avec les données du jeu intégrées.
+- **Android** : APK ARMv7 / ARM64 non signé. Il faut Java 17, les outils du
+  SDK Android et les chemins correspondants dans les réglages de Godot.
+  L'APK doit être signé avant installation.
+- **iOS** : projet Xcode avec les données du jeu et les bibliothèques du moteur.
+  Le preset exporte uniquement le projet, sans IPA ni signature Apple.
+  Remplacez l'identifiant d'équipe provisoire `0000000000` par votre équipe
+  dans Xcode avant de signer et d'installer.
 
 Les tests, captures de documentation et exports précédents sont exclus des
 builds. Gardez l'import ETC2/ASTC activé pour les exports ARM64.
@@ -337,20 +346,34 @@ builds. Gardez l'import ETC2/ASTC activé pour les exports ARM64.
 ### Vérifier
 
 ```sh
-godot --headless --path . --script res://tests/simulation_smoke.gd
-godot --headless --path . --script res://tests/schedule_smoke.gd
-godot --headless --path . --script res://tests/interface_smoke.gd
-godot --headless --path . --script res://tests/branding_smoke.gd
-godot --headless --path . --script res://tests/localization_smoke.gd
-godot --headless --path . --script res://tests/layout_smoke.gd
-godot --headless --path . --script res://tests/transfer_smoke.gd
-godot --headless --path . --script res://tests/preset_smoke.gd
-godot --headless --path . --script res://tests/audio_smoke.gd
+bash tests/run_smoke.sh smoke
+bash tests/run_smoke.sh extended
 godot --path . --script res://tests/visual_smoke.gd --audio-driver Dummy
+godot --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy
+godot --path . --script res://tests/interface_smoke.gd --audio-driver Dummy
+godot --path . --script res://tests/urban_smoke.gd --audio-driver Dummy
 ```
 
-Le test visuel nécessite un écran. La liste complète des validations et les
-derniers résultats figurent dans [MEMORY.md](../MEMORY.md#validation-and-delivery).
+Le runner affiche le temps de chaque script et s'arrête à la première erreur.
+Si Godot n'est pas dans le `PATH`, définissez `GODOT_BIN` avec le chemin de
+l'exécutable. Le mode `smoke` est le mode par défaut et celui des PR et de Pages.
+Il exécute 14 scripts headless : géométrie, édition, interface, audio,
+sauvegarde, partage, presets et service. Les intersections prolongées sont
+réservées au mode `extended`.
+Les terminus conservent toutes les combinaisons de longueur et d'orientation,
+mais s'arrêtent dès que les seuils de retournements et d'arrêts sont atteints.
+Les presets simulent 30 secondes ; la capacité des flottes est toujours vérifiée.
+
+Le mode `extended`, obligatoire avant les releases, ajoute les six scénarios
+d'intersections de six minutes, les changements de service sur six minutes,
+la comparaison quantitative de régulation (vingt minutes par variante) et la
+mise en service complète des flottes de Montréal sur dix minutes. Les terminus
+conservent leurs deux minutes de simulation par combinaison.
+Les scripts individuels sans option conservent leur couverture complète.
+
+Les quatre commandes graphiques nécessitent un écran. La liste des validations
+et les derniers résultats figurent dans
+[MEMORY.md](../MEMORY.md#validation-and-delivery).
 
 ### Logo et captures
 
@@ -381,8 +404,7 @@ godot --path . --script res://scripts/tools/capture_readme.gd --audio-driver Dum
 
 Le workflow [pages.yml](../.github/workflows/pages.yml) :
 
-- vérifie simulation, horaires, terminus, audio, interface, logo, traductions,
-  sauvegardes, partage et presets, puis exporte le Web sur les PR vers `main` ;
+- exécute la suite `smoke` commune, puis exporte le Web sur les PR vers `main` ;
 - publie `dist/web/` à chaque push sur `main` ;
 - peut être relancé avec **Actions → Build and deploy Metro to Pages →
   Run workflow**, sur `main`.
@@ -394,6 +416,35 @@ les sauvegardes locales. Les exports Windows/macOS conservent Metro demo.
 L'URL du site et le résultat de chaque publication apparaissent dans le
 déploiement GitHub Actions. Un commit local seul ne publie pas le site :
 il faut le pousser sur `main` ou lancer le workflow.
+
+## Releases GitHub
+
+Le workflow [releases.yml](../.github/workflows/releases.yml) est distinct du
+déploiement Pages. Pour publier une version :
+
+1. Rendez le workflow disponible sur la branche par défaut du dépôt.
+2. Dans **Actions → Build and publish Metro release → Run workflow**,
+   choisissez la branche à publier et saisissez une version, par exemple
+   `1.0.0` ou `v1.0.0`.
+3. Le workflow vérifie le projet, construit les six cibles puis publie une
+   release liée au commit choisi, sous le tag `v1.0.0`. Un tag déjà existant
+   est refusé ; aucun export échoué ne déclenche de publication.
+
+La release contient les archives Windows x86_64, macOS universel, Linux
+x86_64 et Web, un APK Android non signé, un projet Xcode iOS non signé et
+un fichier `SHA256SUMS.txt`. La version saisie est intégrée aux exports.
+Windows et Linux embarquent leurs données ; l'archive Linux conserve le droit
+d'exécution. L'archive Web doit être servie par HTTP.
+
+Les versions mobiles ne sont pas prêtes à installer : Android nécessite une
+signature et iOS une compilation et une signature dans Xcode. Aucun certificat,
+keystore ou compte Apple n'est utilisé par ce workflow. L'app macOS reste
+signée ad hoc et non notariée.
+
+Les builds sont également conservés pendant sept jours dans les artifacts
+du workflow. La publication est d'abord créée en brouillon, puis rendue publique
+après l'envoi des fichiers ; si cette étape échoue, inspectez le brouillon
+avant de réessayer. Ce workflow ne modifie pas le site GitHub Pages.
 
 ## Repères du projet
 

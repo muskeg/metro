@@ -30,24 +30,33 @@ func _service(graph: TransitGraph, ids: Array[int], id: int) -> TransitLine:
 	return line
 
 func _run() -> void:
-	if OS.get_cmdline_user_args().has("--platforms-only"):
+	var args := OS.get_cmdline_user_args()
+	if args.size() > 1 or (not args.is_empty() and args[0] not in ["--fast", "--platforms-only"]):
+		push_error("Usage: schedule_smoke.gd [-- --fast|--platforms-only]")
+		quit(1)
+		return
+	if args.has("--platforms-only"):
 		_test_continuous_platforms()
 		if not _failed:
 			print("Continuous platform smoke passed.")
 		quit(1 if _failed else 0)
 		return
 	_test_independent_lines()
-	_test_service(false)
-	_test_service(true)
+	if not args.has("--fast"):
+		_test_service(false)
+		_test_service(true)
 	_test_safety_and_motion()
 	_test_station_approach()
 	_test_passengers()
 	_test_continuous_platforms()
 	_test_regulation()
-	var regulated := _headway_variation(true)
-	var unregulated := _headway_variation(false)
-	print("Headway standard deviation: regulated %.3fs, unregulated %.3fs." % [regulated, unregulated])
-	_check(regulated < unregulated * 0.75, "Feedback must reduce measured headway variation by at least 25%, not merely change train speeds.")
+	if not args.has("--fast"):
+		var regulated := _headway_variation(true)
+		var unregulated := _headway_variation(false)
+		print("Headway standard deviation: regulated %.3fs, unregulated %.3fs." % [regulated, unregulated])
+		_check(regulated < unregulated * 0.75, "Feedback must reduce measured headway variation by at least 25%, not merely change train speeds.")
+	else:
+		print("Fast schedule checks: extended live-service and sustained headway comparisons not run.")
 	if _failed:
 		quit(1)
 	else:
@@ -320,7 +329,8 @@ func _test_continuous_platforms() -> void:
 			if not loop:
 				var visible: PackedVector2Array = route["centerline"]
 				_check(visible[0].distance_to(graph.stations[0].position) < 0.01 and visible[visible.size() - 1].distance_to(graph.stations[3].position) < 0.01, "Visible line caps must stay at the terminal markers for every train length.")
-			for direction: int in [1, -1]:
+			# Open routes already contain both directions; only loops have a second circuit.
+			for direction: int in ([1, -1] if loop else [1]):
 				var circuit := TrackGeometry.route_for_direction(route, direction)
 				var stops: PackedFloat32Array = circuit["stops"]
 				for stop_index in range(stops.size()):
@@ -329,6 +339,8 @@ func _test_continuous_platforms() -> void:
 					train.distance = stop_distance
 					train.wagon_count = wagons
 					var visit := StationVisit.new(train, circuit, 3.0, false)
+					var boundary := visit.platform.duplicate()
+					boundary.append(boundary[0])
 					var station_index := stop_index
 					if loop:
 						if direction < 0:
@@ -358,14 +370,13 @@ func _test_continuous_platforms() -> void:
 						for passenger in range(visit.boarding if entering else visit.alighting):
 							var timing := visit._passenger_walk_timing(passenger, entering)
 							var previous := Vector2.ZERO
-							var boundary := visit.platform.duplicate()
-							boundary.append(boundary[0])
 							for sample in range(5):
 								visit.elapsed = timing.x + timing.y * sample / 4.0
 								var position := visit.passenger_position(passenger, entering)
 								_check(_platform_contains(position, visit.platform), "Passengers must remain on the platform throughout boarding, alighting and waiting.")
 								var clearance := position.distance_to(TrackGeometry.closest_point(boundary, position))
-								_check(clearance >= StationVisit.PASSENGER_RADIUS - 0.001, "Whole passenger circles must clear every platform edge (wagons %d, loop %s, stop %d, passenger %d, clearance %.4f)." % [wagons, loop, stop_index, passenger, clearance])
+								if clearance < StationVisit.PASSENGER_RADIUS - 0.001:
+									_check(false, "Whole passenger circles must clear every platform edge (wagons %d, loop %s, stop %d, passenger %d, clearance %.4f)." % [wagons, loop, stop_index, passenger, clearance])
 								if sample > 0:
 									var speed := position.distance_to(previous) / (timing.y / 4.0)
 									_check(speed <= StationVisit.PASSENGER_SPEED + 0.02, "Passengers must walk at no more than four world units per second, even at short dwells.")
@@ -396,7 +407,7 @@ func _test_regulation() -> void:
 	var dispatcher := TransitDispatcher.new(graph)
 	dispatcher.add_line(line)
 	dispatcher.rebuild_routes()
-	dispatcher.process(600.0, false)
+	_check(dispatcher._spawn_if_clear(line, false), "Regulation fixture must spawn an outbound train.")
 	var route: Dictionary = dispatcher.routes[0]
 	var stops: PackedFloat32Array = route["stops"]
 	var train: Metro
@@ -404,6 +415,9 @@ func _test_regulation() -> void:
 		if candidate.travel_direction == 1:
 			train = candidate
 			break
+	if train == null:
+		_check(false, "Regulation fixture must contain an outbound train.")
+		return
 	train.distance = stops[0]
 	train.next_stop_index = 1
 	train.at_station = true

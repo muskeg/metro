@@ -261,21 +261,22 @@ func _test_bundled_layout() -> void:
 			_check(offset.x <= (viewport.x - 64) * 0.5 + 0.01 and offset.y <= (viewport.y - 160) * 0.5 + 0.01, "Demo framing must fit every station on phone and minimum laptop viewports.")
 	_check(DirAccess.remove_absolute(store._path("Metro demo")) == OK, "Demo copy fixture cleanup must succeed.")
 	for path: String in StoreScript.BUNDLED_LAYOUTS:
+		main.call("_replace_layout", store.load_bundled_layout(path), true)
+		var points := PackedVector2Array()
+		for station: Station in main.get("graph").stations:
+			points.append(station.position)
+		for track: Track in main.get("graph").tracks:
+			points.append_array(TrackGeometry.anchors(main.get("graph"), track))
+		for route: Dictionary in main.get("dispatcher").routes.values():
+			points.append_array(route["points"])
+		var bounds := Rect2(points[0], Vector2.ZERO)
+		for point: Vector2 in points:
+			bounds = bounds.expand(point)
+		bounds = bounds.grow(24)
 		for viewport: Vector2i in [Vector2i(390, 640), Vector2i(760, 520), Vector2i(1180, 740), Vector2i(1920, 1080)]:
 			root.size = viewport
 			await process_frame
-			main.call("_replace_layout", store.load_bundled_layout(path), true)
-			var points := PackedVector2Array()
-			for station: Station in main.get("graph").stations:
-				points.append(station.position)
-			for track: Track in main.get("graph").tracks:
-				points.append_array(TrackGeometry.anchors(main.get("graph"), track))
-			for route: Dictionary in main.get("dispatcher").routes.values():
-				points.append_array(route["points"])
-			var bounds := Rect2(points[0], Vector2.ZERO)
-			for point: Vector2 in points:
-				bounds = bounds.expand(point)
-			bounds = bounds.grow(24)
+			main.get("_fit_window_button").pressed.emit()
 			var camera: Camera2D = main.get("camera")
 			var used := bounds.size * camera.zoom
 			var available := Vector2(viewport) - Vector2(64, 192)

@@ -13,9 +13,19 @@ func _check(condition: bool, message: String) -> void:
 
 func _run() -> void:
 	var selectors := OS.get_cmdline_user_args()
-	if selectors.is_empty() or selectors.has("jr-east"):
+	for selector in selectors:
+		if selector not in ["jr-east", "montreal", "render-only", "--fast"]:
+			push_error("Unknown preset selector: " + selector)
+			quit(1)
+			return
+	if selectors.has("render-only") and selectors.has("--fast"):
+		push_error("Preset render-only and --fast modes are mutually exclusive.")
+		quit(1)
+		return
+	var all_presets := not selectors.has("jr-east") and not selectors.has("montreal")
+	if all_presets or selectors.has("jr-east"):
 		await _test_preset("res://layouts/jr_east.json", true)
-	if selectors.is_empty() or selectors.has("montreal"):
+	if all_presets or selectors.has("montreal"):
 		await _test_preset("res://layouts/montreal.json", false)
 	if _failed:
 		quit(1)
@@ -94,9 +104,11 @@ func _test_preset(path: String, jr_east: bool) -> void:
 			_check(dispatcher.route_capacity(line) >= 2 and dispatcher.service_fleet(line) == 2, "The new Tokaido and Shonan-Shinjuku services must support both trains.")
 		if not jr_east:
 			print("%s: capacity %d, service fleet %d, headway %.1fs." % [line.display_name, dispatcher.route_capacity(line), dispatcher.service_fleet(line), dispatcher.departure_headway(line)])
+			_check(dispatcher.service_fleet(line) == line.max_trains, "Requested Montréal fleets must be sustainable, not just slider limits.")
 	start = Time.get_ticks_usec()
 	var render_only := OS.get_cmdline_user_args().has("render-only")
-	var simulation_seconds := 30.0 if jr_east else 600.0
+	var fast := OS.get_cmdline_user_args().has("--fast")
+	var simulation_seconds := 30.0 if jr_east or fast else 600.0
 	for frame in range(1 if render_only else int(simulation_seconds * 60)):
 		dispatcher.process(1.0 / 60.0, false)
 	var simulation_ms := (Time.get_ticks_usec() - start) / 1000.0
@@ -109,9 +121,8 @@ func _test_preset(path: String, jr_east: bool) -> void:
 		_check(count > 0 and count <= line.max_trains, "Every preset path must dispatch within its fleet limit: " + line.display_name)
 		if jr_east and line.id >= 7 and not render_only:
 			_check(count == 2, "Both trains must actually enter service on each new southern JR route.")
-		if not jr_east and not render_only:
+		if not jr_east and not render_only and not fast:
 			_check(count == line.max_trains, "Montréal must actually dispatch six trains per line, except two on yellow: " + line.display_name)
-			_check(dispatcher.service_fleet(line) == line.max_trains, "Requested Montréal fleets must be sustainable, not just slider limits.")
 	if not render_only:
 		_check(dispatcher.arrival_count > 0, "Preset simulation must continue making station calls.")
 	print("%s: simulation completed in %.1f ms; loading menu/render caches." % [path, simulation_ms])
@@ -147,7 +158,8 @@ func _test_preset(path: String, jr_east: bool) -> void:
 	_check(main.get("_line_label").text == lines[restored["active_line"]].display_name, "Line settings must display the factual service name.")
 	var tab: Button = main.get("_line_selector").get_child(restored["active_line"])
 	_check(tab.tooltip_text == lines[restored["active_line"]].display_name, "Compact tabs must expose service names in their tooltips.")
-	main.get("dispatcher").process(2.0 if render_only else 30.0, false)
+	main.get("dispatcher").process(2.0, false)
+	_check(not main.get("dispatcher").metros.is_empty(), "Menu-loaded presets must start service before day/night checks.")
 	main.set("paused", true)
 	for phase: float in [0.5, 0.0]:
 		main.set("time_of_day", phase)
@@ -164,6 +176,8 @@ func _test_preset(path: String, jr_east: bool) -> void:
 	_check(main.get("graph").stations.is_empty() and main.get("dispatcher").metros.is_empty(), "Clear must fully release large-network state.")
 	main.queue_free()
 	await process_frame
+	if fast and not jr_east:
+		print("Fast Montréal checks: full-fleet 600s soak not run.")
 	print("%s: %d stations, %d physical tracks, %d playable paths, %d trains; parse %.1f ms, route build %.1f ms, %s simulation %.1f ms, menu load/render caches %.1f ms." % [path, graph.stations.size(), graph.tracks.size(), lines.size(), dispatcher.metros.size(), parse_ms, build_ms, "one-tick" if render_only else "%ds" % simulation_seconds, simulation_ms, menu_load_ms])
 
 func _test_montreal_shape(graph: TransitGraph, names: Dictionary) -> void:
