@@ -6,7 +6,7 @@ Last updated: 2026-11-07.
 
 This is the shared context handoff for Metro agents. Follow [AGENTS.md](./AGENTS.md)
 at session start and completion. Check the source before relying on these notes.
-Detailed controls and commands: [README.md](./README.md). Decisions and rationale:
+Detailed controls and commands: [docs/guide.md](./docs/guide.md). Decisions and rationale:
 [DESIGN.md](./DESIGN.md). Original requirements: [systemprompt.md](./systemprompt.md).
 
 ## Current product decisions
@@ -28,14 +28,14 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
   session state. Browser storage can be cleared/evicted; warn when
   `OS.is_userfs_persistent()` is false, never promise retention when true.
   Names are at most 64 characters, files at most 16 MiB. See
-  [README.md](./README.md) and [DESIGN.md](./DESIGN.md) for storage details.
+  [docs/guide.md](./docs/guide.md) and [DESIGN.md](./DESIGN.md) for storage details.
   Menu Export/Import shares portable version-1 JSON: native file dialogs,
   browser download/file upload. Current map exports; import validates then
   confirms/fits, never overwrites local saves automatically. Use Save afterwards.
   Same validator enforces bounded JSON/collections/coordinates/fleets/geometry,
   exact grid, unique positions and safe track/train clearance before rendering.
   No scripts, external resources or paths taken from file content. Exact
-  safety limits and platform caveats documented in README/DESIGN.
+  safety limits and platform caveats documented in docs/guide.md and DESIGN.md.
 - Desktop launches open the bundled **Metro demo**: 16 stations, three lines,
   one loop, crossings only at interchanges. Load always offers the immutable
   included original, separately from user saves with identical names; Save
@@ -67,7 +67,7 @@ Detailed controls and commands: [README.md](./README.md). Decisions and rational
   Tokyo replaces the former regional JR East map; central station sequences
   are cross-checked against public route tables, with local/rapid patterns and
   cropped endpoints explicit. Sources, exclusions and projected/continuation labels are documented in
-  [README.md](./README.md) and generated JSON metadata.
+  [docs/guide.md](./docs/guide.md) and generated JSON metadata.
 - Minimalist map: off-white matte noon, cool dawn, peach sunset, blue hour and
   a very dark blue night gradient. World-anchored subtle procedural grain is
   filtered at overview zoom; no glass reflections. No station shadows.
@@ -492,9 +492,26 @@ godot --headless --path . --export-release "Web" dist/web/index.html
 
 ## Recent work and verification record
 
+### Simplified README and moved full guide (2026-11-07)
+
+- Replaced the implementation-heavy French home page with a short, welcoming
+  introduction, a direct browser-play link, current screenshots, and pointers
+  to the complete guide and design notes.
+- Preserved the former README content in [docs/guide.md](./docs/guide.md);
+  adjusted its relative links and image paths for the new location.
+- Validation passed: `/Applications/Godot.app/Contents/MacOS/Godot --headless
+  --editor --path . --quit`; `/Applications/Godot.app/Contents/MacOS/Godot
+  --headless --path . --export-release "Windows Desktop" dist/Metro.exe`;
+  `/Applications/Godot.app/Contents/MacOS/Godot --headless --path .
+  --export-release "macOS" dist/Metro-macOS.zip`. `file dist/Metro.exe`
+  identified a PE32+ x86-64 executable, and `unzip -t dist/Metro-macOS.zip`
+  found no archive errors. A local README/guide link check and
+  `git --no-pager diff --check` also passed. Smoke tests were not run for this
+  documentation-only change.
+
 ### README refresh, current screenshots and commit preparation (2026-11-07)
 
-- Reviewed [README.md](./README.md) against the current presets, camera actions,
+- Reviewed [docs/guide.md](./docs/guide.md) against the current presets, camera actions,
   sharing/menu controls, branding and [Pages workflow](./.github/workflows/pages.yml).
   Added logo preview, current zoom/fit/delete-line/save/share command rows,
   corrected the fitted navigation floor and geographical-import wording,
