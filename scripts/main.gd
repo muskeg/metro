@@ -40,6 +40,17 @@ var _previous_arrival_count: int = 0
 var _panning: bool = false
 var _left_pan_active: bool = false
 var _space_down: bool = false
+var _touch_points: Dictionary = {}
+var _touch_pair := Vector2i(-1, -1)
+var _touch_navigation_active := false
+var _touch_navigation_sequence := false
+var _touch_previous_center := Vector2.ZERO
+var _touch_previous_distance := 0.0
+var _touch_world_sequence := false
+var _touch_world_pending := false
+var _touch_world_interaction_started := false
+var _touch_world_index := -1
+var _touch_pending_position := Vector2.ZERO
 var _followed_train: Metro = null
 var _connect_drag_source_id: int = -1
 var _drawn_points := PackedVector2Array()
@@ -226,6 +237,15 @@ func _process(delta: float) -> void:
 func _input(event: InputEvent) -> void:
 	if (event is InputEventMouseMotion and not event.relative.is_zero_approx()) or (event is InputEventMouseButton and event.pressed) or (event is InputEventKey and event.pressed) or event is InputEventScreenTouch or event is InputEventScreenDrag or event is InputEventGesture:
 		_wake_interface()
+	if event is InputEventScreenTouch:
+		_handle_screen_touch(event as InputEventScreenTouch)
+		return
+	if event is InputEventScreenDrag:
+		_handle_screen_drag(event as InputEventScreenDrag)
+		return
+	if (_touch_navigation_sequence or _touch_world_sequence) and event is InputEventMouse:
+		get_viewport().set_input_as_handled()
+		return
 	if event is InputEventKey and event.pressed and not event.echo and _ui_hidden and event.keycode in [KEY_H, KEY_ESCAPE]:
 		_toggle_ui()
 		get_viewport().set_input_as_handled()
@@ -293,6 +313,112 @@ func _input(event: InputEvent) -> void:
 
 func _event_world_position(event: InputEventMouse) -> Vector2:
 	return world_view.get_global_transform_with_canvas().affine_inverse() * event.position
+
+func _handle_screen_touch(event: InputEventScreenTouch) -> void:
+	if event.pressed:
+		_touch_points[event.index] = event.position
+		if _touch_points.size() == 1 and not _screen_point_over_ui(event.position):
+			_touch_world_sequence = true
+			_touch_world_pending = true
+			_touch_world_interaction_started = false
+			_touch_world_index = event.index
+			_touch_pending_position = event.position
+		if not _touch_navigation_sequence and _touch_points.size() == 2:
+			var touch_ids: Array = _touch_points.keys()
+			var first_position: Vector2 = _touch_points[touch_ids[0]]
+			var second_position: Vector2 = _touch_points[touch_ids[1]]
+			if not _screen_point_over_ui(first_position) and not _screen_point_over_ui(second_position):
+				_touch_pair = Vector2i(touch_ids[0], touch_ids[1])
+				_touch_navigation_sequence = true
+				_touch_navigation_active = true
+				_touch_previous_center = (first_position + second_position) * 0.5
+				_touch_previous_distance = first_position.distance_to(second_position)
+				_panning = true
+				_touch_world_sequence = false
+				_touch_world_pending = false
+				_touch_world_interaction_started = false
+				_touch_world_index = -1
+				_cancel_gesture()
+				_stop_following()
+	elif _touch_points.has(event.index):
+		_touch_points.erase(event.index)
+		if _touch_world_sequence and event.index == _touch_world_index:
+			var world_position := _screen_to_world_position(event.position)
+			if _touch_world_pending:
+				_begin_world_interaction(_screen_to_world_position(_touch_pending_position))
+				_touch_world_interaction_started = true
+			if _touch_world_interaction_started:
+				_end_world_interaction(world_position)
+			_touch_world_sequence = false
+			_touch_world_pending = false
+			_touch_world_interaction_started = false
+			_touch_world_index = -1
+		if _touch_navigation_sequence:
+			if event.index == _touch_pair.x or event.index == _touch_pair.y:
+				_touch_navigation_active = false
+				_panning = false
+			if _touch_points.is_empty():
+				_touch_navigation_sequence = false
+				_touch_pair = Vector2i(-1, -1)
+				_touch_previous_distance = 0.0
+	if _touch_navigation_sequence:
+		get_viewport().set_input_as_handled()
+
+func _handle_screen_drag(event: InputEventScreenDrag) -> void:
+	if not _touch_points.has(event.index):
+		return
+	_touch_points[event.index] = event.position
+	if _touch_world_sequence and event.index == _touch_world_index:
+		if _touch_world_pending and event.position.distance_to(_touch_pending_position) >= 8.0:
+			_begin_world_interaction(_screen_to_world_position(_touch_pending_position))
+			_touch_world_pending = false
+			_touch_world_interaction_started = true
+		if _touch_world_interaction_started:
+			_update_touch_world_interaction(_screen_to_world_position(event.position))
+	if _touch_navigation_active and (_touch_pair.x == event.index or _touch_pair.y == event.index):
+		var first_position: Vector2 = _touch_points[_touch_pair.x]
+		var second_position: Vector2 = _touch_points[_touch_pair.y]
+		var center := (first_position + second_position) * 0.5
+		var distance := first_position.distance_to(second_position)
+		var center_delta := center - _touch_previous_center
+		if not center_delta.is_zero_approx():
+			camera.position -= center_delta / camera.zoom
+		if _touch_previous_distance > 0.0 and distance > 0.0:
+			_zoom_camera_at(distance / _touch_previous_distance, center)
+		_touch_previous_center = center
+		_touch_previous_distance = distance
+	if _touch_navigation_sequence:
+		get_viewport().set_input_as_handled()
+
+func _update_touch_world_interaction(world_position: Vector2) -> void:
+	if _editing_track_id >= 0:
+		_update_track_edit(world_position - _edit_pointer_offset)
+	elif _dragging_station_id >= 0:
+		_move_station_to(_dragging_station_id, world_position)
+	elif _connect_drag_source_id >= 0:
+		world_view.hover_pointer = world_position
+		if not _route_click_mode or not _near_handle(world_position, world_view.route_flip_position()):
+			_extend_stroke(world_position)
+
+func _screen_to_world_position(screen_position: Vector2) -> Vector2:
+	return world_view.get_global_transform_with_canvas().affine_inverse() * screen_position
+
+func _screen_point_over_ui(screen_position: Vector2) -> bool:
+	if _control_tree_contains_point(_ui_root, screen_position):
+		return true
+	return _restore_ui_button.is_visible_in_tree() and _restore_ui_button.get_global_rect().has_point(screen_position)
+
+func _control_tree_contains_point(node: Node, screen_position: Vector2) -> bool:
+	if node is Control:
+		var control := node as Control
+		if not control.is_visible_in_tree():
+			return false
+		if control.mouse_filter == Control.MOUSE_FILTER_STOP and control.get_global_rect().has_point(screen_position):
+			return true
+	for child: Node in node.get_children():
+		if _control_tree_contains_point(child, screen_position):
+			return true
+	return false
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey:
@@ -1934,6 +2060,12 @@ func _fit_window() -> void:
 func _zoom_camera(factor: float) -> void:
 	_wake_interface()
 	camera.zoom = (camera.zoom * factor).clamp(Vector2.ONE * _minimum_camera_zoom, Vector2.ONE * 6.0)
+
+func _zoom_camera_at(factor: float, screen_position: Vector2) -> void:
+	var world_position := _screen_to_world_position(screen_position)
+	_zoom_camera(factor)
+	var zoomed_world_position := _screen_to_world_position(screen_position)
+	camera.position += world_position - zoomed_world_position
 
 func _toggle_fullscreen() -> void:
 	var is_fullscreen := DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN

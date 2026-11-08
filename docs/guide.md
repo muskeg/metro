@@ -188,7 +188,7 @@ les menus ouverts et les gestes en cours restent visibles.
 | Action | Geste |
 | --- | --- |
 | Déplacer la vue | Glisser à deux doigts ; clic milieu ou Espace + glisser |
-| Zoomer | Boutons **− / +**, pincement sur le trackpad ou molette |
+| Zoomer | Boutons **− / +**, pincement tactile ou sur le trackpad, molette |
 | Ajuster le réseau à la fenêtre | Bouton à quatre coins au-dessus du bandeau des lignes |
 | Placer une station | Cliquer sur un espace libre, à l'emplacement de l'aperçu |
 | Déplacer une station | Glisser son centre |

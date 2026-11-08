@@ -492,6 +492,24 @@ godot --headless --path . --export-release "Web" dist/web/index.html
 
 ## Recent work and verification record
 
+### Mobile two-finger navigation (2026-11-07)
+
+- Added raw screen-touch tracking in [main.gd](./scripts/main.gd): two fingers
+  on the map pan by their midpoint movement and zoom by their distance change,
+  with zoom anchored beneath the gesture. Touches over interface controls
+  remain available to those controls. Starting a two-finger gesture cancels
+  pending edits and stops train following; single-finger map gestures defer
+  their action until movement or release to avoid placing a station when the
+  second finger starts a navigation gesture.
+- Extended [interface_smoke.gd](./tests/interface_smoke.gd) to cover touch pan,
+  pinch zoom, gesture cleanup and single-tap station placement. Updated
+  [docs/guide.md](./docs/guide.md) to explicitly include touch pinch zoom.
+- Validation passed: `/Applications/Godot.app/Contents/MacOS/Godot --headless
+  --path . --script res://tests/interface_smoke.gd`; editor import; fresh
+  Windows and macOS release exports. `file dist/Metro.exe` identified a PE32+
+  x86-64 executable and `unzip -t dist/Metro-macOS.zip` passed. No live mobile
+  browser/device test was run.
+
 ### README tone refinement (2026-11-07)
 
 - Adjusted [README.md](./README.md) to keep its concise, welcoming introduction
