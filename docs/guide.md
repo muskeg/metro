@@ -441,10 +441,6 @@ signature et iOS une compilation et une signature dans Xcode. Aucun certificat,
 keystore ou compte Apple n'est utilisé par ce workflow. L'app macOS reste
 signée ad hoc et non notariée.
 
-Le job Android installe explicitement `platform-tools`, `build-tools;35.0.1`
-et `platforms;android-35` : le paquet historique `tools`, proposé par défaut
-par l'action de configuration du SDK, n'est plus disponible.
-
 Les builds sont également conservés pendant sept jours dans les artifacts
 du workflow. La publication est d'abord créée en brouillon, puis rendue publique
 après l'envoi des fichiers ; si cette étape échoue, inspectez le brouillon
