@@ -2,27 +2,27 @@
 
 <img src="assets/branding/metro-logo.svg" alt="Logo Metro : un M de lignes orange, turquoise et violette" width="240">
 
-Un petit métro à dessiner, et tout le temps du monde pour le regarder.
-Reliez des stations, choisissez vos couleurs, puis laissez les trains circuler
-au fil du jour et de la nuit. Pas de score, pas de minuterie : juste le plaisir
-de voir votre réseau prendre vie.
+Metro est un jeu de création de réseaux de métro au rythme tranquille.
+Dessinez des lignes, reliez les stations et observez les trains circuler dans
+une ambiance qui évolue du jour à la nuit. Sans objectif imposé ni limite de
+temps, chacun peut façonner son réseau à son rythme.
 
-**[Jouer dans le navigateur](https://muskeg.github.io/metro/)**
+**[Jouer à Metro dans le navigateur](https://muskeg.github.io/metro/)**
 
 | Montréal, le jour | Montréal, la nuit |
 | --- | --- |
 | ![Un réseau de métro montréalais baigné de lumière](docs/images/metro-day.png) | ![Le même réseau et ses trains lumineux dans la nuit](docs/images/metro-night.png) |
 
-## Prenez place
+## Découvrir Metro
 
-La carte est déjà prête : promenez-vous, suivez une rame, ou ajoutez vos
-stations et vos lignes. Un clic sur **+** relie deux stations ; les trains
-partent ensuite dans les deux sens.
+Commencez par explorer le réseau proposé, suivre les trains ou apporter vos
+propres modifications. Vous pouvez aussi partir d'une carte vide ou découvrir
+les réseaux de Montréal et de Tokyo.
 
-Vous pouvez aussi partir d'une carte vide, ou essayer Montréal et Tokyo depuis
-le menu. Enregistrez votre réseau ou partagez-le quand vous le souhaitez.
+Enregistrez vos créations pour les retrouver plus tard, ou partagez-les avec
+d'autres personnes.
 
-## Pour aller plus loin
+## En savoir plus
 
 - [Guide de jeu et commandes](docs/guide.md) — aide, cartes, sauvegardes et partage.
 - [Développement](docs/guide.md#développement) — lancer le projet et les vérifications.

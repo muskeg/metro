@@ -492,6 +492,18 @@ godot --headless --path . --export-release "Web" dist/web/index.html
 
 ## Recent work and verification record
 
+### README tone refinement (2026-11-07)
+
+- Adjusted [README.md](./README.md) to keep its concise, welcoming introduction
+  while replacing overly familiar wording with a more composed and neutral tone.
+  The page remains focused on the game experience and links to the detailed
+  guide; no implementation detail was added.
+- Fresh Windows and macOS release exports completed with Godot 4.7.2.
+  `file dist/Metro.exe` identified a PE32+ x86-64 executable, and
+  `unzip -t dist/Metro-macOS.zip` found no archive errors. The local README and
+  guide link check and `git --no-pager diff --check` passed. Smoke tests were
+  not run for this documentation-only change.
+
 ### Simplified README and moved full guide (2026-11-07)
 
 - Replaced the implementation-heavy French home page with a short, welcoming
