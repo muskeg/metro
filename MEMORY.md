@@ -507,6 +507,31 @@ godot --headless --path . --export-release "Web" dist/web/index.html
 
 ## Recent work and verification record
 
+### Android SDK package setup correction (2026-11-07)
+
+- The current clean checkout still used `setup-android@v3` without a packages
+  override; the earlier local fix was absent. Reapplied it in
+  [releases.yml](./.github/workflows/releases.yml): explicitly install
+  `platform-tools build-tools;35.0.1 platforms;android-35`, excluding the
+  unavailable legacy `tools` package that caused reported run 42443264042
+  to fail. Removed the redundant subsequent sdkmanager installation.
+  Updated [guide](./docs/guide.md#releases-github); other targets unchanged.
+- Passed Ruby YAML parsing, exact SDK package-list assertions, `bash -n`
+  for every release-build shell step and `git diff --check`.
+  Fresh builds passed using `/Applications/Godot.app/Contents/MacOS/Godot`:
+  `--headless --editor --path . --quit`,
+  `--headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  `--headless --path . --export-release "macOS" dist/Metro-macOS.zip`.
+  Verified new modification times, Windows MZ header, Mac ZIP integrity,
+  app executable and PCK; no script/parser errors.
+- No game-code changes; smoke tests/actionlint not rerun. Actual Android
+  SDK installation/export and corrected GitHub Actions run remain unverified.
+  Fix committed with the related guide and this memory update; no push.
+  Repeated the exact import and Windows/macOS export commands above before
+  committing; both fresh outputs passed the same integrity checks, without
+  script/parser errors. Push and start a new workflow run from the fixed
+  revision, rather than rerunning the old failed revision.
+
 ### Smoke-suite review and runtime refactoring (2026-11-07)
 
 - Reviewed all 17 smoke scripts and measured all 15 headless scripts before
