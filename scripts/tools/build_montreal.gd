@@ -17,7 +17,10 @@ func _station(display_name: String, x: int, y: int) -> void:
 func _line(display_name: String, color: String, stations: Array[String]) -> void:
 	var line := TransitLine.new(lines.size(), Color(color))
 	line.display_name = display_name
-	line.max_trains = 2 if display_name.begins_with("4 ") else 6
+	# Yellow's three-stop shuttle only holds two trains at two wagons.
+	var yellow := display_name.begins_with("4 ")
+	line.max_trains = {"1 ": 10, "2 ": 12, "4 ": 2, "5 ": 6}[display_name.left(2)]
+	line.wagon_count = 2 if yellow else 3
 	line.dispatch_rate = 12
 	for station_name: String in stations:
 		assert(station_ids.has(station_name), "Missing station " + station_name)

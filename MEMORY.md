@@ -1,6 +1,6 @@
 # Metro - repository memory
 
-Last updated: 2026-11-07.
+Last updated: 2026-11-09.
 
 ## Read first
 
@@ -55,16 +55,34 @@ Detailed controls and commands: [docs/guide.md](./docs/guide.md). Decisions and 
   Web exports (including GitHub Pages) carry `montreal_startup` and instead
   open bundled Montreal on every launch; saved layouts remain untouched and
   all included presets stay accessible through Load.
-- Load also offers named real-network presets: Tokyo central JR (80 stations,
-  97 tracks, ten paths anchored by the full 30-station Yamanote loop; includes
+- Load also offers named real-network presets: Tokyo central JR (90 stations,
+  107 tracks, eleven paths anchored by the full 30-station Yamanote loop; includes
   Tokaido Tokyo–Odawara via Hiratsuka and Shonan-Shinjuku Akabane–Odawara
-  rapid / Akabane–Zushi local) and Montreal (68 stations,
+  rapid / Akabane–Zushi local, plus Tokyo Monorail Hamamatsucho–Haneda T2
+  along the bay) and Montreal (68 stations,
   69 tracks, four metro-only paths; no REM/exo, bus or projected connections).
-  Tokyo starts with `max_trains=2`; Montreal with 6 on green/orange/blue and 2
-  on yellow, all two-wagon trains. Desired interval 12s on Montreal allows
+  Tokyo fleets 10/8/4/6/4/4/4/8/6/6/4 (exactly the 64 cap) with three wagons;
+  Montreal 10/12/2/6 with three wagons except yellow at two (three wagons cap
+  yellow at one train; four wagons do not fit Montreal's compact diagonals).
+  Fleets are set in `build_jr_east.gd` `FLEETS` and `build_montreal.gd`
+  `_line`. Desired interval 12s on Montreal allows
   the requested fleets, progressively dispatched within existing service
   headway/capacity rules. Fleet ceilings remain editable.
   Original schematic coordinates, not copied artwork.
+  Tokyo uses 96px per schematic unit (`STATION_SPACING`; tightest grid
+  multiple keeping 2-unit gaps >= 122px for three wagons; 48 would fail).
+  Takadanobaba, Kamonomiya and Haneda T1 sit at half units to avoid short or
+  terminal-throat folds. Tokyo uses the wide station-numbering arrangement: a faceted Yamanote loop
+  with straight sides, balanced 45-degree shoulders and centered flat
+  Otsuka–Tabata / Shinagawa–Tamachi sections, a westbound Shinagawa–Ofuna
+  corridor and a compact northern fold toward Odawara.
+  Keihin-Tohoku's Oimachi/Omori/Kamata sit one 48px slot below the Tokaido
+  axis so Tokaido runs straight through Kawasaki; the Zushi local is centered
+  Yokohama–Ofuna.
+  Express/local services follow the same geometric spines with separated slots
+  between stations. Each line locally rejoins the stations it actually serves;
+  skipped express stops stay on the spine and do not become calls.
+  Existing saved copies are unchanged; reload the included preset for this shape.
   Tokyo replaces the former regional JR East map; central station sequences
   are cross-checked against public route tables, with local/rapid patterns and
   cropped endpoints explicit. Sources, exclusions and projected/continuation labels are documented in
@@ -73,8 +91,9 @@ Detailed controls and commands: [docs/guide.md](./docs/guide.md). Decisions and 
   a very dark blue night gradient. World-anchored subtle procedural grain is
   filtered at overview zoom; no glass reflections. No station shadows.
   Track/car shadows follow a shared left-to-right solar arc, lengthen/change
-  direction at dawn/dusk and vanish at midnight. Whole-corridor shadows render beneath all tracks;
-  only train shadows may land on rails. Corridor outlines are cached at refresh.
+  direction at dawn/dusk and vanish at midnight. Whole-corridor shadows render
+  beneath all tracks; only train shadows may land on rails. Corridor outlines
+  and their triangulated ArrayMeshes are cached at illumination refresh.
   No scenery or visible grid; the 48-pixel
   construction grid remains active.
   Earlier procedural-city iterations were deliberately removed, not unfinished.
@@ -135,6 +154,9 @@ Detailed controls and commands: [docs/guide.md](./docs/guide.md). Decisions and 
   station holds and modest run-speed correction reduce bunching.
   Click a locomotive or wagon to follow it at 5x zoom; Escape, panning or
   redispatch ends the follow. Scroll adjusts the zoom while following.
+  Manual/cinematic follow target the same interpolated pose used for drawing.
+  Manual follow resets camera smoothing and applies its scroll immediately;
+  normal navigation retains its smoothing setting.
   Following suppresses all map editing overlays and map/Delete edits, not HUD
   or camera controls. Clicking another train switches following. Shared
   `_update_interaction_overlays` gates visibility on both watch and follow;
@@ -149,10 +171,28 @@ Detailed controls and commands: [docs/guide.md](./docs/guide.md). Decisions and 
   day/night. It preserves pause and running trains/audio.
   Camera pan/zoom and train following work; placement/move/delete are disabled.
   Entering cancels in-progress edits safely. No setting is persisted.
+- Screensaver is separate from manual Watch: K or Menu > Screensaver (French
+  Veille) requests fullscreen and hides every control, bottom grip and cursor.
+  Continuous cycle: full-map overview 35s, train follow 40s, zoomed slow pan
+  40s, different train follow 40s; six-second smoothstep transitions.
+  Follow selection prefers another line, then another train. Missing trains
+  fall back to full-map framing; empty/very large maps remain supported.
+  Pan zoom is overview times two within 1-6x, with route distance bounded to
+  half the shorter viewport dimension. Overview shares `_layout_bounds`
+  with ordinary Fit, reserves only 32px per edge and adapts on resize without
+  changing the manual navigation floor. Entry safely cancels gestures and
+  temporarily unpauses the existing fleet without rebuilding it. Escape or
+  click/tap exits, consuming the exit press and release; other inputs,
+  including pointer movement, wheel and pause keys, cannot disrupt it.
+  Restores previous pause, camera, smoothing, surviving manual follow, cursor
+  and exact window mode; an existing Watch mode regains its grip. No idle
+  autostart or persistence. See [guide](./docs/guide.md#commandes) and
+  [DESIGN.md](./DESIGN.md#interface-integree-a-la-carte).
 - Lines are opaque color bands with darker running lanes by day and bounded
   colored rail glow/bright cores at night. Shared physical corridors are spaced
-  48 pixels center-to-center (28-pixel bands), leaving a visible gap. Trains and
-  rendering use the same separated geometry. Shared-station junction illumination
+  48 pixels center-to-center (28-pixel bands) away from station approaches,
+  leaving a visible gap. Serving lines converge locally at their actual station
+  markers. Trains and rendering use the same geometry. Shared-station illumination
   fades away around the marker so crossings do not form a luminous cross.
   Lanes are at +/-8 pixels (16 apart); car width is 7. A tighter +/-7 attempt
   blocked shared curved routes and was rejected by simulation tests.
@@ -321,6 +361,16 @@ Detailed controls and commands: [docs/guide.md](./docs/guide.md). Decisions and 
   and backtracking. A whole service may cross itself across different tracks.
 - [track_geometry.gd](./scripts/render/track_geometry.gd): canonical grid guides,
   elastic_path, preview rounding, shared-corridor offsets and route circuits.
+  When distinct stop-to-stop edges overlap geometrically, `corridor_layout`
+  bundles connected collinear spans, reserves stable 48px service slots and
+  miters offset axes through joints. The service with most calls stays on the
+  spine, with remaining services ordered by corridor coverage. `_splits_at`
+  restarts slots at a station where the service set changes, only if every
+  service crossing it stops there (express skippers never jog). Each offset
+  track connects locally to its own station endpoints, including shared
+  physical tracks without distinct-edge overlap; skipped stops remain skipped.
+  Dispatcher and WorldView compute/share this context once per network rebuild,
+  not per frame. Montreal retains its existing non-overlapping geometry.
   Original tight quadratic bends restored everywhere: 12px at stations,
   24px elsewhere, capped at 35% of adjacent lengths. User rejected broad
   station curves and chose original bends over exact grid-marker centering.
@@ -330,8 +380,10 @@ Detailed controls and commands: [docs/guide.md](./docs/guide.md). Decisions and 
   No forced straight berths, removed elbows, expanded terminal paths or special
   effective picking paths. Preserve sharper user-drawn bends and normal caps.
   `anchors` retains explicit collinear waypoints; `simplify` accepts protected
-  points for local edits. Rendering still simplifies before corner rounding,
-  so keeping an editing anchor does not alter the running path.
+  points for local edits. Closed routes preserve station anchors while choosing
+  the loop seam, so both directions project stops in service order. Rendering
+  still simplifies before corner rounding, so keeping an editing anchor does
+  not alter the running path.
 - Circuit data includes `points` (closed simulation path), `centerline`,
   `running_paths` (two open visible lanes), `stops`, `outbound_end`, and `length`.
   A loop has closed visible lanes and a separate `reverse_route`; select the
@@ -386,17 +438,28 @@ Detailed controls and commands: [docs/guide.md](./docs/guide.md). Decisions and 
   occupancy; cached visual walk timing is independent. Dispatcher-owned visits survive a train's
   departure/retirement for fade-out, expire promptly and clear on rebuild.
   Local flow does not use global train IDs, preserving cross-line independence.
-  A smoothed car-center ribbon resolves into one exterior polygon at arrival,
-  not per frame. Inner/safety edges and pavement details follow that same curve.
+  A smoothed car-center ribbon resolves into one exterior polygon on first
+  visual access (lazy getters; `platform_bounds` = car centers grown by
+  `PLATFORM_REACH` 16 is eager), not per frame. Counts, timing and doors stay
+  eager. Inner/safety edges and pavement details follow that same curve.
+  Invariant: `platform_bounds` encloses the platform and every passenger disc
+  (paths clamp into the inset walking area); `_build_geometry` asserts it and
+  schedule_smoke checks discs plus viewports grazing only one passenger.
   [world_view.gd](./scripts/render/world_view.gd) consumes visits only for drawing;
-  offscreen platform/person work is culled. [main.gd](./scripts/main.gd) passes
+  whole visits cull via `StationVisit.visible_in(area)` only; trains (pose bounds + 96-unit margin) are
+  culled from drawing only; simulation is never culled. [main.gd](./scripts/main.gd) passes
   visits alongside trains, without a separate wall-clock animation timer.
 - [world_view.gd](./scripts/render/world_view.gd): draw rail bands from centerline
   and open running paths, not the closed simulation circuit. A rounded band cap
   finishes each open terminus behind its station; loops have no caps. Open
   termini use visible convergence and in-place cab reversal, not physical turns.
-  All cars, gangways and lights remain drawn during terminal movement; there
-  are no visibility-range guards in rendering or train picking.
+  [static_track_layer.gd](./scripts/render/static_track_layer.gd) retains base
+  rails and corridor shadows across camera motion and ordinary frames; topology,
+  recolor and AA-threshold changes redraw the rail commands.
+  All cars, gangways and lights remain drawn during terminal movement; train
+  picking has no visibility guard. Car shells/noses and shadows draw cached
+  `draw_mesh` meshes; headlight beams use `canvas_item_add_triangle_array`
+  (float colors; ArrayMesh 8-bit colors broke parity) rebuilt only on strength change.
   Close-up train and rail outlines omit Godot's world-unit AA fringe at zoom
   1.5 or greater to avoid blurred contours. Headlights render before the cars;
   station markers render opaque above overlapping trains; no fading opacity pass.
@@ -432,9 +495,13 @@ Detailed controls and commands: [docs/guide.md](./docs/guide.md). Decisions and 
 
 ## Validation and delivery
 
-Every task requires fresh Windows and macOS release exports before completion,
-as specified in [AGENTS.md](./AGENTS.md). Verify both and report any failure or
-platform-specific checks that could not be run.
+Tasks that change shipped game code (GDScript, scenes, shaders, project settings
+or export presets) require fresh Windows and macOS release exports before
+completion, as specified in [AGENTS.md](./AGENTS.md). Asset- or
+translation-only, documentation, memory, test/probe-only, research and
+answer-only tasks do not.
+When required, verify both and report any failure or platform-specific checks
+that could not be run.
 
 Godot version last verified: 4.7.2, Compatibility renderer. On macOS, the editor
 is installed at `/Applications/Godot.app/Contents/MacOS/Godot`; invoke that
@@ -448,6 +515,7 @@ bash tests/run_smoke.sh smoke
 bash tests/run_smoke.sh extended
 godot --path . --script res://tests/urban_smoke.gd --audio-driver Dummy
 godot --path . --script res://tests/interface_smoke.gd --audio-driver Dummy
+godot --path . --script res://tests/screensaver_smoke.gd --audio-driver Dummy
 godot --path . --script res://tests/visual_smoke.gd --audio-driver Dummy
 godot --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy
 godot --headless --path . --export-release "Windows Desktop" dist/Metro.exe
@@ -457,8 +525,8 @@ godot --headless --path . --export-release "Web" dist/web/index.html
 
 - Inspect output for parser/script errors even when the editor exits zero.
 - [run_smoke.sh](./tests/run_smoke.sh) is the shared CI/local entry point.
-  Default `smoke` runs 14 headless scripts; Pages/PRs use it. `extended` runs
-  all 15 headless scripts and all long service checks before release builds.
+  Default `smoke` runs 17 headless scripts; Pages/PRs use it. `extended` runs
+  all 18 headless scripts and all long service checks before release builds.
   Set `GODOT_BIN` when Godot is not on PATH. The runner reports per-script
   timings, rejects unknown modes and stops with the failed child's exit code.
   Individual scripts without flags retain full service coverage. Fast
@@ -506,6 +574,534 @@ godot --headless --path . --export-release "Web" dist/web/index.html
   Windows log-file path if specifying one.
 
 ## Recent work and verification record
+
+### Tighter Tokyo station spacing (2026-11-09)
+
+- User asked for stations as tight as possible while keeping three-wagon
+  trains (82px; validation/fit need ~122px on straights). Tokyo scaled
+  uniformly 144 -> 96px per unit (shape unchanged; 48 fails 2-unit gaps).
+  `KEIHIN_ROW` is now `18 + 48 / STATION_SPACING`. Takadanobaba -11.5,
+  Kamonomiya 17.5, Haneda T1 24.5 fixed lane folds (1-unit gap; terminal
+  convergence reaching the penultimate station). Stored camera now
+  `(-12,-1)*spacing`, zoom 0.12.
+- `track_geometry.gd`: `STATION_TRANSITION_SHARE` 0.3 -> 0.45 so outer slots
+  approach steeply enough; Chuo-Sobu (slot +3 on the six-line west corridor)
+  folded at Yoyogi otherwise. Tests derive Tokyo spacing from Tokyo's x.
+- Trade-off: 48px corridor slots are unchanged, so jogs/bands look
+  relatively larger (Harajuku–Shibuya, Shonan coast, Yoyogi knot).
+- Validation: `preset_smoke.gd -- jr-east` passed; Montreal 600s soak passed
+  (30 trains); `run_smoke.sh smoke` passed 17 scripts; temporary 600s Tokyo
+  probe reached 24/41/53/64 trains at 30/120/240/600s with 24s interval.
+  Close-ups inspected (WSL llvmpipe). Windows/macOS/Web exports refreshed,
+  exit 0, `unzip -tq` passed, Windows started headless under WSL, and all
+  packages contain new coordinates. Native launches and low-end Web FPS not
+  checked. Existing saves unchanged.
+
+### Tokaido/Zushi alignment and Tokyo Monorail (2026-11-09)
+
+- User disliked Tokaido's detour into Kawasaki, wanted Keihin-Tohoku offset
+  instead, the Zushi local closer to Tokaido, and a Hamamatsucho–Haneda T2
+  monorail. Cause: the whole Tamachi–Ofuna axis was one collinear corridor,
+  so Keihin-Tohoku (most calls) was centered and Zushi sat two slots out.
+- `track_geometry.gd`: corridor components now split at a station where the
+  service set changes if every through service stops there. Generator moves
+  Keihin-Tohoku's southern stops to `KEIHIN_ROW` (+48px) and adds line 11
+  `MO Tokyo Monorail` (10 new stations, fleet 4, total 64). Station positions
+  are rounded to keep the exact grid. Tests check counts, Tokaido/Zushi
+  straight centered spines and Keihin-Tohoku's row. DESIGN.md, guide
+  (including stale Montreal 20-train text) and `metro-jr.png` were updated.
+- Known look: Keihin-Tohoku enters Shinagawa from the upper slot and leaves
+  on the lower row, so it crosses Tokaido at the station. The monorail
+  crosses Tokaido's outer slot next to Hamamatsucho.
+- Validation: `preset_smoke.gd -- jr-east` passed (22 trains at 30s);
+  `-- montreal` full 600s soak passed with 30 trains;
+  `GODOT_BIN=./dist/Godot_v4.7.2-stable_linux.x86_64 bash tests/run_smoke.sh smoke`
+  passed 17 scripts; graphical WSL close-ups inspected manually.
+- Windows/macOS/Web exports refreshed with the three `--export-release`
+  commands; all exited 0, `unzip -tq` passed, Windows started headless under
+  WSL, and all three packages contain the monorail. Native launches and
+  low-end Web FPS not checked. Existing saves unchanged.
+
+### Larger preset fleets and three-wagon trains (2026-11-09)
+
+- User accepted the Tokyo 60-train recommendation, asked for longer trains
+  and for Montreal fleets. Changes were made only in the generators
+  (`scripts/tools/build_jr_east.gd` `FLEETS`/`WAGON_COUNT`,
+  `scripts/tools/build_montreal.gd` `_line`). Both presets were regenerated
+  and are byte-identical across reruns. `tests/preset_smoke.gd` now checks
+  per-line fleets and wagons and that every preset fleet is sustainable.
+  DESIGN.md and docs/guide.md were updated.
+- Tokyo: 10/8/4/6/4/4/4/8/6/6 (in line order), three wagons. Montreal:
+  green 10, orange 12, yellow 2, blue 6, three wagons except yellow.
+- Temporary probe results (probe deleted):
+  - With three wagons, yellow capacity drops to 1, so yellow keeps two wagons.
+  - Four wagons fail Montreal's compact diagonals: slack -7.2, and restore
+    rejects the layout. On Tokyo four wagons fit, but with only 1.0 slack.
+  - Montreal reached 9/17/23/30 trains at 30/120/240/600s.
+  - Tokyo reached 20/33/44/60 trains at the same times.
+- Validation: `preset_smoke.gd -- jr-east` and `-- montreal` passed; the full
+  600s run reached 30 trains with full fleets. `GODOT_BIN=./dist/Godot_v4.7.2-stable_linux.x86_64 bash tests/run_smoke.sh smoke`
+  passed (17 scripts). `git diff --check` passed.
+- Builds refreshed so they ship the new presets. The staged engine changes
+  from earlier turns had already been exported. Windows, macOS and Web
+  exports used the three `--export-release` commands above with
+  `./dist/Godot_v4.7.2-stable_linux.x86_64` and exited 0 without errors.
+  `file` identified the formats; `unzip -tq dist/Metro-macOS.zip` passed;
+  `./dist/Metro.exe --headless --quit-after 10 --audio-driver Dummy` started
+  under WSL. The Windows and Web packages contain the new `max_trains` values.
+  The macOS package was checked only by integrity test and matching PCK size.
+  Native Windows/macOS launches, Web browser startup and low-end Web FPS were
+  not checked. Existing saves are unchanged. Instant fleet prepopulation is
+  not implemented.
+
+### Tokyo fleet sizing recommendation (2026-11-09)
+
+- Advisory only; no preset or game behavior changed. Suggested 60 total
+  maximum trains: Yamanote 10, Keihin-Tohoku and Tokaido 8 each, Chuo-Sobu
+  local and both Shonan-Shinjuku services 6 each, and Chuo rapid, Saikyo,
+  Joban and Keiyo 4 each. This reserves four slots below the existing
+  64-train total saved-layout limit, while giving long routes more movement.
+- A temporary, now-removed probe run with
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --script res://tests/_tokyo_fleet_recommendation_probe.gd`
+  verified save/restore and a 600s Tokyo simulation at those settings. Actual
+  fleets were 20 after 30s, 44 after 240s, and 60 after 600s; the final
+  300 simulated ticks averaged 1.035ms, p99 1.416ms on WSL. This is not a Web
+  FPS measurement. Current dispatch fills long lines slowly, so safely
+  populating initial trains is a potential follow-up. Low-end Web performance
+  and the user's acceptance of these suggested defaults remain unverified.
+
+### Reconnecting shared station routes (2026-11-09)
+
+- Fixed [track_geometry.gd](./scripts/render/track_geometry.gd) so each service
+  locally approaches the stations in its own stop list, including shared
+  physical tracks without overlapping express edges. Services retain 48px
+  parallel slots between approaches; the most-stopping service stays centered
+  and remaining slots favor longer corridor coverage. Express services still
+  bypass their original skipped stations. Preserve station anchors when
+  choosing a loop seam so reverse-direction stops remain in order. Renderer and
+  dispatcher continue to use the same route geometry; cumulative-distance
+  indexes are reused for station-stop projection.
+- [preset_smoke.gd](./tests/preset_smoke.gd) checks every Tokyo and Montreal
+  service centerline, both running lanes and both-direction stop distances,
+  actual shared-station arrivals, and stop order. Tokyo also checks separated
+  corridors outside station approaches and continuous opposing-lane separation
+  near intermediate stations. [simulation_smoke.gd](./tests/simulation_smoke.gd)
+  covers reverse express/local paths, skipped stops, shared physical tracks and
+  collinear loop seams. Updated [guide](./docs/guide.md),
+  [DESIGN.md](./DESIGN.md) and [metro-jr.png](./docs/images/metro-jr.png).
+  No station, track, service sequence or preset data was changed in this step.
+- Passed with Godot 4.7.2:
+  `GODOT_BIN=./dist/Godot_v4.7.2-stable_linux.x86_64 bash tests/run_smoke.sh smoke`
+  (17 scripts, 63s; validation-negative fixtures log expected errors);
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --script res://tests/preset_smoke.gd -- montreal`
+  (full 600s simulation and 20 trains);
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --script res://tests/intersection_smoke.gd -- "Nearby junctions"`
+  (six simulated minutes, arrivals [56, 56] then [118, 120]);
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://tests/preset_smoke.gd --audio-driver Dummy -- jr-east`
+  (30s and 20 trains);
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://tests/visual_smoke.gd --audio-driver Dummy`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://scripts/tools/capture_readme.gd --audio-driver Dummy -- jr-east`.
+  The refreshed overview and close-up shared-station day/night captures were
+  visually inspected.
+- `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --script res://tests/performance_probe.gd -- --fleet jr_east`
+  completed at 20/62/107/176 trains; 176-train tick mean 3.659ms, p99 4.788ms
+  on WSL, not Web FPS.
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://tests/performance_probe.gd --audio-driver Dummy -- --render jr_east`
+  initially failed parity at night overview (249,969 pixels differed); five
+  repeats passed all four day/night and zoom cases. Four repeats included
+  temporary diagnostic capture code, now removed. The intermittent mismatch
+  was not explained. Graphical checks used llvmpipe with its unsupported
+  VSync warning.
+- Earlier cubic station transitions were rejected after halo triangulation
+  assertions and slow cache construction. A tangent-lead experiment obscured
+  the centered line and placed one terminal stop inside its required clearance;
+  it was rejected in favor of shorter, locally rounded transitions.
+- Fresh release exports succeeded:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "Windows Desktop" dist/Metro.exe`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "macOS" dist/Metro-macOS.zip`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "Web" dist/web/index.html`.
+  `file` identified Windows PE, macOS ZIP and Web HTML/WASM; `unzip -tq
+  dist/Metro-macOS.zip` passed, and `./dist/Metro.exe --headless --quit-after
+  10 --audio-driver Dummy` started under WSL. The Web export started in the
+  browser on its default Montreal map; Tokyo was checked graphically in Godot.
+  `git diff --check` and `git diff --cached --check` passed. Native Windows
+  GPU/pacing, actual macOS launch/Gatekeeper and low-end Web frame pacing
+  remain untested. Existing saved layouts are not rewritten.
+
+### Faceted Yamanote loop refinement (2026-11-09)
+
+- Refined the included Tokyo preset to the user's recognizable gem-like loop:
+  balanced upper/lower diagonal shoulders, straight sides and centered shorter
+  northern/southern shelves. Adjusted eight Yamanote stations in
+  [build_jr_east.gd](./scripts/tools/build_jr_east.gd), regenerated
+  [jr_east.json](./layouts/jr_east.json) and refreshed/inspected
+  [metro-jr.png](./docs/images/metro-jr.png). The Tokaido corridor and existing
+  parallel express/local routing remain aligned.
+- A baseline JSON comparison confirmed all 80 station identities, 97 track
+  connections, ten service sequences/settings, stored framing and other metadata
+  unchanged apart from the updated description. Existing saved layouts are not
+  modified; reload the included Tokyo preset for the new shape.
+- [preset_smoke.gd](./tests/preset_smoke.gd) now checks aligned shoulder heights,
+  centered shelves, visible taper, all four 45-degree bevels and intermediate
+  stations on their facets. Actual rendered route-centerline probes also cover
+  the northwest/northeast/southwest/southeast facets and southern shelf; existing
+  48px separation and 0.01-world-unit straightness tolerances still pass.
+- Passed with Godot 4.7.2:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --script res://scripts/tools/build_jr_east.gd`
+  (repeated output had identical SHA256);
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --script res://tests/preset_smoke.gd -- jr-east`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://tests/preset_smoke.gd --audio-driver Dummy -- jr-east`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://scripts/tools/capture_readme.gd --audio-driver Dummy -- jr-east`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --script res://tests/performance_probe.gd -- --fleet jr_east`
+  (20/62/107/176 trains; 176-train tick mean 3.57ms, p99 4.81ms, not Web FPS);
+  `git diff --check`.
+- Fresh release exports passed:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "Windows Desktop" dist/Metro.exe`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "macOS" dist/Metro-macOS.zip`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "Web" dist/web/index.html`.
+  `file` identified the expected formats, `unzip -tq dist/Metro-macOS.zip`
+  passed, and `./dist/Metro.exe --headless --quit-after 10 --audio-driver Dummy`
+  started under WSL. The Web export started and displayed its default Montreal
+  map in the integrated browser; Tokyo was tested graphically through Godot.
+- Full smoke/extended suites, native Windows GPU/pacing and macOS launch/
+  Gatekeeper were not rerun. WSL graphical tests used llvmpipe and emitted the
+  usual unsupported VSync warning.
+
+### Tokyo schematic and continuous corridor alignment (2026-11-09)
+
+- Repositioned the existing Tokyo preset to the user's flatter reference:
+  recognizable Yamanote loop, horizontal Shinagawa–Ofuna corridor, compact
+  Chigasaki/Hiratsuka fold and a short Kamakura/Zushi branch. Updated
+  [build_jr_east.gd](./scripts/tools/build_jr_east.gd) and regenerated
+  [jr_east.json](./layouts/jr_east.json). The first station reshape left bumpy
+  express detours; replaced them with shared geometric spines across the whole
+  map. Also aligned the Chuo diagonal, northern approaches, southern locals and
+  coastal bends. Original schematic geometry; no reference artwork copied.
+- Root fix in [track_geometry.gd](./scripts/render/track_geometry.gd):
+  different express/local track IDs can share an axis without sharing stops.
+  Connected collinear spans reserved constant 48px service slots; offset axes
+  met at mitered intersections. The later shared-station fix restores local
+  connections to served markers while keeping separation between approaches.
+  [dispatcher.gd](./scripts/dispatch/dispatcher.gd) and
+  [world_view.gd](./scripts/render/world_view.gd) reuse one corridor context per
+  rebuild for matching simulation/render paths. Maps without distinct-edge
+  geometric overlap retain their previous circuits, including Montreal.
+- A before/after JSON comparison verified the same 80 station identities,
+  97 track connections, ten complete service sequences and every line setting.
+  Only positions, waypoints, stored camera and description changed. Existing
+  user saves are untouched. Following a local corridor's waypoint geometry does
+  not add its skipped stations to an express service.
+- [preset_smoke.gd](./tests/preset_smoke.gd) now checks station anchors,
+  straight sides/shelves, loop aspect 0.65–0.85, overall aspect at least 1.7,
+  westbound Tokaido and compact coastal geometry. Before the faceted refinement,
+  eleven actual route-centerline
+  probes sample 21 positions each: drift below 0.01 world units and separation
+  at least 48px, including interchanges on the western side. The current
+  approach-aware probes supersede those straight-through-interchange checks.
+  Replaced the old ban on coincident raw edges with actual path checks.
+  [simulation_smoke.gd](./tests/simulation_smoke.gd) additionally covers reversed
+  express/local services, cached/standalone context agreement, preserved stop
+  counts and non-pinching shared corners. Headless and graphical Tokyo tests
+  passed with 20 trains; Montreal's legacy-geometry guard passed.
+- Added optional `jr-east` / `montreal` selectors to
+  [capture_readme.gd](./scripts/tools/capture_readme.gd), preserving default
+  all-preset capture, so only [metro-jr.png](./docs/images/metro-jr.png) was
+  refreshed. Visually inspected the final capture; updated guide and design.
+- Passed commands (Godot 4.7.2):
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --script res://scripts/tools/build_jr_east.gd`
+  (repeated generation produced an identical SHA256);
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --script res://tests/preset_smoke.gd -- jr-east`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://tests/preset_smoke.gd --audio-driver Dummy -- jr-east`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://scripts/tools/capture_readme.gd --audio-driver Dummy -- jr-east`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://tests/visual_smoke.gd --audio-driver Dummy`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --editor --path . --quit`;
+  `git diff --check`.
+- `GODOT_BIN=./dist/Godot_v4.7.2-stable_linux.x86_64 bash tests/run_smoke.sh smoke`
+  passed all 17 scripts (59s).
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --script res://tests/performance_probe.gd -- --fleet jr_east`
+  passed at 20/62/107/177 trains (177-train tick mean 3.53ms, p99 4.53ms).
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://tests/performance_probe.gd --audio-driver Dummy -- --render jr_east`
+  passed all four full-frame shadow byte-parity checks, day/night overview/5x.
+- During implementation, a `_follow` call assumed a nonexistent Kamata–Kawasaki
+  edge and asserted; removed it because the existing straight Tokaido edge
+  already shares that geometric spine. A Yokohama probe initially included
+  the legitimate rounded approach corner; moved its start two schematic units
+  from the junction, retaining the 0.01 drift and 48px separation thresholds.
+- Final fresh exports all succeeded:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "Windows Desktop" dist/Metro.exe`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "macOS" dist/Metro-macOS.zip`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "Web" dist/web/index.html`.
+  `file dist/Metro.exe dist/Metro-macOS.zip dist/web/index.html` identified the
+  expected formats; `unzip -tq dist/Metro-macOS.zip` and
+  `./dist/Metro.exe --headless --quit-after 10 --audio-driver Dummy` passed.
+- The extended suite and browser interaction were not rerun. Graphical
+  validation used WSL llvmpipe with its usual
+  unsupported VSync warning; native Windows GPU/pacing and macOS launch/
+  Gatekeeper remain untested.
+
+### Low-end Web rendering follow-up (2026-11-08/09)
+
+- Goal from user: Web build must run well on a very underpowered machine
+  without compromising visual quality. Implemented the five agreed changes in
+  order: retained night illumination, merged static meshes, batched train
+  shells/noses, paused-idle render shutdown, and a precomputed repeating paper
+  grain texture. Preserved active-play/screensaver rendering and paused day/
+  night state. See [performance.md](./docs/performance.md) for design and
+  limitations.
+- [world_view.gd](./scripts/render/world_view.gd) and
+  [static_track_layer.gd](./scripts/render/static_track_layer.gd) merge shadow
+  and per-line halo geometry; the halo shader preserves a screen-space edge
+  fringe. Train shells/noses are batched per train, while detail/gangways and
+  changing stations/platforms remain dynamic. [rail_illumination_layer.gd](./scripts/render/rail_illumination_layer.gd)
+  retains light commands. [main.gd](./scripts/main.gd) freezes ambience while
+  paused and stops/wakes rendering only when eligible. The backdrop uses
+  [paper_grain.png](./assets/textures/paper_grain.png) instead of per-fragment
+  noise hashes. No detail or zoom cap was introduced.
+- Final graphical probe:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script
+  res://tests/performance_probe.gd --audio-driver Dummy -- --render montreal`
+  passed all four full-frame byte-parity checks. Montreal (11 trains, llvmpipe)
+  measured redraw CPU at overview 1.16 ms day / 1.55 ms night, and at 5x
+  1.09 / 1.13 ms; frame waits are not GPU timing or Web FPS.
+- `GODOT_BIN=./dist/Godot_v4.7.2-stable_linux.x86_64 bash
+  tests/run_smoke.sh smoke` passed all 17 scripts (63 s). Graphical
+  `train_visual_smoke.gd`, `visual_smoke.gd`, `urban_smoke.gd`,
+  `screensaver_smoke.gd` and `idle_render_smoke.gd` passed on WSL llvmpipe.
+  `git diff --check` passed.
+- Passed graphical commands:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://tests/visual_smoke.gd --audio-driver Dummy`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://tests/urban_smoke.gd --audio-driver Dummy`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://tests/screensaver_smoke.gd --audio-driver Dummy`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://tests/idle_render_smoke.gd --audio-driver Dummy`.
+- Fresh exports succeeded:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "macOS" dist/Metro-macOS.zip`,
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "Web" dist/web/index.html`.
+  The first Web attempt failed because `dist/web` did not exist; creating that
+  output directory and rerunning succeeded.
+  Windows output identified as PE32+ x86-64 and
+  `./dist/Metro.exe --headless --quit-after 10 --audio-driver Dummy` passed;
+  `unzip -tq dist/Metro-macOS.zip` passed. The Web export loaded and displayed
+  the map in the integrated browser. The older Chromium SwiftShader run
+  measured 42-47 ms/frame before these changes; no post-change FPS measurement
+  on real low-end hardware was available. Native Windows GPU/pacing and macOS
+  launch/Gatekeeper checks remain unrun.
+
+### Build-refresh policy narrowed (2026-11-08)
+
+- Per user request, AGENTS.md and "Validation and delivery" now require
+  Windows/macOS exports only for shipped game-code changes (GDScript, scenes,
+  shaders, project settings, export presets). Asset/translation-only, docs,
+  memory, test/probe-only, research and answer-only tasks skip builds.
+  No builds were run for this instructions-only change.
+
+### Fleet-scaling performance fixes (2026-11-08)
+
+- User reported choppiness growing with train count. Added `--fleet [map]` to
+  [performance_probe.gd](./tests/performance_probe.gd): raises `max_trains`
+  ceilings (preset/8/16/40), warms 240 s, samples 300 ticks; graphical mode
+  also measures draw CPU at overview/5x, day/night (moves the real camera;
+  an earlier version did not, so its 5x numbers were invalid).
+- [dispatcher.gd](./scripts/dispatch/dispatcher.gd): memoized
+  cycle/capacity/recommended/headway estimates (route `is_same` + parameter
+  signature; cleared by `rebuild_routes`); per-tick circuit index so
+  `movement_authority` scans only same-circuit trains.
+- [world_view.gd](./scripts/render/world_view.gd): draw-only train/platform
+  culling, cached shell/nose meshes, batched headlight beams (see invariants).
+  [station_visit.gd](./scripts/sim/station_visit.gd): lazy platform/path geometry.
+- Tokyo (jr_east) 167 trains, WSL llvmpipe: simulation mean 21.0 -> 3.4 ms/tick,
+  p99 ~8.4 -> 4.4 ms; night headlights 35 -> 5.6 ms; overview day draw 20.7 ->
+  14.9 ms, night 55 -> 21 ms. Fleet counts identical (20/68/109/167).
+- Validation after final code: `GODOT_BIN=./dist/Godot_v4.7.2-stable_linux.x86_64
+  bash tests/run_smoke.sh extended` passed (16 scripts, 121 s, incl. new lazy
+  visit/bounds checks in schedule_smoke); graphical train_visual_smoke and
+  visual_smoke passed; `-- --render` parity 12/12 byte-identical; headless
+  `-- --fleet jr_east` exit 0; `git diff --check` clean. Windows and macOS
+  exports refreshed (both exit 0, no warnings; PE32+ and `unzip -tq` verified).
+- Lesson: a `sed -i` on /mnt/c raced with edit-tool writes and truncated
+  world_view.gd; it was rebuilt from HEAD + session code and re-verified.
+- Review follow-up: whole-visit early return was only implicitly safe (passengers
+  at viewport edges). Added `StationVisit.visible_in`, a `_build_geometry`
+  containment assert and schedule_smoke viewport-graze checks; a mutation
+  (`platform_bounds.grow(-6)`) made schedule_smoke fail, then was reverted.
+  Afterwards: extended suite passed (16 scripts, 116 s); train_visual/visual
+  smoke passed; `-- --render` parity 12/12 true, 0 false; Windows/macOS
+  exports re-refreshed (exit 0, PE32+, `unzip -tq` ok); `git diff --check` clean.
+- Remaining: station markers and active/fading platform visits still use the
+  dynamic draw pass; measure complete-frame pacing on the target PC. Native
+  Windows GPU/refresh behavior, macOS runtime/Gatekeeper and 4K/full-fleet
+  hardware profiling remain unverified.
+
+### Follow-camera stability correction (2026-11-08)
+
+- User reported moving trains looking blurred/unsteady during follow after
+  interpolation changes. In [main.gd](./scripts/main.gd), manual follow still
+  applied Camera2D smoothing to an already-interpolated target; cinematic follow
+  used simulation positions instead. Added shared `_train_render_position`,
+  reset smoothing only for manual follow updates, and force the camera scroll
+  before world-state/drawing. Normal navigation smoothing and saved cinematic
+  state are unchanged.
+- Extended [frame_pacing_smoke.gd](./tests/frame_pacing_smoke.gd) to measure the
+  rendered head's actual canvas-transform position at synthetic 60/120/144 Hz
+  and variable frame intervals. Regression failed before the fix (14.8-26.0 px
+  worst drift); after the fix drift was 0.000015 px headless and 0.000068 px
+  graphical, below the 0.05 px limit. Also verifies cinematic interpolated
+  framing and navigation-smoothing preservation.
+- `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --script
+  res://tests/frame_pacing_smoke.gd` passed, as did the same command for
+  `train_controls_smoke.gd`, `screensaver_smoke.gd` and `interface_smoke.gd`.
+  Graphical frame-pacing passed with `--path . --script
+  res://tests/frame_pacing_smoke.gd --audio-driver Dummy` (same executable,
+  without `--headless`); llvmpipe warned VSync could not be changed.
+  Full extended/simulation and full-map parity suites were not rerun for this
+  camera-only correction. `git diff --check` passed.
+- Both release export commands below were rerun after final code and exited 0;
+  Windows PE32+ x86-64 and macOS `unzip -tq` passed. Actual Windows high-refresh
+  behavior and macOS runtime/Gatekeeper still need target-machine validation.
+
+### Retained rendering, editing and fixed-step follow-up (2026-11-08)
+
+- Added [static_track_layer.gd](./scripts/render/static_track_layer.gd):
+  base rail paths and corridor-shadow meshes are retained while the camera
+  moves. Recolor and AA-threshold changes update the cached CanvasItem; shadow
+  offset/opacity are changed on retained shadow nodes, hidden below opacity
+  0.001. Station markers and
+  active/fading platform visits remain in the dynamic pass because of their
+  time-varying color, selection and passenger state. All 12 map/zoom/day-night
+  pixel comparisons remained byte-identical.
+- [main.gd](./scripts/main.gd) now caches sampled track paths, anchors and
+  bounds at network rebuild, skips hover queries when pointer/camera/zoom/
+  interaction state is unchanged, and caches valid route destinations for
+  unchanged pinned strokes. Color changes now update the picker/tab, retained
+  track color and existing halo vertex colors without rebuilding illumination
+  geometry or unrelated configuration controls. Tokyo WSL llvmpipe probe:
+  moving full-miss hover mean 0.510 ms; 600 stationary cache hits mean/p99
+  0.001/0.001 ms; 100 line-color refreshes mean 0.332 ms.
+- Replaced render-frame-driven simulation with a 60 Hz accumulator, four-tick
+  per-frame catch-up budget and wrap-safe render interpolation in
+  [main.gd](./scripts/main.gd), [metro.gd](./scripts/sim/metro.gd) and
+  [dispatcher.gd](./scripts/dispatch/dispatcher.gd). Unprocessed time remains
+  queued (never dropped); pause freezes processing, and direction reversals
+  snap rather than interpolating across incompatible route poses.
+- Added [frame_pacing_smoke.gd](./tests/frame_pacing_smoke.gd) and included it
+  in the smoke runner. The first extended run exposed a color-picker swatch
+  regression after UI refresh removal; restored direct picker synchronization
+  without restoring the broad UI update. Then
+  `GODOT_BIN=./dist/Godot_v4.7.2-stable_linux.x86_64 bash tests/run_smoke.sh
+  extended` passed (17 scripts, 118 s). The Tokyo probe
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --script
+  res://tests/performance_probe.gd --audio-driver Dummy -- jr_east` exited 0.
+  After the final shadow-node visibility threshold change, editor import passed
+  and `-- --render` passed all 12/12 byte-parity captures; the driver warned
+  that VSync could not be changed. `git diff --check` passed.
+- Fresh Windows and macOS release exports were rerun after final code; both
+  exited 0 using the commands below. `file dist/Metro.exe` confirmed PE32+
+  x86-64 and `unzip -tq dist/Metro-macOS.zip` passed. Actual target-PC frame rates,
+  Windows GPU/VSync behavior and macOS runtime/Gatekeeper are still unmeasured.
+- Export commands:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "Windows Desktop" dist/Metro.exe`
+  and the same command with `"macOS" dist/Metro-macOS.zip`.
+
+### Performance investigation and first fixes (2026-11-08)
+
+- Added [docs/performance.md](./docs/performance.md) and the export-excluded
+  [performance_probe.gd](./tests/performance_probe.gd); linked the probe from
+  [guide](./docs/guide.md). Existing uncommitted screensaver/localization work
+  was preserved.
+- Implemented cached corridor-shadow `ArrayMesh` resources in
+  [world_view.gd](./scripts/render/world_view.gd). Tokyo has 42,271 shadow
+  vertices; WSL llvmpipe measured overview daytime shadow draw CPU at 125.54ms
+  legacy vs 0.03ms cached, with full draw 133.36ms vs 7.89ms. All 12 full-frame
+  parity captures across three maps, two zooms and day/night were byte-identical.
+- Implemented `PackedFloat64Array` cumulative-distance caches in
+  [track_geometry.gd](./scripts/render/track_geometry.gd), for each route and
+  loop reverse route. Rendering, dispatch, picking, station visits and
+  screensaver framing use indexed lookups. Per-car positions/axes are computed
+  once per draw and reused for bodies, gangways, train shadows and headlights.
+  The 3,636-point Tokyo route's 2,000 lookup microbenchmark measured 126.05ms
+  linear vs 1.29ms indexed (98x), with zero measured positional error.
+- Remaining priorities: retain static layers, conservatively cull
+  trains/platforms, cache service estimates, and
+  eliminate editing/recolor rebuild spikes. Target-PC performance is still
+  unmeasured; llvmpipe results do not establish target GPU/frame-rate behavior.
+- `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --editor --path .
+  --quit` passed after final code. `GODOT_BIN="$PWD/dist/Godot_v4.7.2-stable_linux.x86_64"
+  bash tests/run_smoke.sh smoke` passed after final code (15 scripts, 88s).
+  The same `GODOT_BIN` command with `extended` passed before final
+  draw-pose-sharing (16 scripts, 408s, including intersection). The graphical
+  performance probe's `--render`
+  run passed all 12 pixel comparisons after final code:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script
+  res://tests/performance_probe.gd --audio-driver Dummy -- --render`.
+  Final-code train visuals passed with:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script
+  res://tests/train_visual_smoke.gd --audio-driver Dummy` and the same command
+  with `res://tests/visual_smoke.gd`. The final
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --script
+  res://tests/intersection_smoke.gd` also passed. The graphical driver warned
+  that VSync mode could not be changed. One initial train-visual run exposed an
+  outdated gangway-helper test call; it was corrected and rerun.
+- After final code, `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --editor
+  --path . --quit` and both exports succeeded without warnings/errors:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release
+  "Windows Desktop" dist/Metro.exe` and the same command with `"macOS"
+  dist/Metro-macOS.zip`. `file dist/Metro.exe` confirmed PE32+ x86-64 and
+  `unzip -t dist/Metro-macOS.zip` passed. `git diff --check` passed.
+- Clarified with user: proposed culling is render-only. Dispatch, stops and
+  passenger exchanges keep running for every train; visibility is retested each
+  frame against the current camera, with conservative bounds covering full train
+  length, shadow offset and ~50-unit headlight beam. Rails/stations should be
+  retained geometry rather than culled per object. Windows/macOS exports were
+  re-run after this note (both exit 0, PE32+ and zip integrity verified).
+- Remaining: implement the third-ranked redraw/culling and retained-layer work,
+  plus later service/editing optimizations; run long full-fleet and real
+  hardware/high-DPI/120-144Hz frame captures. macOS runtime/Gatekeeper and Web
+  exports remain unverified in this task.
+
+### Fullscreen rotating screensaver (2026-11-08)
+
+- Implemented separate manual-entry kiosk mode in [main.gd](./scripts/main.gd),
+  preserving the existing H/Watch behavior. User chose K/Menu entry,
+  Escape/click/tap exit without mouse-motion interruption, slower 35-40s
+  shots, temporary fullscreen and temporary unpause with restoration.
+  Reused map-fit bounds rather than duplicating geometry calculations.
+  Kept the settings surface within its existing height by putting Screensaver
+  beside Close in the heading, and combined H/K help into one compact line.
+- Added [screensaver_smoke.gd](./tests/screensaver_smoke.gd) and wired it into
+  [run_smoke.sh](./tests/run_smoke.sh); updated EN/FR translations and live
+  localization assertions, [guide](./docs/guide.md) and [DESIGN.md](./DESIGN.md).
+  Coverage includes real K/click/touch input, consumed exit releases, exact
+  shot thresholds/loop, smooth transition midpoint, fit below 0.08x, bounded
+  moving pan, different-line train selection, live fleet advancement, missing
+  trains, empty maps, resize, Watch restoration and native cursor/fullscreen.
+- Validation executable: `dist/Godot_v4.7.2-stable_linux.x86_64` (4.7.2).
+  Passed `--headless --editor --path . --quit`; headless
+  `--headless --path . --script res://tests/screensaver_smoke.gd --audio-driver Dummy`,
+  same command for `interface_smoke.gd`, `localization_smoke.gd` and
+  `layout_smoke.gd`. Layout's printed rejection errors are intentional fixtures.
+  Passed graphical `--path . --script res://tests/screensaver_smoke.gd --audio-driver Dummy`
+  and the same for `interface_smoke.gd` under Linux/llvmpipe; unsupported VSync
+  warning only. Inspected overview/follow/pan/menu screenshots, then cleaned
+  them. `git diff --check` passed. Full smoke/extended suites were not run.
+- Initial headless checks incorrectly required a cursor API unsupported by
+  headless and immediate motion while a train was dwelling; corrected the
+  fixtures to gate cursor checks on native display and check dwell progress.
+  UI regressions caught extra-row settings overflow and extra-label help
+  scrolling; corrected placement rather than weakening those tests.
+  Native pan verification exposed the 3x ceiling allowing a shot less zoomed
+  than overview on large displays; now uses up to 6x with screen-scaled travel.
+  Screenshot fixtures now advance render state after manually stepping the
+  camera and wait for fullscreen resizing before measuring.
+- Fresh releases passed using the same executable:
+  `--headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  `--headless --path . --export-release "macOS" dist/Metro-macOS.zip`.
+  Verified Windows PE32+ x86-64, ZIP integrity, `org.metro.game` bundle and
+  universal Mach-O x86_64/arm64 slices. `./dist/Metro.exe --headless --quit-after 10 --audio-driver Dummy`
+  passed via WSL. No browser fullscreen/touch-device test, real Mac launch or
+  Gatekeeper check; no Web/mobile release refresh in this task.
 
 ### Non-Gradle Android SDK override correction (2026-11-07)
 
@@ -1162,6 +1758,9 @@ godot --headless --path . --export-release "Web" dist/web/index.html
 
 ### Separating overlapping JR services (2026-11-07)
 
+- Historical: the detour/raw-edge non-overlap rule below was superseded by the
+  2026-11-09 continuous corridor alignment. Tests now check separated actual
+  service paths, allowing express/local logical edges to share a geometric spine.
 - User requested JR services/trains side by side where paths overlap.
   Increased shared `TrackGeometry.CORRIDOR_SPACING` from 32 to 48 pixels
   (28-pixel bands leave a 20-pixel gap on straight shared sections).

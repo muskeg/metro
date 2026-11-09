@@ -11,6 +11,10 @@ var position: Vector2
 var moving: bool = false
 var arrival_count: int = 0
 var distance: float = 0.0
+var previous_distance: float = 0.0
+var previous_travel_direction: int = 1
+var render_distance: float = 0.0
+var render_pose_valid := false
 var wagon_count: int = 2
 var next_stop_index: int = 0
 var blocked: bool = false
@@ -25,3 +29,6 @@ func _init(metro_id: int, route_id: int, initial_position: Vector2) -> void:
 	id = metro_id
 	line_id = route_id
 	position = initial_position
+	previous_distance = distance
+	previous_travel_direction = travel_direction
+	render_distance = distance

@@ -10,6 +10,12 @@ func _initialize() -> void:
 	_run.call_deferred()
 
 func _run() -> void:
+	var selectors := OS.get_cmdline_user_args()
+	for selector in selectors:
+		if selector not in ["jr-east", "montreal"]:
+			push_error("Unknown README capture selector: " + selector)
+			quit(1)
+			return
 	if DisplayServer.get_name() == "headless":
 		push_error("README screenshots require a graphical display.")
 		quit(1)
@@ -32,6 +38,8 @@ func _run() -> void:
 	_main.call("_resize_interface")
 	var store := StoreScript.new()
 	for path: String in ["res://layouts/montreal.json", "res://layouts/jr_east.json"]:
+		if not selectors.is_empty() and not selectors.has("jr-east" if path.ends_with("jr_east.json") else "montreal"):
+			continue
 		var restored := store.load_bundled_layout(path)
 		if restored.is_empty():
 			push_error("Cannot load README preset: " + store.error_message)
@@ -61,7 +69,7 @@ func _run() -> void:
 	if _failed:
 		quit(1)
 	else:
-		print("README screenshots captured: Montreal day/night, current sharing menu and Tokyo/Shonan JR at 1180x740.")
+		print("README screenshots captured at 1180x740: " + (", ".join(selectors) if not selectors.is_empty() else "Montreal day/night, sharing menu and Tokyo/Shonan JR") + ".")
 		quit()
 
 func _capture(filename: String, phase: float) -> void:

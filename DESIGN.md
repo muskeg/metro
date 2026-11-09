@@ -63,9 +63,10 @@ une surcharge de modele. Les responsabilites de fichiers sont distinctes.
   plusieurs lignes. Les trains ne conservent pas de positions incoherentes.
 - Les chemins trop courts pour une rame ou les chevauchements de segments
   non partages sont refuses explicitement.
-- Les voies partagees sont espacees par ligne : centres de corridors a 48 pixels
-  (bandes de 28 pixels), pour conserver un espace visible. Simulation, trains,
-  ombres et illumination utilisent les memes chemins decales, pas un simple
+- Les voies partagees sont espacees par ligne entre les stations : centres de
+  corridors a 48 pixels (bandes de 28 pixels), pour conserver un espace visible.
+  Chaque service rejoint localement les stations qu'il dessert. Simulation,
+  trains, ombres et illumination utilisent les memes chemins, pas un simple
   decalage de couleur. Les croisements hors station
   sont autorises pour tous les reseaux et restent purement visuels, sans creer
   de correspondance ni signalisation commune. Chaque trace reste valide
@@ -106,12 +107,18 @@ une surcharge de modele. Les responsabilites de fichiers sont distinctes.
   nombre actuel retire progressivement le surplus aux terminus/origines,
   sans interrompre les autres lignes ni faire disparaitre les rames en mouvement.
 - Un clic sur une motrice ou un wagon suit ce train avec un zoom rapproche.
+  La camera suit exactement la pose interpolee affichee, sans second lissage ;
+  le lissage de navigation reste inchange hors suivi. Le suivi cinematographique
+  utilise cette meme pose, pas la derniere position de simulation.
   Echap, un deplacement manuel de la vue ou la reconstruction du reseau
   interrompt ce suivi.
 - Le freinage respecte la station suivante et l'autorisation de mouvement.
   La regulation de service est distincte de cette securite. Le reglage
   d'intervalle reste un minimum souhaite ; le maximum de rames reste un plafond.
-  Simulation subdivisee a 60 Hz ; les croisements hors station restent independants.
+  Simulation a pas fixe de 60 Hz, pilotee par un accumulateur independant du
+  rendu ; quatre pas au plus par frame, le reliquat est conserve sans perte de
+  temps. Les poses interpolees traversent le bouclage, mais pas un changement de
+  direction. Les croisements hors station restent independants.
 - Le fond atmospherique et les rails sont deux couches independantes. Les tests
   graphiques comparent les pixels : nuit tres sombre, rails illumines seulement
   la nuit, fond intact hors du halo local.
@@ -207,22 +214,55 @@ de 144 pixels sur la queue horizontale Angrignon–De l'Eglise pour conserver
 la place des trains a deux wagons ; les coudes qui
 definissent ces formes sont des waypoints explicites, pas des colonnes arbitraires
 ou des chemins elastiques recalcules sans contexte.
-Le preset Tokyo JR central remplace le reseau regional JR East : 80 stations,
-97 voies physiques et dix corridors, boucle Yamanote complete de 30 stations (Takanawa Gateway
+Le preset Tokyo JR central remplace le reseau regional JR East : 90 stations,
+107 voies physiques et onze corridors, boucle Yamanote complete de 30 stations (Takanawa Gateway
 inclus) et axes centraux Chuo rapide/local, Keihin-Tohoku, Saikyo, Joban et
 Keiyo. Une extension sud-ouest ajoute Tokaido Tokyo–Odawara avec Hiratsuka et
 deux Shonan-Shinjuku depuis Akabane : Tokaido-bound rapid vers Odawara
 (tous les arrets Tokaido au sud de Totsuka, pas special rapid) et
-Yokosuka-bound local vers Zushi. Les correspondances et voies consecutives
-communes sont partagees ; les rapides ont des waypoints distincts pour
-contourner les stations locales sautees. Les sept lignes initiales et leurs
-coordonnees sont conservees ; cadrage centre (-576,576), zoom 0.08.
-Les stations sont positionnees explicitement sur un schema nord en haut,
-avec les grandes correspondances aux bons cotes de la boucle. Pas de placement
-automatique regional ; les axes rapides contournent les marqueurs des stations
-locales sautees. Les extremites sont des limites de cadrage, pas des terminus
-officiels. Tokyo initialise `max_trains` a 2 ; Montreal utilise 6 sur les
-lignes verte/orange/bleue et 2 sur la jaune, avec intervalle demande de 12s.
+Yokosuka-bound local vers Zushi, ainsi que le Tokyo Monorail Hamamatsucho–Haneda
+Terminal 2 (11 stations, le long de la baie). Les correspondances et voies consecutives
+communes sont partagees. Les rapides suivent les memes axes geometriques que
+les locaux, sans ajouter les stations sautees a leur liste d'arrets.
+`TrackGeometry.corridor_layout` regroupe les segments collineaires connectes,
+reserve des bandes de 48 pixels par service entre les stations et joint leurs
+axes decales par intersection. Le service avec le plus d'arrets locaux reste
+sur l'axe central ; chaque autre service rejoint seulement ses propres stations
+par de courtes transitions, sans detour vers les arrets qu'il saute.
+Une transition peut occuper jusqu'a 45 % de la section d'extremite
+(`STATION_TRANSITION_SHARE`) : a 30 %, une bande exterieure arrivait trop a plat
+et repliait ses deux voies au virage de Yoyogi sur la grille resserree.
+Un axe collineaire est recoupe a une station ou l'ensemble des services
+change, si chaque service qui la traverse s'y arrete : les bandes y sont
+recalculees (Tokaido seule et centree de Shinagawa a Yokohama, local de Zushi
+centre de Yokohama a Ofuna), sans decalage pour un express qui la saute.
+Les arrets Keihin-Tohoku Oimachi–Kamata sont sur leur propre rangee, une bande
+(48 pixels) sous l'axe Tokaido, pour que Tokaido traverse Kawasaki en ligne droite. Ce plan
+est calcule une fois par reconstruction et partage par les circuits de
+simulation et le rendu. Les voies physiques partagees rejoignent egalement leurs
+stations, meme sans recouvrement entre voies stop-a-stop distinctes ; Montreal
+conserve sa geometrie existante. Les stations et parcours existants gardent
+les memes identites, connexions et reglages. La geometrie reprend
+l'arrangement aplati de la carte de numerotation : longs cotes droits de
+Yamanote, quatre epaules diagonales equilibrees et plateaux centres
+Otsuka–Tabata et Shinagawa–Tamachi pour une silhouette facettee, puis Tokaido horizontal
+vers l'ouest jusqu'a Ofuna et replie vers le nord a Chigasaki. Odawara reste
+presque a la hauteur de Shinagawa ; seule la branche Kamakura–Zushi descend
+legerement plus bas. Coordonnees schematiques originales a 96 pixels par unite (le plus petit
+multiple de la grille de 48 pixels ou les sections de deux unites, 192 pixels,
+gardent de la marge pour des trains de trois wagons de 82 pixels) ; l'echelle
+precedente etait 144. Takadanobaba, Kamonomiya et Haneda Terminal 1 sont a des
+demi-unites pour garder 144 pixels sur leurs sections courtes et laisser la zone
+de convergence des terminus hors de la station voisine. Les bandes partagees
+gardent 48 pixels, donc paraissent plus larges relativement a la carte.
+Cadrage stocke centre (-1152,-96), zoom 0.12 ; le chargement ajuste ensuite le cadre aux bornes
+reelles et aux marges de l'interface. Pas de placement automatique regional.
+Les extremites sont des limites de cadrage, pas des terminus
+officiels. Tokyo fixe `max_trains` a 10/8/4/6/4/4/4/8/6/6/4 (64 au total,
+le plafond) avec trois wagons ; Montreal a 10/12/2/6 avec trois wagons,
+sauf la jaune qui garde deux wagons : a trois, elle ne tient plus qu'un
+train. Quatre wagons ne tiennent pas sur les diagonales compactes de
+Montreal. Intervalle demande : 24s a Tokyo, 12s a Montreal.
 Le service respecte toujours son intervalle minimal et sa capacite : ces
 reglages permettent les flottes demandees, mises en service progressivement.
 Le trajet jaune garde le minimum teste de 240 pixels horizontaux puis
@@ -406,7 +446,8 @@ hors station ne sont pas une simulation de passages a niveau.
   du cote quai s'ouvrent, les sortants marchent un peu puis s'effacent sur le quai ;
   les entrants emergent puis rejoignent les portes. Quais effaces 1.2s apres
   depart/retrait de service. Horloge de simulation partagee : pause fige tout,
-  edition efface les visites. Pas de nouveaux boutons ; rendu hors vue ignore.
+  y compris l'ambiance jour/nuit ; edition efface les visites. Pas de nouveaux
+  boutons ; rendu hors vue ignore.
 
 - L'interlocking global, les sections entieres reservees et l'echange atomique
   des places en station sont retires. Ces derniers synchronisaient des vagues
@@ -462,6 +503,21 @@ hors station ne sont pas une simulation de passages a niveau.
 
 ## Interface integree a la carte
 
+- Un ecran de veille distinct du mode contemplation manuel se lance avec K
+  ou Menu. Il masque tout le HUD, y compris la poignee et le curseur, et
+  demande le plein ecran sans le rendre permanent. Vue complete 35s, suivi
+  40s, panoramique zoome 40s, autre suivi 40s : boucle continue, transitions
+  smoothstep de 6s. Les suivis privilegient une autre ligne puis une autre rame ;
+  sans train, ils gardent une vue complete. Le panoramique suit une petite
+  section du circuit et parcourt au plus la moitie du petit axe de l'ecran
+  pour rester lent meme sur Tokyo. L'ajustement partage les bornes de la
+  carte avec le bouton Ajuster, mais ne reserve que 32px sur chaque bord
+  puisque le HUD est absent. Un redimensionnement adapte cet apercu.
+  Les trains existants continuent sans reconstruction, temporairement
+  depauses ; sortie par Echap ou clic/toucher consomme l'action et sa fin,
+  restaure pause, cadrage, suivi manuel, curseur et mode de fenetre exacts.
+  Mouvement, molette et autres touches sont ignores pour un usage kiosque.
+  Aucun lancement automatique par inactivite ni etat persiste.
 
 - La carte reste le premier plan : plus de panneau lateral permanent.
   Une barre discrete en haut regroupe Pause, Aide et Menu ; un
@@ -483,6 +539,10 @@ hors station ne sont pas une simulation de passages a niveau.
   lisibles. Mouvement, touche ou toucher les restaure
   immediatement, sans consommer l'action. Feuilles, dialogues, picker et gestes
   en cours empechent l'estompage. Aucun etat de repli n'est persiste.
+- Quand la simulation est en pause et que les transitions, le titre et les
+  notifications sont termines, la boucle de rendu s'arrete. Une entree ou un
+  redimensionnement la relance ; le mode contemplation conserve son animation.
+  La pause fige aussi l'ambiance jour/nuit, afin que l'image reste stable.
 - Aide et reglages sont centres sur la taille reelle de la vue, independamment
   du rail inferieur. Les reglages utilisent une pile directe sans ScrollContainer,
   avec hauteur adaptee au contenu et aux traductions ; l'aide garde son defilement
@@ -636,5 +696,10 @@ ne sont pas appliquees directement a un portable vu de pres.
   partagees (rayon du marqueur + 24px), puis reapparaissent progressivement
   sur 16px, sans coupure lumineuse nette ni changer bandes, voies physiques,
   phares ou simulation. Les chemins d'illumination sont caches au rebuild,
-  pas recalcules a chaque image. Les superpositions de raccords restent
-  discretes plutot que soulignees par une croix lumineuse.
+  et leurs commandes de dessin sont retenues ; seule l'opacite de nuit varie
+  par modulation. Les halos et ombres de corridor sont fusionnes en meshes par
+  ligne/couche. Les caisses et nez de cabine sont soumis en un lot de triangles
+  par rame, avec les memes sommets, couleurs et ordre entre rames. Les
+  superpositions de raccords restent discretes plutot que soulignees par une
+  croix lumineuse. Le grain mate utilise une texture periodique ancree au monde,
+  echantillonnee a ses deux echelles d'origine.

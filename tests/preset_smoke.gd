@@ -53,8 +53,9 @@ func _test_preset(path: String, jr_east: bool) -> void:
 		names[station.display_name] = station.id
 		positions[station.position] = true
 	for line: TransitLine in lines:
-		var expected_fleet := 2 if jr_east or line.display_name.begins_with("4 ") else 6
-		_check(not line.display_name.is_empty() and line.max_trains == expected_fleet and line.wagon_count == 2 and line.stations.size() >= 2, "Every preset path must retain its requested fleet and two-wagon trains.")
+		var expected_fleet: int = ([10, 8, 4, 6, 4, 4, 4, 8, 6, 6, 4] if jr_east else [10, 12, 2, 6])[line.id]
+		var expected_wagons := 2 if line.display_name.begins_with("4 ") else 3
+		_check(not line.display_name.is_empty() and line.max_trains == expected_fleet and line.wagon_count == expected_wagons and line.stations.size() >= 2, "Every preset path must retain its requested fleet and wagon count.")
 		for track_id: int in line.tracks:
 			var track := graph.tracks[track_id]
 			var length := TrackGeometry.length(TrackGeometry.sample(graph, track))
@@ -72,6 +73,7 @@ func _test_preset(path: String, jr_east: bool) -> void:
 		_test_tokyo(graph, lines, names)
 		_check(json.data.get("scope") == "central-tokyo-jr", "Tokyo must replace the sprawling regional preset.")
 	else:
+		_check(not TrackGeometry.corridor_layout(graph, lines)["aligned"], "Montreal must retain its existing non-overlapping route geometry.")
 		_check(metro_counts == [27, 31, 3, 12] and metro_stations.size() == 68, "Montréal must include every station on the four métro lines exactly once per service.")
 		_check(graph.stations.size() == 68 and lines.size() == 4 and graph.tracks.size() == 69, "Montréal must contain only the 68 métro stations, four lines and 69 physical tracks.")
 		_check(json.data.get("scope") == "montreal-metro-only" and not json.data.has("pedestrian_transfers"), "Montréal must exclude regional connections and projected extensions.")
@@ -94,23 +96,43 @@ func _test_preset(path: String, jr_east: bool) -> void:
 	var dispatcher := TransitDispatcher.new(graph)
 	dispatcher.lines.assign(lines)
 	dispatcher.rebuild_routes()
+	_test_station_connections(graph, lines, dispatcher.routes)
 	if jr_east:
 		_test_jr_corridor_separation(graph, lines, dispatcher.routes, names)
+		_test_jr_lane_clearance(graph, lines, dispatcher.routes)
 	var build_ms := (Time.get_ticks_usec() - start) / 1000.0
 	print("%s: routes built in %.1f ms." % [path, build_ms])
 	for line: TransitLine in lines:
-		_check(dispatcher.route_capacity(line) >= 1, "Each preset route must have room for service within its two-train ceiling: " + line.display_name)
-		if jr_east and line.id >= 7:
-			_check(dispatcher.route_capacity(line) >= 2 and dispatcher.service_fleet(line) == 2, "The new Tokaido and Shonan-Shinjuku services must support both trains.")
+		_check(dispatcher.route_capacity(line) >= 1, "Each preset route must have room for service: " + line.display_name)
+		_check(dispatcher.service_fleet(line) == line.max_trains, "Requested preset fleets must be sustainable, not just slider limits: " + line.display_name)
 		if not jr_east:
 			print("%s: capacity %d, service fleet %d, headway %.1fs." % [line.display_name, dispatcher.route_capacity(line), dispatcher.service_fleet(line), dispatcher.departure_headway(line)])
-			_check(dispatcher.service_fleet(line) == line.max_trains, "Requested Montréal fleets must be sustainable, not just slider limits.")
 	start = Time.get_ticks_usec()
 	var render_only := OS.get_cmdline_user_args().has("render-only")
 	var fast := OS.get_cmdline_user_args().has("--fast")
 	var simulation_seconds := 30.0 if jr_east or fast else 600.0
+	var observed_arrivals := {}
+	var shared_arrivals := 0
 	for frame in range(1 if render_only else int(simulation_seconds * 60)):
 		dispatcher.process(1.0 / 60.0, false)
+		for train: Metro in dispatcher.metros:
+			if train.arrival_count <= int(observed_arrivals.get(train.id, 0)):
+				continue
+			observed_arrivals[train.id] = train.arrival_count
+			var line := lines[train.line_id]
+			var circuit := TrackGeometry.route_for_direction(dispatcher.routes[line.id], train.travel_direction)
+			var stops: PackedFloat32Array = circuit["stops"]
+			var stop_index := (train.next_stop_index - 1 + stops.size()) % stops.size()
+			var station_index := _station_index_for_stop(line, train.travel_direction, stop_index, stops.size())
+			var station := graph.stations[line.stations[station_index]]
+			var clearance := TrackGeometry.station_stop_clearance(station.id, lines)
+			_check(absf(train.position.distance_to(station.position) - clearance) < 0.05, "An actual arrival must stop beside the station served by its line: %s / %s" % [line.display_name, station.display_name])
+			var serving := 0
+			for other: TransitLine in lines:
+				if other.stations.has(station.id):
+					serving += 1
+			if serving > 1:
+				shared_arrivals += 1
 	var simulation_ms := (Time.get_ticks_usec() - start) / 1000.0
 	var trains_per_line: Dictionary = {}
 	for train: Metro in dispatcher.metros:
@@ -120,11 +142,12 @@ func _test_preset(path: String, jr_east: bool) -> void:
 		var count := int(trains_per_line.get(line.id, 0))
 		_check(count > 0 and count <= line.max_trains, "Every preset path must dispatch within its fleet limit: " + line.display_name)
 		if jr_east and line.id >= 7 and not render_only:
-			_check(count == 2, "Both trains must actually enter service on each new southern JR route.")
+			_check(count >= 2, "Several trains must actually enter service on each southern JR route.")
 		if not jr_east and not render_only and not fast:
-			_check(count == line.max_trains, "Montréal must actually dispatch six trains per line, except two on yellow: " + line.display_name)
+			_check(count == line.max_trains, "Montréal must actually dispatch its full fleet on every line: " + line.display_name)
 	if not render_only:
 		_check(dispatcher.arrival_count > 0, "Preset simulation must continue making station calls.")
+		_check(shared_arrivals > 0, "Preset simulation must exercise an actual arrival at a shared station.")
 	print("%s: simulation completed in %.1f ms; loading menu/render caches." % [path, simulation_ms])
 	var main: Node = load("res://scenes/main.tscn").instantiate()
 	main.set("startup_layout_enabled", false)
@@ -185,6 +208,7 @@ func _test_montreal_shape(graph: TransitGraph, names: Dictionary) -> void:
 		_check(graph.stations[names[reference[0]]].position == reference[1], "Montréal must preserve its accepted shape at the tighter 48-unit spacing: " + reference[0])
 	var minimum_fit := TrackGeometry.train_length(2) + 40.0
 	_check(96.0 < minimum_fit and 144.0 >= minimum_fit and Vector2(96, 96).length() >= minimum_fit and Vector2(48, 48).length() < minimum_fit, "The compact straight runs must use the smallest axial/diagonal grid spacing that fits two wagons.")
+	_check(Vector2(96, 96).length() >= TrackGeometry.train_length(3) + 40.0 and Vector2(96, 96).length() < TrackGeometry.train_length(4) + 40.0, "The compact diagonal grid must fit three-wagon trains, the longest Montréal consist.")
 	_check(graph.stations[names["Monk"]].position.distance_to(graph.stations[names["Angrignon"]].position) == 144.0, "The western horizontal tail must use the minimum valid three-grid spacing.")
 	_check(graph.stations[names["Jean-Drapeau"]].position == Vector2(624, 0) and graph.stations[names["Longueuil–Université-de-Sherbrooke"]].position == Vector2(720, -96), "Yellow must retain the shortest tested grid layout supporting two simultaneous trains.")
 	var berri: Vector2 = graph.stations[names["Berri-UQAM"]].position
@@ -211,35 +235,221 @@ func _test_montreal_shape(graph: TransitGraph, names: Dictionary) -> void:
 		rightmost = maxf(rightmost, point.x)
 	_check(rightmost > maxf(edouard.x, outremont.x) and outremont.y < edouard.y, "Blue's central dogleg must bend east before returning northwest.")
 
+func _station_index_for_stop(line: TransitLine, direction: int, stop_index: int, stop_count: int) -> int:
+	if line.is_loop():
+		return line.stations.size() - 2 - stop_index if direction < 0 else stop_index
+	return stop_index + 1 if stop_index < line.stations.size() - 1 else stop_count - 1 - stop_index
+
+func _test_station_connections(graph: TransitGraph, lines: Array[TransitLine], routes: Dictionary) -> void:
+	var missing_centers := PackedStringArray()
+	var missing_lanes := PackedStringArray()
+	var misplaced_stops := PackedStringArray()
+	for line: TransitLine in lines:
+		var route: Dictionary = routes[line.id]
+		var centerline: PackedVector2Array = route["centerline"]
+		var lanes: Array = route["running_paths"]
+		var station_count := line.stations.size() - (1 if line.is_loop() else 0)
+		for station_index in range(station_count):
+			var station := graph.stations[line.stations[station_index]]
+			var serving := 0
+			for other: TransitLine in lines:
+				if other.stations.has(station.id):
+					serving += 1
+			var distance := TrackGeometry.closest_point(centerline, station.position).distance_to(station.position)
+			if distance > 6.0:
+				missing_centers.append("%s / %s: %.1f" % [line.display_name, station.display_name, distance])
+			for lane: PackedVector2Array in lanes:
+				distance = TrackGeometry.closest_point(lane, station.position).distance_to(station.position)
+				if distance > TrackGeometry.station_radius(serving) + 0.75:
+					missing_lanes.append("%s / %s: %.1f" % [line.display_name, station.display_name, distance])
+		var directions: Array[int] = [1]
+		if line.is_loop():
+			directions.append(-1)
+		for direction: int in directions:
+			var circuit := TrackGeometry.route_for_direction(route, direction)
+			var points: PackedVector2Array = circuit["points"]
+			var stops: PackedFloat32Array = circuit["stops"]
+			for stop_index in range(stops.size()):
+				var station_index := _station_index_for_stop(line, direction, stop_index, stops.size())
+				var station := graph.stations[line.stations[station_index]]
+				var stop := TrackGeometry.point_at_distance(points, stops[stop_index])
+				var clearance := TrackGeometry.station_stop_clearance(station.id, lines)
+				if absf(stop.distance_to(station.position) - clearance) > 0.05:
+					misplaced_stops.append("%s / %s: %.1f (expected %.1f)" % [line.display_name, station.display_name, stop.distance_to(station.position), clearance])
+				_check(stop_index == 0 or stops[stop_index] > stops[stop_index - 1], "Preset stops must stay in service order: " + line.display_name)
+	_check(missing_centers.is_empty(), "Every served station must lie on its service centerline: %d missing, examples %s" % [missing_centers.size(), str(missing_centers.slice(0, 8))])
+	_check(missing_lanes.is_empty(), "Both running lanes must reach every served station marker: %d missing, examples %s" % [missing_lanes.size(), str(missing_lanes.slice(0, 8))])
+	_check(misplaced_stops.is_empty(), "Trains must stop at their actual station markers in both directions: %d misplaced, examples %s" % [misplaced_stops.size(), str(misplaced_stops.slice(0, 8))])
+
+func _station_nearby_segments(points: PackedVector2Array, center: Vector2, radius: float) -> Array[PackedVector2Array]:
+	var result: Array[PackedVector2Array] = []
+	for index in range(1, points.size()):
+		var start := points[index - 1]
+		var delta := points[index] - start
+		var length_squared := delta.length_squared()
+		if length_squared < 0.000001:
+			continue
+		var relative := start - center
+		var b := 2.0 * relative.dot(delta)
+		var c := relative.length_squared() - radius * radius
+		var discriminant := b * b - 4.0 * length_squared * c
+		if discriminant < 0.0:
+			continue
+		var root := sqrt(discriminant)
+		var first := maxf(0.0, (-b - root) / (2.0 * length_squared))
+		var last := minf(1.0, (-b + root) / (2.0 * length_squared))
+		if first <= last:
+			result.append(PackedVector2Array([start + delta * first, start + delta * last]))
+	return result
+
+func _test_jr_lane_clearance(graph: TransitGraph, lines: Array[TransitLine], routes: Dictionary) -> void:
+	for line: TransitLine in lines:
+		var lanes: Array = routes[line.id]["running_paths"]
+		for station_index in range(0 if line.is_loop() else 1, line.stations.size() - 1):
+			var station := graph.stations[line.stations[station_index]]
+			var first := _station_nearby_segments(lanes[0], station.position, 64.0)
+			var second := _station_nearby_segments(lanes[1], station.position, 64.0)
+			var separation := INF
+			for a: PackedVector2Array in first:
+				for b: PackedVector2Array in second:
+					if Geometry2D.segment_intersects_segment(a[0], a[1], b[0], b[1]) is Vector2:
+						separation = 0.0
+						break
+					for point: Vector2 in a:
+						separation = minf(separation, point.distance_to(Geometry2D.get_closest_point_to_segment(point, b[0], b[1])))
+					for point: Vector2 in b:
+						separation = minf(separation, point.distance_to(Geometry2D.get_closest_point_to_segment(point, a[0], a[1])))
+				if separation == 0.0:
+					break
+			_check(separation >= TrackGeometry.CAR_WIDTH + 1.0, "Opposing Tokyo lanes must not fold together near intermediate stations: %s / %s (%.2f)" % [line.display_name, station.display_name, separation])
+
 func _test_jr_corridor_separation(graph: TransitGraph, lines: Array[TransitLine], routes: Dictionary, names: Dictionary) -> void:
+	var corridors := TrackGeometry.corridor_layout(graph, lines)
 	for pair: Array in [["Tokyo", "Kanda"], ["Kanda", "Akihabara"], ["Shimbashi", "Hamamatsucho"], ["Shibuya", "Ebisu"], ["Totsuka", "Ofuna"], ["Fujisawa", "Tsujido"], ["Hiratsuka", "Oiso"]]:
 		var track := graph.track_between(names[pair[0]], names[pair[1]])
-		var midpoint := graph.stations[track.a].position.lerp(graph.stations[track.b].position, 0.5)
+		var from_position: Vector2 = graph.stations[track.a].position
+		var to_position: Vector2 = graph.stations[track.b].position
+		var midpoint := from_position.lerp(to_position, 0.5)
+		var axis := (to_position - from_position).normalized()
 		var centers: Array[Vector2] = []
 		for line: TransitLine in lines:
 			if line.tracks.has(track.id):
-				centers.append(TrackGeometry.closest_point(routes[line.id]["centerline"], midpoint))
+				var center := _route_cross_section(routes[line.id]["centerline"], midpoint, axis, midpoint)
+				_check(center.is_finite(), "JR separation probes must intersect every shared route.")
+				if center.is_finite():
+					centers.append(center)
 		_check(centers.size() >= 2, "JR separation probes must cover shared corridors.")
 		for first in range(centers.size()):
 			for second in range(first + 1, centers.size()):
 				_check(centers[first].distance_to(centers[second]) >= 40.0, "Shared JR services must have distinct side-by-side corridors with a visible gap: " + pair[0] + " - " + pair[1])
-	for first in range(graph.tracks.size()):
-		var a := graph.tracks[first]
-		for second in range(first + 1, graph.tracks.size()):
-			var b := graph.tracks[second]
-			for ai in range(a.waypoints.size() - 1):
-				var axis := a.waypoints[ai + 1] - a.waypoints[ai]
-				for bi in range(b.waypoints.size() - 1):
-					var other_axis := b.waypoints[bi + 1] - b.waypoints[bi]
-					if not is_zero_approx(axis.cross(other_axis)) or not is_zero_approx(axis.cross(b.waypoints[bi] - a.waypoints[ai])):
-						continue
-					var direction := axis.normalized()
-					var a_start := a.waypoints[ai].dot(direction)
-					var a_end := a.waypoints[ai + 1].dot(direction)
-					var b_start := b.waypoints[bi].dot(direction)
-					var b_end := b.waypoints[bi + 1].dot(direction)
-					var overlap := minf(maxf(a_start, a_end), maxf(b_start, b_end)) - maxf(minf(a_start, a_end), minf(b_start, b_end))
-					_check(overlap <= 1.0, "Distinct JR physical tracks must not lie on top of each other: %s / %s" % [graph.stations[a.a].display_name, graph.stations[b.a].display_name])
+	var spacing: float = graph.stations[names["Tokyo"]].position.x / 12.0
+	var probes: Array = [
+		[[0, 4, 8, 9], Vector2(-16, -12), Vector2(-16, 11), "Yamanote west"],
+		[[0, 4, 8, 9], Vector2(-13, -16), Vector2(-15, -14), "Yamanote northwest bevel"],
+		[[0, 1, 5], Vector2(9, -16), Vector2(11, -14), "Yamanote northeast bevel"],
+		[[0, 1], Vector2(12, -12), Vector2(12, 11), "Yamanote east"],
+		[[0, 1, 7], Vector2(12, 1), Vector2(12, 11), "Tokyo–Shimbashi"],
+		[[0], Vector2(-15, 13), Vector2(-11, 17), "Yamanote southwest bevel"],
+		[[0, 1, 7], Vector2(11, 13), Vector2(7, 17), "Yamanote southeast bevel"],
+		[[0, 1, 7], Vector2(-9, 18), Vector2(5, 18), "Yamanote southern shelf"],
+		[[2, 3], Vector2(-34, -6), Vector2(-18, -6), "Nakano–Shinjuku"],
+		[[2, 3], Vector2(-11, -3), Vector2(-9, -3), "Chuo central lower shelf"],
+		[[2, 3], Vector2(-7, -4), Vector2(0, -11), "Chuo central diagonal"],
+		[[2, 3], Vector2(3, -12), Vector2(8, -12), "Chuo central upper shelf"],
+		[[4, 8, 9], Vector2(-7, -28), Vector2(-11, -24), "Akabane approach"],
+		[[8, 9], Vector2(-18, 12), Vector2(-28, 12), "Osaki–Musashi-Kosugi"],
+		[[8, 9], Vector2(-31, 13), Vector2(-35, 17), "Musashi-Kosugi–Yokohama"],
+		[[7, 8, 9], Vector2(-38, 18), Vector2(-50, 18), "Yokohama–Ofuna"],
+		[[7, 8], Vector2(-56, 11), Vector2(-56, 13), "Shonan coast"]
+	]
+	for probe: Array in probes:
+		var ids: Array[int] = []
+		ids.assign(probe[0])
+		_check_parallel_routes(graph, lines, routes, corridors, ids, probe[1] * spacing, probe[2] * spacing, probe[3])
+	# Services with the local stops keep the station axis, so neither Tokaido nor Zushi bumps.
+	for spine: Array in [[7, Vector2(-11, 18), Vector2(-35, 18), "Tokaido through Kawasaki"], [9, Vector2(-37, 18), Vector2(-51, 18), "Yokosuka local through Hodogaya"]]:
+		var slot: Variant = _spine_slot(corridors, lines[spine[0]], spine[1] * spacing, spine[2] * spacing)
+		_check(slot != null and is_zero_approx(slot), spine[3] + " must stay centered on the station axis.")
+		var route_points: PackedVector2Array = routes[spine[0]]["centerline"]
+		for step in range(1, 20):
+			var probe: Vector2 = (spine[1] as Vector2).lerp(spine[2], float(step) / 20.0) * spacing
+			var point := _route_cross_section(route_points, probe, Vector2.RIGHT, probe)
+			_check(point.is_finite() and absf(point.y - probe.y) < 0.05, spine[3] + " must run straight without station detours.")
+	for station_name: String in ["Oimachi", "Omori", "Kamata"]:
+		_check(is_equal_approx(graph.stations[names[station_name]].position.y - graph.stations[names["Shinagawa"]].position.y, TrackGeometry.CORRIDOR_SPACING), "Keihin-Tohoku's southern stops must sit one slot off the Tokaido axis: " + station_name)
+
+func _route_cross_section(points: PackedVector2Array, position: Vector2, axis: Vector2, target: Vector2) -> Vector2:
+	var best := Vector2(INF, INF)
+	for index in range(1, points.size()):
+		var first := points[index - 1]
+		var last := points[index]
+		var before := (first - position).dot(axis)
+		var after := (last - position).dot(axis)
+		if before * after > 0.0 or absf(after - before) < 0.00001:
+			continue
+		var candidate := first.lerp(last, -before / (after - before))
+		if candidate.distance_squared_to(target) < best.distance_squared_to(target):
+			best = candidate
+	return best
+
+func _spine_slot(corridors: Dictionary, line: TransitLine, start: Vector2, finish: Vector2) -> Variant:
+	var axis := (finish - start).normalized()
+	var normal := Vector2(-axis.y, axis.x)
+	var span := start.distance_to(finish)
+	for track_id: int in line.tracks:
+		for segment: Dictionary in corridors["tracks"][track_id]:
+			var first: Vector2 = segment["a"]
+			var last: Vector2 = segment["b"]
+			if absf((first - start).dot(normal)) > 0.01 or absf((last - start).dot(normal)) > 0.01:
+				continue
+			var low := minf((first - start).dot(axis), (last - start).dot(axis))
+			var high := maxf((first - start).dot(axis), (last - start).dot(axis))
+			if minf(high, span) <= maxf(low, 0.0) + 0.01:
+				continue
+			var bundle: Dictionary = segment["bundle"]
+			var shift: Vector2 = bundle["normal"] * float(bundle["slots"][line.id]) * TrackGeometry.CORRIDOR_SPACING
+			return shift.dot(normal)
+	return null
+
+func _check_parallel_routes(graph: TransitGraph, lines: Array[TransitLine], routes: Dictionary, corridors: Dictionary, line_ids: Array[int], start: Vector2, finish: Vector2, label: String) -> void:
+	var axis := (finish - start).normalized()
+	var normal := Vector2(-axis.y, axis.x)
+	var expected := {}
+	var checked := {}
+	var errors := PackedStringArray()
+	for line_id: int in line_ids:
+		expected[line_id] = _spine_slot(corridors, lines[line_id], start, finish)
+		checked[line_id] = 0
+		_check(expected[line_id] != null, "%s must have a geometric spine for line %d." % [label, line_id])
+	for step in range(101):
+		var probe := start.lerp(finish, float(step) / 100.0)
+		var offsets: Array[float] = []
+		for line_id: int in line_ids:
+			if expected[line_id] == null:
+				continue
+			var slot: float = expected[line_id]
+			var transition := 24.0 if is_zero_approx(slot) else maxf(TrackGeometry.STATION_TRANSITION_MIN, absf(slot)) + 24.0
+			var near_station := false
+			for station_id: int in lines[line_id].stations:
+				var delta: Vector2 = graph.stations[station_id].position - probe
+				if absf(delta.dot(normal)) < 0.01 and absf(delta.dot(axis)) <= transition:
+					near_station = true
+					break
+			if near_station:
+				continue
+			var point := _route_cross_section(routes[line_id]["centerline"], probe, axis, probe + normal * slot)
+			if not point.is_finite() or absf((point - probe).dot(normal) - slot) > 0.05:
+				errors.append("line %d at step %d" % [line_id, step])
+				continue
+			checked[line_id] += 1
+			offsets.append((point - probe).dot(normal))
+		for first in range(offsets.size()):
+			for second in range(first + 1, offsets.size()):
+				if absf(offsets[first] - offsets[second]) < TrackGeometry.CORRIDOR_SPACING - 0.05:
+					errors.append("overlapping slots at step %d" % step)
+	for line_id: int in line_ids:
+		_check(checked[line_id] > 0, "%s must include a tested straight section for line %d away from its station approaches." % [label, line_id])
+	_check(errors.is_empty(), "%s must keep its separated straight slots outside station approaches: %d failures, examples %s" % [label, errors.size(), str(errors.slice(0, 8))])
 
 func _test_tokyo(graph: TransitGraph, lines: Array[TransitLine], names: Dictionary) -> void:
 	var expected := [
@@ -252,9 +462,10 @@ func _test_tokyo(graph: TransitGraph, lines: Array[TransitLine], names: Dictiona
 		"Tokyo,Hatchobori,Etchujima,Shiomi,Shin-Kiba",
 		"Tokyo,Shimbashi,Shinagawa,Kawasaki,Yokohama,Totsuka,Ofuna,Fujisawa,Tsujido,Chigasaki,Hiratsuka,Oiso,Ninomiya,Kozu,Kamonomiya,Odawara",
 		"Akabane,Ikebukuro,Shinjuku,Shibuya,Ebisu,Osaki,Musashi-Kosugi,Yokohama,Totsuka,Ofuna,Fujisawa,Tsujido,Chigasaki,Hiratsuka,Oiso,Ninomiya,Kozu,Kamonomiya,Odawara",
-		"Akabane,Ikebukuro,Shinjuku,Shibuya,Ebisu,Osaki,Nishi-Oi,Musashi-Kosugi,Shin-Kawasaki,Yokohama,Hodogaya,Higashi-Totsuka,Totsuka,Ofuna,Kita-Kamakura,Kamakura,Zushi"
+		"Akabane,Ikebukuro,Shinjuku,Shibuya,Ebisu,Osaki,Nishi-Oi,Musashi-Kosugi,Shin-Kawasaki,Yokohama,Hodogaya,Higashi-Totsuka,Totsuka,Ofuna,Kita-Kamakura,Kamakura,Zushi",
+		"Hamamatsucho,Tennozu Isle,Oi Keibajo Mae,Ryutsu Center,Showajima,Seibijo,Tenkubashi,Haneda Airport Terminal 3,Shin-Seibijo,Haneda Airport Terminal 1,Haneda Airport Terminal 2"
 	]
-	_check(graph.stations.size() == 80 and graph.tracks.size() == 97 and lines.size() == expected.size(), "Tokyo and its requested Shonan extensions must contain 80 stations, 97 tracks and ten services.")
+	_check(graph.stations.size() == 90 and graph.tracks.size() == 107 and lines.size() == expected.size(), "Tokyo, its requested Shonan extensions and the Haneda monorail must contain 90 stations, 107 tracks and eleven services.")
 	for station_name: String in ["Hiratsuka", "Fujisawa", "Odawara"]:
 		_check(lines[7].stations.has(names[station_name]) and lines[8].stations.has(names[station_name]) and not lines[9].stations.has(names[station_name]), "Tokaido and Odawara-bound Shonan-Shinjuku must share their southern stations: " + station_name)
 	for station_name: String in ["Nishi-Oi", "Shin-Kawasaki", "Hodogaya", "Higashi-Totsuka"]:
@@ -276,6 +487,75 @@ func _test_tokyo(graph: TransitGraph, lines: Array[TransitLine], names: Dictiona
 	for station_id: int in lines[0].stations:
 		loop.append(graph.stations[station_id].position)
 	loop.resize(loop.size() - 1)
-	_check(not Geometry2D.triangulate_polygon(loop).is_empty(), "The Yamanote backbone must be a simple oval, not a tangled region.")
+	_check(not Geometry2D.triangulate_polygon(loop).is_empty(), "The Yamanote backbone must be a simple loop, not a tangled region.")
 	for station_name: String in ["Yotsuya", "Ichigaya", "Iidabashi", "Suidobashi", "Ochanomizu"]:
 		_check(Geometry2D.is_point_in_polygon(graph.stations[names[station_name]].position, loop), "Chuo's central cross-city corridor must sit inside the Yamanote loop: " + station_name)
+	_test_tokyo_numbering_shape(graph, names)
+
+func _test_tokyo_numbering_shape(graph: TransitGraph, names: Dictionary) -> void:
+	var spacing: float = graph.stations[names["Tokyo"]].position.x / 12.0
+	for reference: Array in [["Tokyo", Vector2(12, 0)], ["Shinjuku", Vector2(-16, -6)], ["Ikebukuro", Vector2(-12, -17)], ["Shinagawa", Vector2(-10, 18)], ["Ofuna", Vector2(-52, 18)], ["Odawara", Vector2(-62, 20)]]:
+		_check(graph.stations[names[reference[0]]].position == reference[1] * spacing, "Tokyo must retain its accepted station-numbering schematic anchors: " + reference[0])
+	var previous_y := -INF
+	var west: float = graph.stations[names["Shinjuku"]].position.x
+	for station_name: String in ["Takadanobaba", "Shin-Okubo", "Shinjuku", "Yoyogi", "Harajuku", "Shibuya", "Ebisu", "Meguro", "Gotanda", "Osaki"]:
+		var position: Vector2 = graph.stations[names[station_name]].position
+		_check(position.x == west and position.y > previous_y, "Yamanote's western side must stay straight through Osaki: " + station_name)
+		previous_y = position.y
+	previous_y = -INF
+	var east: float = graph.stations[names["Tokyo"]].position.x
+	for station_name: String in ["Ueno", "Okachimachi", "Akihabara", "Kanda", "Tokyo", "Yurakucho", "Shimbashi"]:
+		var position: Vector2 = graph.stations[names[station_name]].position
+		_check(position.x == east and position.y > previous_y, "Yamanote's eastern side must stay straight through Tokyo: " + station_name)
+		previous_y = position.y
+	var previous_x := -INF
+	var north: float = graph.stations[names["Tabata"]].position.y
+	for station_name: String in ["Otsuka", "Sugamo", "Komagome", "Tabata"]:
+		var position: Vector2 = graph.stations[names[station_name]].position
+		_check(position.y == north and position.x > previous_x, "Yamanote's northern shelf must remain horizontal: " + station_name)
+		previous_x = position.x
+	previous_x = -INF
+	var south: float = graph.stations[names["Shinagawa"]].position.y
+	var loop_ratio := (east - west) / (south - north)
+	_check(loop_ratio >= 0.65 and loop_ratio <= 0.85, "Yamanote must retain the broad loop proportions of the station-numbering schematic.")
+	for station_name: String in ["Shinagawa", "Takanawa Gateway", "Tamachi"]:
+		var position: Vector2 = graph.stations[names[station_name]].position
+		_check(position.y == south and position.x > previous_x, "Yamanote must have a flat southern base before turning toward Hamamatsucho: " + station_name)
+		previous_x = position.x
+	var top_left: Vector2 = graph.stations[names["Otsuka"]].position
+	var top_right: Vector2 = graph.stations[names["Tabata"]].position
+	var bottom_left: Vector2 = graph.stations[names["Shinagawa"]].position
+	var bottom_right: Vector2 = graph.stations[names["Tamachi"]].position
+	var northwest: Vector2 = graph.stations[names["Mejiro"]].position
+	var northeast: Vector2 = graph.stations[names["Ueno"]].position
+	var southwest: Vector2 = graph.stations[names["Osaki"]].position
+	var southeast: Vector2 = graph.stations[names["Shimbashi"]].position
+	var center_x := (west + east) * 0.5
+	var width := east - west
+	_check(northwest.y == northeast.y and southwest.y == southeast.y, "Yamanote's paired shoulders must line up to form a balanced faceted loop.")
+	_check(is_equal_approx((top_left.x + top_right.x) * 0.5, center_x) and is_equal_approx((bottom_left.x + bottom_right.x) * 0.5, center_x), "Yamanote's northern and southern shelves must be centered between its sides.")
+	_check((top_right.x - top_left.x) / width >= 0.35 and (top_right.x - top_left.x) / width <= 0.5 and (bottom_right.x - bottom_left.x) / width >= 0.45 and (bottom_right.x - bottom_left.x) / width <= 0.65, "Yamanote must taper visibly at both ends, rather than read as a rectangle.")
+	for bevel: Vector2 in [top_left - northwest, northeast - top_right, bottom_left - southwest, southeast - bottom_right]:
+		_check(not bevel.is_zero_approx() and is_equal_approx(absf(bevel.x), absf(bevel.y)), "Yamanote's four shoulders must follow clean 45-degree bevels.")
+	for corner: Array in [[top_left, northwest, "Ikebukuro"], [top_right, northeast, "Nishi-Nippori"], [top_right, northeast, "Nippori"], [top_right, northeast, "Uguisudani"], [bottom_right, southeast, "Hamamatsucho"]]:
+		var point: Vector2 = graph.stations[names[corner[2]]].position
+		_check(Geometry2D.get_closest_point_to_segment(point, corner[0], corner[1]).distance_to(point) < 0.01, "Yamanote shoulder stations must follow the same straight facet: " + corner[2])
+	previous_x = INF
+	for station_name: String in ["Shinagawa", "Kawasaki", "Yokohama", "Totsuka", "Ofuna"]:
+		var position: Vector2 = graph.stations[names[station_name]].position
+		_check(position.y == south and position.x < previous_x, "Tokaido must run west, not south, toward Ofuna: " + station_name)
+		previous_x = position.x
+	var ofuna: Vector2 = graph.stations[names["Ofuna"]].position
+	var chigasaki: Vector2 = graph.stations[names["Chigasaki"]].position
+	var hiratsuka: Vector2 = graph.stations[names["Hiratsuka"]].position
+	_check(chigasaki.y < ofuna.y and chigasaki.y == hiratsuka.y and hiratsuka.x < chigasaki.x, "The Shonan coast must fold north through Chigasaki and west to Hiratsuka.")
+	var coastal_roof := chigasaki.y
+	for point: Vector2 in graph.track_between(names["Chigasaki"], names["Hiratsuka"]).waypoints:
+		coastal_roof = minf(coastal_roof, point.y)
+	_check(graph.stations[names["Odawara"]].position.y - coastal_roof <= (south - north) * 0.4, "The western coastal fold must stay compact instead of rivaling Yamanote in height.")
+	var bounds := Rect2(graph.stations[0].position, Vector2.ZERO)
+	for station: Station in graph.stations:
+		bounds = bounds.expand(station.position)
+	_check(bounds.size.x >= bounds.size.y * 1.7, "The Tokyo preset must preserve the wide, flat station-numbering arrangement.")
+	for station_name: String in ["Fujisawa", "Tsujido", "Chigasaki", "Hiratsuka", "Oiso", "Ninomiya", "Kozu", "Kamonomiya", "Odawara"]:
+		_check(graph.stations[names[station_name]].position.y <= south + 3.0 * spacing, "The Tokaido extension must not stretch far below Yamanote: " + station_name)

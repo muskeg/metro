@@ -10,7 +10,140 @@ func _check(condition: bool, message: String) -> void:
 		push_error(message)
 		_failed = true
 
+func _check_route_index(route: Dictionary, label: String) -> void:
+	var points: PackedVector2Array = route["points"]
+	var cumulative: PackedFloat64Array = route["cumulative_lengths"]
+	var total: float = route["length"]
+	_check(cumulative.size() == points.size(), "%s route must cache one cumulative distance per point." % label)
+	if points.is_empty():
+		return
+	var distances: Array[float] = [-1.0, 0.0, total, total + 1.0]
+	for index in range(points.size()):
+		distances.append(cumulative[index])
+		if index > 0 and index % 17 == 0:
+			distances.append((cumulative[index - 1] + cumulative[index]) * 0.5)
+	for distance: float in distances:
+		var reference := TrackGeometry.point_at_distance(points, distance)
+		var indexed := TrackGeometry.point_at_distance(points, distance, cumulative)
+		_check(reference.distance_to(indexed) < 0.0001, "%s indexed lookup must preserve point-at-distance results." % label)
+		if total > 0.0:
+			var reference_axis := TrackGeometry.car_axis(points, total, distance, distance)
+			var indexed_axis := TrackGeometry.car_axis(points, total, distance, distance, cumulative)
+			_check(reference_axis.distance_to(indexed_axis) < 0.0001, "%s indexed lookup must preserve car axes." % label)
+
+func _test_parallel_express() -> void:
+	var graph := TransitGraph.new()
+	for index in range(4):
+		graph.add_station(Vector2(0, index * 384))
+	var local := TransitLine.new(0, Color.CYAN)
+	for station_id in range(4):
+		local.append_station(graph, station_id)
+	var express := TransitLine.new(1, Color.ORANGE)
+	express.append_station(graph, 3)
+	express.append_station(graph, 0)
+	var lines: Array[TransitLine] = [local, express]
+	var corridors := TrackGeometry.corridor_layout(graph, lines)
+	_check(corridors["aligned"], "Overlapping express/local geometry must form a shared corridor even with different stop sequences.")
+	for line: TransitLine in lines:
+		var route := TrackGeometry.circuit(graph, line, lines, corridors)
+		_check(route["centerline"] == TrackGeometry.circuit(graph, line, lines)["centerline"], "Cached and standalone corridor construction must agree.")
+		_check(route["stops"].size() == 2 * (line.stations.size() - 1), "Sharing a geometric spine must never add express stops.")
+		_check_served_stations(graph, line, lines, route)
+		var expected_x := 0.0 if line == local else TrackGeometry.CORRIDOR_SPACING
+		for probe: Vector2 in [Vector2(0, 192), Vector2(0, 384), Vector2(0, 576), Vector2(0, 768), Vector2(0, 960)]:
+			var expected := probe + Vector2(expected_x, 0)
+			_check(TrackGeometry.closest_point(route["centerline"], probe).distance_to(expected) < 0.001, "Local and reversed express services must stay straight and separated away from their calls, including skipped stations.")
+		_check_route_index(route, "Parallel express/local")
+	_check(graph.stations.size() == 4 and graph.tracks.size() == 4, "Corridor alignment must not change graph topology.")
+	graph.stations[3].position = Vector2(768, 768)
+	graph.track_between(2, 3).waypoints = PackedVector2Array([Vector2(0, 768), Vector2(768, 768)])
+	graph.track_between(3, 0).waypoints = PackedVector2Array([Vector2(768, 768), Vector2(0, 768), Vector2.ZERO])
+	corridors = TrackGeometry.corridor_layout(graph, lines)
+	for line: TransitLine in lines:
+		var route := TrackGeometry.circuit(graph, line, lines, corridors)
+		_check_served_stations(graph, line, lines, route)
+		var offset := 0.0 if line == local else TrackGeometry.CORRIDOR_SPACING
+		for probe: Vector2 in [Vector2(0, 576), Vector2(192, 768), Vector2(576, 768)]:
+			var expected := probe + (Vector2(offset, 0) if probe.x == 0.0 else Vector2(0, -offset))
+			_check(TrackGeometry.closest_point(route["centerline"], probe).distance_to(expected) < 0.001, "Parallel service slots must continue consistently around a shared corner.")
+		var corner_distance := TrackGeometry.closest_point(route["centerline"], graph.stations[2].position).distance_to(graph.stations[2].position)
+		_check(corner_distance < 6.0 if line == local else corner_distance > 20.0, "A local corner must reach its station without pulling a non-stopping express off its spine.")
+		_check_route_index(route, "Parallel express/local corner")
+
+func _check_served_stations(graph: TransitGraph, line: TransitLine, lines: Array[TransitLine], route: Dictionary) -> void:
+	var centerline: PackedVector2Array = route["centerline"]
+	var lanes: Array = route["running_paths"]
+	var count := line.stations.size() - (1 if line.is_loop() else 0)
+	for index in range(count):
+		var station := graph.stations[line.stations[index]]
+		_check(TrackGeometry.closest_point(centerline, station.position).distance_to(station.position) < 6.0, "Every service centerline must reach each of its stations.")
+		var serving := 0
+		for other: TransitLine in lines:
+			if other.stations.has(station.id):
+				serving += 1
+		for lane: PackedVector2Array in lanes:
+			_check(TrackGeometry.closest_point(lane, station.position).distance_to(station.position) <= TrackGeometry.station_radius(serving) + 0.75, "Both running lanes must meet each served station marker.")
+	var directions: Array[int] = [1]
+	if line.is_loop():
+		directions.append(-1)
+	for direction: int in directions:
+		var circuit := TrackGeometry.route_for_direction(route, direction)
+		var points: PackedVector2Array = circuit["points"]
+		var stops: PackedFloat32Array = circuit["stops"]
+		for index in range(stops.size()):
+			var station_index := index
+			if line.is_loop() and direction < 0:
+				station_index = line.stations.size() - 2 - index
+			elif not line.is_loop():
+				station_index = index + 1 if index < line.stations.size() - 1 else stops.size() - 1 - index
+			var station := graph.stations[line.stations[station_index]]
+			var stop := TrackGeometry.point_at_distance(points, stops[index])
+			var clearance := TrackGeometry.station_stop_clearance(station.id, lines)
+			_check(absf(stop.distance_to(station.position) - clearance) < 1.0, "Each actual train stop must be on the approach side of its own station.")
+			if index > 0:
+				_check(stops[index] > stops[index - 1], "Stations must remain in travel order after route rebuilding.")
+
+func _test_shared_track_stations() -> void:
+	var graph := TransitGraph.new()
+	for index in range(3):
+		graph.add_station(Vector2(index * 384, 0))
+	var first := TransitLine.new(0, Color.CYAN)
+	var reverse := TransitLine.new(1, Color.ORANGE)
+	for station_id: int in [0, 1, 2]:
+		first.append_station(graph, station_id)
+	for station_id: int in [2, 1, 0]:
+		reverse.append_station(graph, station_id)
+	var lines: Array[TransitLine] = [first, reverse]
+	var corridors := TrackGeometry.corridor_layout(graph, lines)
+	_check(not corridors["aligned"], "Shared physical tracks must also be tested without distinct-edge alignment.")
+	var routes: Array[Dictionary] = []
+	for line: TransitLine in lines:
+		var route := TrackGeometry.circuit(graph, line, lines, corridors)
+		routes.append(route)
+		_check_served_stations(graph, line, lines, route)
+		_check_route_index(route, "Shared physical track")
+	for probe: Vector2 in [Vector2(192, 0), Vector2(576, 0)]:
+		var first_center := TrackGeometry.closest_point(routes[0]["centerline"], probe)
+		var second_center := TrackGeometry.closest_point(routes[1]["centerline"], probe)
+		_check(first_center.distance_to(second_center) >= TrackGeometry.CORRIDOR_SPACING - 0.01, "Shared physical tracks must retain separated slots between their stations.")
+
+func _test_collinear_loop_seam() -> void:
+	var graph := TransitGraph.new()
+	for position: Vector2 in [Vector2.ZERO, Vector2(0, 384), Vector2(768, 384), Vector2(768, 0), Vector2(576, 0), Vector2(384, 0), Vector2(192, 0)]:
+		graph.add_station(position)
+	var line := TransitLine.new(0, Color.CYAN)
+	for station_id: int in [0, 1, 2, 3, 4, 5, 6, 0]:
+		line.append_station(graph, station_id)
+	var lines: Array[TransitLine] = [line]
+	var route := TrackGeometry.circuit(graph, line, lines)
+	_check_served_stations(graph, line, lines, route)
+	_check_route_index(route, "Collinear loop seam")
+	_check_route_index(route["reverse_route"], "Reversed collinear loop seam")
+
 func _run_test() -> void:
+	_test_parallel_express()
+	_test_shared_track_stations()
+	_test_collinear_loop_seam()
 	var straight := TransitGraph.new()
 	for position: Vector2 in [Vector2.ZERO, Vector2(192, 0), Vector2(576, 0)]:
 		straight.add_station(position)
@@ -19,6 +152,7 @@ func _run_test() -> void:
 		straight_line.append_station(straight, station_id)
 	var straight_lines: Array[TransitLine] = [straight_line]
 	var straight_route := TrackGeometry.circuit(straight, straight_line, straight_lines)
+	_check_route_index(straight_route, "Straight")
 	var straight_stops: PackedFloat32Array = straight_route["stops"]
 	for index in range(4):
 		if index == 1 or index == 3:
@@ -36,6 +170,7 @@ func _run_test() -> void:
 		corner_line.append_station(corner, station_id)
 	var corner_lines: Array[TransitLine] = [corner_line]
 	var corner_route := TrackGeometry.circuit(corner, corner_line, corner_lines)
+	_check_route_index(corner_route, "Corner")
 	var lanes: Array = corner_route["running_paths"]
 	for point: Vector2 in lanes[0]:
 		if point.distance_to(corner.stations[1].position) > 64.0:

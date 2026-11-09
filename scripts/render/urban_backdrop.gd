@@ -3,6 +3,7 @@ extends Node2D
 
 const NIGHT_COLOR := Color("#03060c")
 const SURFACE_SHADER := preload("res://scripts/render/matte_surface.gdshader")
+const GRAIN_TEXTURE := preload("res://assets/textures/paper_grain.png")
 
 var view_center := Vector2.ZERO
 var view_zoom := Vector2.ONE
@@ -11,6 +12,7 @@ var time_of_day := 0.5
 func _ready() -> void:
 	var surface := ShaderMaterial.new()
 	surface.shader = SURFACE_SHADER
+	surface.set_shader_parameter("grain_texture", GRAIN_TEXTURE)
 	material = surface
 	get_viewport().size_changed.connect(queue_redraw)
 	queue_redraw()
