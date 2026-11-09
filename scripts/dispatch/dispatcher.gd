@@ -17,6 +17,8 @@ var _next_spawn_return: Dictionary = {}
 var _clock := 0.0
 var visits: Array[StationVisit] = []
 var _terminal_owners: Dictionary = {}
+var _estimates: Dictionary = {}
+var _circuit_members: Dictionary = {}
 
 func _init(transit_graph: TransitGraph) -> void:
 	graph = transit_graph
@@ -31,9 +33,11 @@ func rebuild_routes() -> void:
 	_last_departures.clear()
 	_next_spawn_return.clear()
 	_terminal_owners.clear()
+	_estimates.clear()
 	_clock = 0.0
+	var corridors := TrackGeometry.corridor_layout(graph, lines)
 	for line: TransitLine in lines:
-		routes[line.id] = TrackGeometry.circuit(graph, line, lines)
+		routes[line.id] = TrackGeometry.circuit(graph, line, lines, corridors)
 		line.dispatch_elapsed = INF
 
 func _stop_key(line: TransitLine, direction: int, stop_index: int) -> String:
@@ -64,7 +68,25 @@ func _section_time(distance: float, line: TransitLine) -> float:
 		return peak / line.acceleration + peak / line.braking
 	return distance / velocity + velocity * 0.5 * (1.0 / line.acceleration + 1.0 / line.braking)
 
+# Service estimates walk every stop; memoize them until the route or a tunable changes.
+func _estimate_cache(line: TransitLine) -> Dictionary:
+	var route: Variant = routes.get(line.id)
+	var signature := [line.dispatch_rate, line.dwell_time, line.cruise_velocity, line.acceleration, line.braking,
+		line.terminal_recovery, line.wagon_count, line.max_trains, line.stations.size(), line.tracks.size(), line.is_loop()]
+	var entry: Dictionary = _estimates.get(line.id, {})
+	if entry.is_empty() or not is_same(entry["route"], route) or entry["signature"] != signature:
+		entry = {"route": route, "signature": signature, "values": {}}
+		_estimates[line.id] = entry
+	return entry["values"]
+
 func cycle_time(line: TransitLine, direction: int = 1) -> float:
+	var cache := _estimate_cache(line)
+	var key := "cycle%d" % direction
+	if not cache.has(key):
+		cache[key] = _compute_cycle_time(line, direction)
+	return cache[key]
+
+func _compute_cycle_time(line: TransitLine, direction: int) -> float:
 	var route := TrackGeometry.route_for_direction(routes[line.id], direction)
 	var stops: PackedFloat32Array = route["stops"]
 	var total: float = route["length"]
@@ -81,6 +103,12 @@ func minimum_headway(line: TransitLine) -> float:
 	return line.dwell_time + StationVisit.MAX_EXTRA_DWELL + line.terminal_recovery * (0.0 if line.is_loop() else 1.0) + sqrt(2.0 * clearance / line.acceleration) + REACTION_TIME
 
 func route_capacity(line: TransitLine) -> int:
+	var cache := _estimate_cache(line)
+	if not cache.has("capacity"):
+		cache["capacity"] = _compute_route_capacity(line)
+	return cache["capacity"]
+
+func _compute_route_capacity(line: TransitLine) -> int:
 	if not routes.has(line.id) or line.tracks.is_empty():
 		return 0
 	if not line.is_loop() and not routes[line.id]["terminal_ready"]:
@@ -107,6 +135,12 @@ func train_limit(line: TransitLine) -> int:
 	return mini(line.max_trains, route_capacity(line))
 
 func recommended_fleet(line: TransitLine) -> int:
+	var cache := _estimate_cache(line)
+	if not cache.has("recommended"):
+		cache["recommended"] = _compute_recommended_fleet(line)
+	return cache["recommended"]
+
+func _compute_recommended_fleet(line: TransitLine) -> int:
 	if route_capacity(line) == 0:
 		return 0
 	var headway := maxf(line.dispatch_rate, minimum_headway(line))
@@ -119,6 +153,13 @@ func service_fleet(line: TransitLine) -> int:
 	return mini(train_limit(line), recommended_fleet(line))
 
 func departure_headway(line: TransitLine, direction: int = 1) -> float:
+	var cache := _estimate_cache(line)
+	var key := "headway%d" % direction
+	if not cache.has(key):
+		cache[key] = _compute_departure_headway(line, direction)
+	return cache[key]
+
+func _compute_departure_headway(line: TransitLine, direction: int) -> float:
 	var fleet := maxi(1, service_fleet(line))
 	if line.is_loop():
 		fleet = maxi(1, (fleet + (1 if direction == 1 else 0)) / 2)
@@ -135,6 +176,10 @@ func process(delta: float, paused: bool) -> void:
 
 func _tick(delta: float) -> void:
 	_clock += delta
+	for metro: Metro in metros:
+		metro.previous_distance = metro.distance
+		metro.previous_travel_direction = metro.travel_direction
+		metro.render_pose_valid = false
 	_release_terminals()
 	for index in range(visits.size() - 1, -1, -1):
 		var visit := visits[index]
@@ -163,8 +208,18 @@ func _tick(delta: float) -> void:
 				if spawned:
 					_next_spawn_return[line.id] = not returning
 					line.dispatch_elapsed = 0.0
+	_circuit_members.clear()
+	for metro: Metro in metros:
+		var circuit := _circuit_key(metro.line_id, metro.travel_direction)
+		if not _circuit_members.has(circuit):
+			_circuit_members[circuit] = []
+		_circuit_members[circuit].append(metro)
 	for metro: Metro in metros:
 		_advance_metro(metro, delta)
+	_circuit_members.clear()
+
+func _circuit_key(line_id: int, direction: int) -> int:
+	return line_id * 2 + (1 if direction == -1 and lines[line_id].is_loop() else 0)
 
 func _retire_surplus() -> void:
 	for line: TransitLine in lines:
@@ -225,6 +280,8 @@ func _spawn_if_clear(line: TransitLine, return_direction: bool) -> bool:
 	var metro := Metro.new(_next_metro_id, line.id, Vector2.ZERO)
 	metro.travel_direction = direction
 	metro.distance = spawn_distance
+	metro.previous_distance = spawn_distance
+	metro.previous_travel_direction = direction
 	metro.wagon_count = line.wagon_count
 	metro.next_stop_index = (station_index + 1) % stops.size()
 	metro.station_arrival_time = _clock
@@ -244,7 +301,9 @@ func movement_authority(metro: Metro) -> float:
 	var route := TrackGeometry.route_for_direction(routes[metro.line_id], metro.travel_direction)
 	var total: float = route["length"]
 	var available := total
-	for other: Metro in metros:
+	# During a tick, membership is fixed and non-loop travel_direction changes keep the same key.
+	var candidates: Array = _circuit_members.get(_circuit_key(metro.line_id, metro.travel_direction), metros) if not _circuit_members.is_empty() else metros
+	for other: Metro in candidates:
 		if other.id == metro.id or not _same_circuit(other, metro.line_id, metro.travel_direction):
 			continue
 		var gap := fposmod(other.distance - metro.distance, total)
@@ -372,7 +431,7 @@ func _advance_metro(metro: Metro, delta: float) -> void:
 		metro.next_stop_index = (metro.next_stop_index + 1) % stops.size()
 
 func _update_pose(metro: Metro, route: Dictionary) -> void:
-	metro.position = TrackGeometry.point_at_distance(route["points"], metro.distance)
+	metro.position = TrackGeometry.point_at_distance(route["points"], metro.distance, route["cumulative_lengths"])
 	metro.progress = metro.distance / float(route["length"])
 	if not lines[metro.line_id].is_loop():
 		metro.travel_direction = 1 if metro.distance <= float(route["outbound_end"]) else -1

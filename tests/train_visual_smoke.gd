@@ -156,8 +156,19 @@ func _run() -> void:
 	var curve := TrackGeometry.round_corners(PackedVector2Array([Vector2(-100, 0), Vector2.ZERO, Vector2(0, 100)]))
 	var curve_length := TrackGeometry.length(curve)
 	var compressed := false
+	var curve_lengths := TrackGeometry.cumulative_lengths(curve)
 	for distance in range(90, 121):
-		var edges := view._gangway_edges(curve, curve_length, float(distance), 1)
+		var front_distance := float(distance)
+		var back_distance := front_distance - TrackGeometry.CAR_PITCH
+		var positions := PackedVector2Array([
+			TrackGeometry.point_at_distance(curve, fposmod(front_distance, curve_length), curve_lengths),
+			TrackGeometry.point_at_distance(curve, fposmod(back_distance, curve_length), curve_lengths),
+		])
+		var axes := PackedVector2Array([
+			TrackGeometry.car_axis(curve, curve_length, front_distance, front_distance, curve_lengths),
+			TrackGeometry.car_axis(curve, curve_length, back_distance, front_distance, curve_lengths),
+		])
+		var edges := view._gangway_edges(positions, axes, 1)
 		var first_side := edges[0].distance_to(edges[1])
 		var second_side := edges[3].distance_to(edges[2])
 		if absf(first_side - second_side) > 0.5:
@@ -311,13 +322,14 @@ func _run() -> void:
 	camera.zoom = Vector2.ONE * 8.0
 	camera.reset_smoothing()
 	view.set_dynamic_state([], camera.position, camera.zoom, 0.0)
-	for halo: Polygon2D in view.get("_rail_halos"):
-		_check(not Geometry2D.triangulate_polygon(halo.polygon).is_empty(), "Rail glow must be a simple merged polygon rather than overlapping stroke triangles.")
+	for polygon: PackedVector2Array in view.get("_rail_halo_polygons"):
+		_check(not Geometry2D.triangulate_polygon(polygon).is_empty(), "Rail glow must be a simple merged polygon rather than overlapping stroke triangles.")
+	for halo: MeshInstance2D in view.get("_rail_halos"):
 		halo.hide()
 	await process_frame
 	await RenderingServer.frame_post_draw
 	var no_halo := root.get_texture().get_image()
-	for halo: Polygon2D in view.get("_rail_halos"):
+	for halo: MeshInstance2D in view.get("_rail_halos"):
 		halo.show()
 	await process_frame
 	await RenderingServer.frame_post_draw
@@ -417,7 +429,7 @@ func _run() -> void:
 		await RenderingServer.frame_post_draw
 		var bare := root.get_texture().get_image()
 		view.set_network(shadow_graph, shadow_lines, {0: shadow_route})
-		for halo: Polygon2D in view.get("_rail_halos"):
+		for halo: MeshInstance2D in view.get("_rail_halos"):
 			halo.hide()
 		await process_frame
 		await RenderingServer.frame_post_draw

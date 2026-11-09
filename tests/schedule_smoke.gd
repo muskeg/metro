@@ -339,7 +339,10 @@ func _test_continuous_platforms() -> void:
 					train.distance = stop_distance
 					train.wagon_count = wagons
 					var visit := StationVisit.new(train, circuit, 3.0, false)
+					_check(not visit._geometry_built, "Arrivals must defer visual platform geometry until it is drawn.")
 					var boundary := visit.platform.duplicate()
+					for vertex: Vector2 in visit.platform:
+						_check(visit.platform_bounds.grow(0.001).has_point(vertex), "Platform culling bounds must contain the whole drawn platform.")
 					boundary.append(boundary[0])
 					var station_index := stop_index
 					if loop:
@@ -374,6 +377,13 @@ func _test_continuous_platforms() -> void:
 								visit.elapsed = timing.x + timing.y * sample / 4.0
 								var position := visit.passenger_position(passenger, entering)
 								_check(_platform_contains(position, visit.platform), "Passengers must remain on the platform throughout boarding, alighting and waiting.")
+								var disc := Rect2(position, Vector2.ZERO).grow(StationVisit.PASSENGER_RADIUS)
+								_check(visit.platform_bounds.encloses(disc), "Passenger discs must stay inside platform culling bounds.")
+								# A viewport whose edge only grazes this passenger's disc must still draw the visit.
+								for side: Vector2 in [Vector2.LEFT, Vector2.RIGHT, Vector2.UP, Vector2.DOWN]:
+									var graze := position + side * (StationVisit.PASSENGER_RADIUS - 0.05)
+									var viewport := Rect2(graze, Vector2.ZERO).grow(0.02).expand(graze + side * 500.0)
+									_check(visit.visible_in(viewport), "A viewport edge touching only a passenger must not cull its station visit.")
 								var clearance := position.distance_to(TrackGeometry.closest_point(boundary, position))
 								if clearance < StationVisit.PASSENGER_RADIUS - 0.001:
 									_check(false, "Whole passenger circles must clear every platform edge (wagons %d, loop %s, stop %d, passenger %d, clearance %.4f)." % [wagons, loop, stop_index, passenger, clearance])

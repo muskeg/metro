@@ -2,8 +2,13 @@ extends Node2D
 
 const GRID_SIZE := 48.0
 const DAY_LENGTH_SECONDS := 300.0
+const SIMULATION_STEP := 1.0 / 60.0
+const MAX_SIMULATION_STEPS_PER_FRAME := 4
 const FOLLOW_ZOOM := 5.0
+const SCREENSAVER_TRANSITION_SECONDS := 6.0
+const SCREENSAVER_SHOT_SECONDS := [35.0, 40.0, 40.0, 40.0]
 const UI_IDLE_SECONDS := 8.0
+const UI_IDLE_FADE_SECONDS := 0.6
 const UI_IDLE_ALPHA := 0.28
 const UI_INK := Color("#253b40")
 const UI_MUTED := Color("#53666a")
@@ -36,6 +41,7 @@ var active_line: TransitLine
 var selected_station_id: int = -1
 var paused: bool = false
 var time_of_day: float = 0.5
+var _simulation_accumulator := 0.0
 var _previous_arrival_count: int = 0
 var _panning: bool = false
 var _left_pan_active: bool = false
@@ -52,6 +58,28 @@ var _touch_world_interaction_started := false
 var _touch_world_index := -1
 var _touch_pending_position := Vector2.ZERO
 var _followed_train: Metro = null
+var _screensaver_active := false
+var _screensaver_shot := 0
+var _screensaver_seconds := 0.0
+var _screensaver_train: Metro = null
+var _screensaver_last_train: Metro = null
+var _screensaver_train_cursor := 0
+var _screensaver_pan_cursor := 0
+var _screensaver_from_position := Vector2.ZERO
+var _screensaver_from_zoom := Vector2.ONE
+var _screensaver_pan_start := Vector2.ZERO
+var _screensaver_pan_end := Vector2.ZERO
+var _screensaver_pan_zoom := 3.0
+var _screensaver_saved_position := Vector2.ZERO
+var _screensaver_saved_zoom := Vector2.ONE
+var _screensaver_saved_paused := false
+var _screensaver_saved_ui_hidden := false
+var _screensaver_saved_follow: Metro = null
+var _screensaver_saved_smoothing := true
+var _screensaver_saved_window_mode := DisplayServer.WINDOW_MODE_WINDOWED
+var _screensaver_saved_mouse_mode := Input.MOUSE_MODE_VISIBLE
+var _screensaver_exit_mouse_button := MOUSE_BUTTON_NONE
+var _screensaver_exit_touch := -1
 var _connect_drag_source_id: int = -1
 var _drawn_points := PackedVector2Array()
 var _route_pins := PackedVector2Array()
@@ -93,7 +121,22 @@ var _ui_root: Control
 var _ui_hidden := false
 var _pointer_inside := false
 var _pointer_position := Vector2.ZERO
+var _hover_track_cache: Dictionary = {}
+var _hover_cache_valid := false
+var _hover_cache_position := Vector2.ZERO
+var _hover_cache_zoom := Vector2.ZERO
+var _hover_cache_revision := -1
+var _hover_cache_state: Array[int] = []
+var _network_revision := 0
+var _valid_targets_cache := PackedInt32Array()
+var _valid_targets_cache_pins := PackedVector2Array()
+var _valid_targets_cache_source := -1
+var _valid_targets_cache_line := -1
+var _valid_targets_cache_wagons := -1
+var _valid_targets_cache_diagonal := false
+var _valid_targets_cache_revision := -1
 var _hide_ui_button: Button
+var _screensaver_button: Button
 var _restore_ui_button: Button
 var _collapse_dock_button: Button
 var _collapsed_dock_button: Button
@@ -104,6 +147,9 @@ var _zoom_out_button: Button
 var _fit_window_button: Button
 var _ui_idle_seconds := 0.0
 var _title_seconds := 0.0
+var _idle_render_disabled := false
+var _idle_render_disable_pending := false
+var _idle_render_generation := 0
 var _first_connection_completed := false
 var _help_label: Label
 var _navigation_help: Label
@@ -201,18 +247,24 @@ func _update_display_density() -> void:
 		get_window().min_size = Vector2i(Vector2(760.0, 520.0) * scale)
 
 func _process(delta: float) -> void:
+	if _idle_render_disabled:
+		return
 	_update_title_fade(delta)
 	_update_ui_idle(delta)
 	_restore_ui_button.queue_redraw()
 	_collapsed_dock_button.queue_redraw()
-	time_of_day = fposmod(time_of_day + delta / DAY_LENGTH_SECONDS, 1.0)
+	if not paused:
+		time_of_day = fposmod(time_of_day + delta / DAY_LENGTH_SECONDS, 1.0)
 	canvas_modulate.color = Color.WHITE
 	var night_factor := _night_strength(time_of_day)
 	audio.call("set_night_factor", night_factor)
-	dispatcher.process(delta, paused)
-	if _followed_train != null:
+	_advance_simulation(delta)
+	_update_render_poses()
+	if _screensaver_active:
+		_update_screensaver(delta)
+	elif _followed_train != null:
 		if dispatcher.metros.has(_followed_train):
-			camera.position = _followed_train.position
+			_update_follow_camera(_followed_train)
 		else:
 			_stop_following()
 	if dispatcher.arrival_count > _previous_arrival_count:
@@ -233,8 +285,110 @@ func _process(delta: float) -> void:
 	if _status_seconds <= 0.0:
 		for feedback: Label in _sheet_feedback:
 			feedback.hide()
+	_schedule_idle_render_shutdown()
+
+func _can_disable_render_loop() -> bool:
+	if not paused or _screensaver_active:
+		return false
+	if _title_seconds < 30.0 or _ui_idle_seconds < UI_IDLE_SECONDS + UI_IDLE_FADE_SECONDS:
+		return false
+	if _status_seconds > 0.0 or _connect_drag_source_id >= 0 or _dragging_station_id >= 0 or _editing_track_id >= 0 or _panning or _space_down:
+		return false
+	if _any_sheet_open() or _quit_dialog.visible or _delete_dialog.visible or _layout_dialog.visible or _line_color_picker.get_popup().visible:
+		return false
+	var hovered_control := get_viewport().gui_get_hovered_control()
+	return hovered_control == null or hovered_control.tooltip_text.is_empty()
+
+func _schedule_idle_render_shutdown() -> void:
+	if _idle_render_disabled or _idle_render_disable_pending or not _can_disable_render_loop():
+		return
+	_idle_render_disable_pending = true
+	call_deferred("_disable_render_loop_after_frame", _idle_render_generation)
+
+func _disable_render_loop_after_frame(generation: int) -> void:
+	await RenderingServer.frame_post_draw
+	if generation != _idle_render_generation:
+		return
+	_idle_render_disable_pending = false
+	if _can_disable_render_loop():
+		_idle_render_disabled = true
+		RenderingServer.set_render_loop_enabled(false)
+
+func _wake_render_loop() -> void:
+	_idle_render_generation += 1
+	_idle_render_disable_pending = false
+	if not _idle_render_disabled:
+		return
+	_idle_render_disabled = false
+	RenderingServer.set_render_loop_enabled(true)
+	if world_view != null:
+		world_view.queue_redraw()
+
+func _exit_tree() -> void:
+	if _idle_render_disabled:
+		RenderingServer.set_render_loop_enabled(true)
+		_idle_render_disabled = false
+
+func _advance_simulation(delta: float) -> void:
+	if paused:
+		return
+	_simulation_accumulator += maxf(0.0, delta)
+	var steps := 0
+	while _simulation_accumulator >= SIMULATION_STEP and steps < MAX_SIMULATION_STEPS_PER_FRAME:
+		dispatcher.process(SIMULATION_STEP, false)
+		_simulation_accumulator -= SIMULATION_STEP
+		steps += 1
+
+func _update_render_poses() -> void:
+	var alpha := 1.0 if paused else clampf(_simulation_accumulator / SIMULATION_STEP, 0.0, 1.0)
+	for metro: Metro in dispatcher.metros:
+		if not dispatcher.routes.has(metro.line_id):
+			metro.render_pose_valid = false
+			continue
+		var route := TrackGeometry.route_for_direction(dispatcher.routes[metro.line_id], metro.travel_direction)
+		var total: float = route["length"]
+		if total <= 0.0:
+			metro.render_pose_valid = false
+			continue
+		if metro.previous_travel_direction != metro.travel_direction:
+			metro.render_distance = metro.distance
+		else:
+			var delta := metro.distance - metro.previous_distance
+			if delta > total * 0.5:
+				delta -= total
+			elif delta < -total * 0.5:
+				delta += total
+			metro.render_distance = fposmod(metro.previous_distance + delta * alpha, total)
+		metro.render_pose_valid = true
 
 func _input(event: InputEvent) -> void:
+	if _idle_render_disabled:
+		_wake_render_loop()
+		_wake_interface()
+	if _screensaver_active:
+		if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
+			_stop_screensaver()
+		elif event is InputEventMouseButton and event.pressed and event.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE]:
+			_screensaver_exit_mouse_button = event.button_index
+			_stop_screensaver()
+		elif event is InputEventScreenTouch and event.pressed:
+			_screensaver_exit_touch = event.index
+			_stop_screensaver()
+		get_viewport().set_input_as_handled()
+		return
+	if event is InputEventMouseButton and event.button_index == _screensaver_exit_mouse_button:
+		if not event.pressed:
+			_screensaver_exit_mouse_button = MOUSE_BUTTON_NONE
+		get_viewport().set_input_as_handled()
+		return
+	if event is InputEventScreenTouch and event.index == _screensaver_exit_touch:
+		if not event.pressed:
+			_screensaver_exit_touch = -1
+		get_viewport().set_input_as_handled()
+		return
+	if event is InputEventScreenDrag and event.index == _screensaver_exit_touch:
+		get_viewport().set_input_as_handled()
+		return
 	if (event is InputEventMouseMotion and not event.relative.is_zero_approx()) or (event is InputEventMouseButton and event.pressed) or (event is InputEventKey and event.pressed) or event is InputEventScreenTouch or event is InputEventScreenDrag or event is InputEventGesture:
 		_wake_interface()
 	if event is InputEventScreenTouch:
@@ -434,6 +588,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			_toggle_pause()
 		elif key_event.pressed and not key_event.echo and key_event.keycode == KEY_H:
 			_toggle_ui()
+		elif key_event.pressed and not key_event.echo and key_event.keycode == KEY_K:
+			if not _quit_dialog.visible and not _delete_dialog.visible and not _layout_dialog.visible:
+				_start_screensaver()
 		elif key_event.pressed and key_event.keycode == KEY_F11:
 			_toggle_fullscreen()
 		elif key_event.pressed and key_event.keycode == KEY_DELETE and not _ui_hidden and _followed_train == null:
@@ -663,14 +820,19 @@ func _create_interface() -> void:
 	_navigation_help = _label("Vue : molette/pincer pour zoomer ; deux doigts ou Espace + glisser pour déplacer\nÉchap / clic droit : annuler", 16, UI_MUTED)
 	_navigation_help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	help_stack.add_child(_navigation_help)
-	var watch_help := _label("H : masquer · H / Échap ou poignée en bas : revenir", 16, UI_MUTED)
+	var watch_help := _label("H : masquer · K : veille · Échap : revenir", 16, UI_MUTED)
 	watch_help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	help_stack.add_child(watch_help)
 
 	_settings_popup = _make_sheet(ui_root)
 	var settings_stack := _sheet_stack(_settings_popup, false)
 	_settings_popup.minimum_size_changed.connect(_resize_interface.call_deferred)
-	_sheet_heading(settings_stack, "RÉGLAGES")
+	var settings_heading := _sheet_heading(settings_stack, "RÉGLAGES")
+	_screensaver_button = _button("Veille (K)", _start_screensaver)
+	_screensaver_button.tooltip_text = "Vues automatiques en plein écran ; Échap ou clic/toucher pour revenir"
+	_screensaver_button.size_flags_horizontal = Control.SIZE_SHRINK_END
+	settings_heading.add_child(_screensaver_button)
+	settings_heading.move_child(_screensaver_button, 1)
 	_settings_grid = GridContainer.new()
 	_settings_grid.columns = 2
 	_settings_grid.add_theme_constant_override("h_separation", 28)
@@ -771,6 +933,7 @@ func _create_interface() -> void:
 	_resize_interface()
 
 func _on_viewport_resized() -> void:
+	_wake_render_loop()
 	if OS.has_feature("web"):
 		_update_display_density()
 	_resize_interface()
@@ -903,7 +1066,7 @@ func _sheet_stack(sheet: PanelContainer, scrollable: bool = true) -> VBoxContain
 	parent.add_child(stack)
 	return stack
 
-func _sheet_heading(stack: VBoxContainer, title: String) -> void:
+func _sheet_heading(stack: VBoxContainer, title: String) -> HBoxContainer:
 	var row := HBoxContainer.new()
 	var label := _label(title, 22, UI_INK)
 	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -913,6 +1076,7 @@ func _sheet_heading(stack: VBoxContainer, title: String) -> void:
 	row.add_child(close)
 	stack.add_child(row)
 	_add_sheet_feedback(stack)
+	return row
 
 func _add_sheet_feedback(stack: VBoxContainer) -> void:
 	var feedback := _label("", 16, UI_INK)
@@ -1198,6 +1362,136 @@ func _toggle_ui() -> void:
 	_update_interaction_overlays()
 	world_view.queue_redraw()
 
+func _start_screensaver() -> void:
+	if _screensaver_active:
+		return
+	_cancel_gesture()
+	_screensaver_saved_position = camera.position
+	_screensaver_saved_zoom = camera.zoom
+	_screensaver_saved_paused = paused
+	_screensaver_saved_ui_hidden = _ui_hidden
+	_screensaver_saved_follow = _followed_train
+	_screensaver_saved_smoothing = camera.position_smoothing_enabled
+	_screensaver_saved_window_mode = DisplayServer.window_get_mode()
+	_screensaver_saved_mouse_mode = Input.mouse_mode
+	if not _ui_hidden:
+		_toggle_ui()
+	_stop_following()
+	_close_sheets()
+	_panning = false
+	_left_pan_active = false
+	_space_down = false
+	_touch_points.clear()
+	_touch_pair = Vector2i(-1, -1)
+	_touch_navigation_active = false
+	_touch_navigation_sequence = false
+	_touch_world_sequence = false
+	_touch_world_pending = false
+	_touch_world_interaction_started = false
+	_touch_world_index = -1
+	_restore_ui_button.hide()
+	Input.mouse_mode = Input.MOUSE_MODE_HIDDEN
+	_set_fullscreen(true)
+	paused = false
+	camera.position_smoothing_enabled = false
+	_screensaver_active = true
+	_screensaver_last_train = null
+	_screensaver_train_cursor = 0
+	_screensaver_pan_cursor = 0
+	_begin_screensaver_shot(0)
+
+func _stop_screensaver() -> void:
+	if not _screensaver_active:
+		return
+	_screensaver_active = false
+	_screensaver_train = null
+	_screensaver_last_train = null
+	paused = _screensaver_saved_paused
+	camera.position = _screensaver_saved_position
+	camera.zoom = _screensaver_saved_zoom
+	camera.position_smoothing_enabled = _screensaver_saved_smoothing
+	camera.reset_smoothing()
+	_followed_train = _screensaver_saved_follow if dispatcher.metros.has(_screensaver_saved_follow) else null
+	_screensaver_saved_follow = null
+	Input.mouse_mode = _screensaver_saved_mouse_mode
+	DisplayServer.window_set_mode(_screensaver_saved_window_mode)
+	_fullscreen_button.set_pressed_no_signal(_screensaver_saved_window_mode in [DisplayServer.WINDOW_MODE_FULLSCREEN, DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN])
+	if not _screensaver_saved_ui_hidden:
+		_toggle_ui()
+	else:
+		_restore_ui_button.show()
+	_update_interaction_overlays()
+	_wake_interface()
+
+func _begin_screensaver_shot(shot: int) -> void:
+	_screensaver_shot = shot
+	_screensaver_seconds = 0.0
+	_screensaver_from_position = camera.position
+	_screensaver_from_zoom = camera.zoom
+	_screensaver_train = null
+	if shot in [1, 3]:
+		var candidates: Array[Metro] = []
+		for train: Metro in dispatcher.metros:
+			if _screensaver_last_train == null or train.line_id != _screensaver_last_train.line_id:
+				candidates.append(train)
+		if candidates.is_empty():
+			for train: Metro in dispatcher.metros:
+				if train != _screensaver_last_train:
+					candidates.append(train)
+		if candidates.is_empty():
+			candidates.assign(dispatcher.metros)
+		if not candidates.is_empty():
+			_screensaver_train = candidates[_screensaver_train_cursor % candidates.size()]
+			_screensaver_train_cursor += 1
+			_screensaver_last_train = _screensaver_train
+	elif shot == 2:
+		_screensaver_pan_zoom = minf(6.0, maxf(1.0, _screensaver_fit_zoom(_layout_bounds()) * 2.0))
+		var routes: Array = dispatcher.routes.values()
+		var points := PackedVector2Array()
+		var selected_route: Dictionary = {}
+		for offset in range(routes.size()):
+			var route: Dictionary = routes[(_screensaver_pan_cursor + offset) % routes.size()]
+			if route["points"].size() >= 2:
+				selected_route = route
+				points = route["points"]
+				break
+		_screensaver_pan_cursor += 1
+		if not points.is_empty():
+			var route_length: float = selected_route["length"]
+			var viewport_size := get_viewport_rect().size
+			var pan_distance := minf(route_length * 0.4, minf(viewport_size.x, viewport_size.y) * 0.5 / _screensaver_pan_zoom)
+			_screensaver_pan_start = TrackGeometry.point_at_distance(points, route_length * 0.25, selected_route["cumulative_lengths"])
+			_screensaver_pan_end = TrackGeometry.point_at_distance(points, route_length * 0.25 + pan_distance, selected_route["cumulative_lengths"])
+		else:
+			var bounds := _layout_bounds()
+			_screensaver_pan_start = bounds.get_center() - Vector2(bounds.size.x * 0.2, 0)
+			_screensaver_pan_end = bounds.get_center() + Vector2(bounds.size.x * 0.2, 0)
+
+func _screensaver_fit_zoom(bounds: Rect2) -> float:
+	var usable_size := (get_viewport_rect().size - Vector2(64, 64)).max(Vector2.ONE)
+	return minf(6.0, minf(usable_size.x / bounds.size.x, usable_size.y / bounds.size.y))
+
+func _update_screensaver(delta: float) -> void:
+	_screensaver_seconds += delta
+	if _screensaver_seconds >= SCREENSAVER_SHOT_SECONDS[_screensaver_shot]:
+		_begin_screensaver_shot((_screensaver_shot + 1) % SCREENSAVER_SHOT_SECONDS.size())
+	if _screensaver_train != null and not dispatcher.metros.has(_screensaver_train):
+		_begin_screensaver_shot(_screensaver_shot)
+	var bounds := _layout_bounds()
+	var target_position := bounds.get_center()
+	var target_zoom := Vector2.ONE * _screensaver_fit_zoom(bounds)
+	if _screensaver_train != null:
+		target_position = _train_render_position(_screensaver_train)
+		target_zoom = Vector2.ONE * FOLLOW_ZOOM
+	elif _screensaver_shot == 2:
+		var pan_progress := clampf((_screensaver_seconds - SCREENSAVER_TRANSITION_SECONDS) / (SCREENSAVER_SHOT_SECONDS[2] - SCREENSAVER_TRANSITION_SECONDS), 0.0, 1.0)
+		target_position = _screensaver_pan_start.lerp(_screensaver_pan_end, pan_progress)
+		target_zoom = Vector2.ONE * _screensaver_pan_zoom
+	var blend := smoothstep(0.0, SCREENSAVER_TRANSITION_SECONDS, _screensaver_seconds)
+	camera.position = _screensaver_from_position.lerp(target_position, blend)
+	camera.zoom = _screensaver_from_zoom.lerp(target_zoom, blend)
+	camera.force_update_scroll()
+
 func _begin_world_interaction(world_position: Vector2) -> void:
 	if _ui_hidden or _followed_train != null:
 		var train := _train_near(world_position)
@@ -1337,15 +1631,36 @@ func _extend_stroke(world_position: Vector2) -> void:
 	var error := _connection_error(_connect_drag_source_id, destination_id, _drawn_points, destination == null)
 	world_view.route_target_id = destination_id
 	world_view.route_pins = _route_pins.slice(1)
-	world_view.valid_connection_targets.clear()
-	for station: Station in graph.stations:
-		if station.id == _connect_drag_source_id:
-			continue
-		var candidate := _route_pins.duplicate()
-		candidate.append_array(TrackGeometry.elastic_path(_route_pins[_route_pins.size() - 1], station.position, _route_diagonal_first).slice(1))
-		if _connection_error(_connect_drag_source_id, station.id, candidate).is_empty():
-			world_view.valid_connection_targets.append(station.id)
+	world_view.valid_connection_targets = _cached_valid_connection_targets()
 	world_view.set_stroke_preview(_drawn_points, active_line.color, error)
+
+func _cached_valid_connection_targets() -> PackedInt32Array:
+	var line_id := active_line.id if active_line != null else -1
+	var wagons := active_line.wagon_count if active_line != null else -1
+	if _valid_targets_cache_revision == _network_revision \
+	and _valid_targets_cache_source == _connect_drag_source_id \
+	and _valid_targets_cache_line == line_id \
+	and _valid_targets_cache_wagons == wagons \
+	and _valid_targets_cache_diagonal == _route_diagonal_first \
+	and _valid_targets_cache_pins == _route_pins:
+		return _valid_targets_cache.duplicate()
+	var targets := PackedInt32Array()
+	if active_line != null and not _route_pins.is_empty():
+		for station: Station in graph.stations:
+			if station.id == _connect_drag_source_id:
+				continue
+			var candidate := _route_pins.duplicate()
+			candidate.append_array(TrackGeometry.elastic_path(_route_pins[_route_pins.size() - 1], station.position, _route_diagonal_first).slice(1))
+			if _connection_error(_connect_drag_source_id, station.id, candidate).is_empty():
+				targets.append(station.id)
+	_valid_targets_cache = targets
+	_valid_targets_cache_source = _connect_drag_source_id
+	_valid_targets_cache_line = line_id
+	_valid_targets_cache_wagons = wagons
+	_valid_targets_cache_diagonal = _route_diagonal_first
+	_valid_targets_cache_pins = _route_pins.duplicate()
+	_valid_targets_cache_revision = _network_revision
+	return targets.duplicate()
 
 func _flip_route_posture() -> void:
 	_route_diagonal_first = not _route_diagonal_first
@@ -1509,7 +1824,7 @@ func _train_near(position: Vector2) -> Metro:
 	for train: Metro in dispatcher.metros:
 		var route := TrackGeometry.route_for_direction(dispatcher.routes[train.line_id], train.travel_direction)
 		for car in range(train.wagon_count + 1):
-			var center := TrackGeometry.car_position(route["points"], route["length"], train.distance, car)
+			var center := TrackGeometry.car_position(route["points"], route["length"], train.distance, car, route["cumulative_lengths"])
 			var candidate := center.distance_to(position)
 			if candidate <= distance:
 				closest = train
@@ -1526,9 +1841,20 @@ func _follow_train(train: Metro) -> void:
 	_clear_hover()
 	_followed_train = train
 	camera.zoom = Vector2.ONE * FOLLOW_ZOOM
-	camera.position = train.position
+	_update_follow_camera(train)
 	_update_interaction_overlays()
 	_update_connection_guidance()
+
+func _train_render_position(train: Metro) -> Vector2:
+	var route := TrackGeometry.route_for_direction(dispatcher.routes[train.line_id], train.travel_direction)
+	var distance := train.render_distance if train.render_pose_valid else train.distance
+	return TrackGeometry.point_at_distance(route["points"], distance, route["cumulative_lengths"])
+
+func _update_follow_camera(train: Metro) -> void:
+	camera.position = _train_render_position(train)
+	# Train poses are already interpolated; smoothing the camera again adds relative motion.
+	camera.reset_smoothing()
+	camera.force_update_scroll()
 
 func _update_interaction_overlays() -> void:
 	var editing_visible := not _ui_hidden and _followed_train == null
@@ -1542,18 +1868,54 @@ func _near_handle(position: Vector2, handle: Vector2) -> bool:
 	return position.distance_to(handle) <= 11.0 / camera.zoom.x
 
 func _clear_hover() -> void:
+	var changed := world_view.station_preview_visible \
+		or world_view.hovered_station_id >= 0 \
+		or world_view.hovered_track_id >= 0 \
+		or world_view.hovered_bend_index >= 0 \
+		or not world_view.hover_caption.is_empty()
 	world_view.station_preview_visible = false
 	world_view.hovered_station_id = -1
 	world_view.hovered_track_id = -1
 	world_view.hovered_bend_index = -1
 	world_view.hover_caption = ""
-	world_view.queue_redraw()
+	_hover_cache_valid = false
+	if changed:
+		world_view.queue_redraw()
 
 func _on_pointer_exited() -> void:
 	_pointer_inside = false
 	_clear_hover()
 
 func _update_hover(position: Vector2) -> void:
+	var state := _hover_signature()
+	if _hover_cache_valid \
+	and position == _hover_cache_position \
+	and camera.zoom == _hover_cache_zoom \
+	and _network_revision == _hover_cache_revision \
+	and state == _hover_cache_state:
+		return
+	_hover_cache_valid = false
+	_update_hover_uncached(position)
+	_hover_cache_position = position
+	_hover_cache_zoom = camera.zoom
+	_hover_cache_revision = _network_revision
+	_hover_cache_state = _hover_signature()
+	_hover_cache_valid = true
+
+func _hover_signature() -> Array[int]:
+	return [
+		selected_station_id,
+		world_view.hovered_station_id,
+		world_view.hovered_track_id,
+		world_view.hovered_bend_index,
+		world_view.connection_hint_station_id,
+		1 if world_view.route_active else 0,
+		_connect_drag_source_id,
+		_editing_track_id,
+		_dragging_station_id
+	]
+
+func _update_hover_uncached(position: Vector2) -> void:
 	world_view.station_preview_visible = false
 	if _ui_hidden or _followed_train != null or _panning or _space_down or _any_sheet_open() or _quit_dialog.visible or _delete_dialog.visible or _layout_dialog.visible or _connect_drag_source_id >= 0 or _dragging_station_id >= 0 or _editing_track_id >= 0:
 		_clear_hover()
@@ -1579,7 +1941,11 @@ func _update_hover(position: Vector2) -> void:
 				_set_station_hover(station, position)
 				return
 	for track: Track in graph.tracks:
-		var anchors := TrackGeometry.anchors(graph, track)
+		var track_cache: Dictionary = _hover_track_cache.get(track.id, {})
+		var anchors: PackedVector2Array = track_cache.get("anchors", PackedVector2Array())
+		var bounds: Rect2 = track_cache.get("bounds", Rect2())
+		if not bounds.grow(11.0 / camera.zoom.x).has_point(position):
+			continue
 		for index in range(1, anchors.size() - 1):
 			if _near_handle(position, anchors[index]):
 				world_view.hovered_station_id = -1
@@ -1609,7 +1975,12 @@ func _update_hover(position: Vector2) -> void:
 		var rail_distance := INF
 		if not handles_visible:
 			for track: Track in graph.tracks:
-				var anchor := TrackGeometry.insertion_point(TrackGeometry.anchors(graph, track), position)
+				var track_cache: Dictionary = _hover_track_cache.get(track.id, {})
+				var bounds: Rect2 = track_cache.get("bounds", Rect2())
+				if not bounds.grow(11.0 / camera.zoom.x).has_point(position):
+					continue
+				var anchors: PackedVector2Array = track_cache.get("anchors", PackedVector2Array())
+				var anchor := TrackGeometry.insertion_point(anchors, position)
 				rail_distance = minf(rail_distance, anchor.distance_squared_to(position))
 		for direction: Vector2 in [Vector2.RIGHT, Vector2(1.0, -1.0)]:
 			var handle := world_view.station_handle_position(station, direction)
@@ -1621,13 +1992,17 @@ func _update_hover(position: Vector2) -> void:
 	world_view.hover_caption = ""
 	var best_distance := 20.0 / camera.zoom.x + TrackGeometry.LANE_OFFSET
 	for track: Track in graph.tracks:
-		var points := TrackGeometry.sample(graph, track)
+		var track_cache: Dictionary = _hover_track_cache.get(track.id, {})
+		var bounds: Rect2 = track_cache.get("bounds", Rect2())
+		if not bounds.grow(best_distance).has_point(position):
+			continue
+		var points: PackedVector2Array = track_cache.get("points", PackedVector2Array())
 		var closest := TrackGeometry.closest_point(points, position)
 		var distance := closest.distance_to(position)
 		if distance < best_distance:
 			best_distance = distance
 			world_view.hovered_track_id = track.id
-			world_view.set_rail_anchor(TrackGeometry.anchors(graph, track), position)
+			world_view.set_rail_anchor(track_cache.get("anchors", PackedVector2Array()), position)
 			world_view.hover_caption = "Insérer une station"
 	if world_view.hovered_track_id < 0 and station != null:
 		_set_station_hover(station, position)
@@ -1704,6 +2079,24 @@ func _apply_delete() -> void:
 func _refresh_network() -> void:
 	_stop_following()
 	dispatcher.rebuild_routes()
+	_network_revision += 1
+	_hover_cache_valid = false
+	_hover_track_cache.clear()
+	for track: Track in graph.tracks:
+		var anchors := TrackGeometry.anchors(graph, track)
+		var points := TrackGeometry.sample(graph, track)
+		if points.is_empty():
+			continue
+		var bounds := Rect2(points[0], Vector2.ZERO)
+		for point: Vector2 in points:
+			bounds = bounds.expand(point)
+		for anchor: Vector2 in anchors:
+			bounds = bounds.expand(anchor)
+		_hover_track_cache[track.id] = {
+			"anchors": anchors,
+			"points": points,
+			"bounds": bounds
+		}
 	world_view.set_network(graph, lines, dispatcher.routes)
 	for line: TransitLine in lines:
 		if not line.tracks.is_empty() and not line.is_loop() and not dispatcher.routes[line.id]["terminal_ready"]:
@@ -1788,14 +2181,14 @@ func _on_line_color_changed(color: Color) -> void:
 	if _updating_line_controls or active_line == null:
 		return
 	active_line.color = Color(color, 1.0)
-	_update_configuration_ui()
 	for child: Node in _line_selector.get_children():
 		if child.is_queued_for_deletion():
 			continue
 		var button := child as Button
 		if button.button_pressed:
 			_style_line_tab(button, active_line.color)
-	world_view.refresh_illumination()
+	_line_color_picker.color = active_line.color
+	world_view.refresh_line_color(active_line.id)
 	world_view.queue_redraw()
 	if _connect_drag_source_id >= 0:
 		_extend_stroke(_route_pointer)
@@ -1873,6 +2266,7 @@ func _on_language_selected(index: int) -> void:
 		push_error("Cannot save language settings: " + error_string(error))
 
 func _toggle_pause() -> void:
+	_wake_render_loop()
 	paused = not paused
 
 func _toggle_settings() -> void:
@@ -1996,6 +2390,7 @@ func _save_layout(layout_name: String) -> void:
 		_set_status("Le stockage du navigateur est indisponible. Les sauvegardes ne survivront pas à la fermeture.")
 
 func _replace_layout(restored: Dictionary, fit_view: bool = false) -> void:
+	_stop_screensaver()
 	_cancel_gesture()
 	_stop_following()
 	_close_sheets()
@@ -2025,12 +2420,9 @@ func _replace_layout(restored: Dictionary, fit_view: bool = false) -> void:
 	camera.reset_smoothing()
 	world_view.set_dynamic_state(dispatcher.metros, camera.position, camera.zoom, time_of_day, dispatcher.visits)
 
-func _fit_layout_to_window() -> void:
+func _layout_bounds() -> Rect2:
 	if graph.stations.is_empty():
-		camera.position = Vector2.ZERO
-		camera.zoom = Vector2.ONE
-		_minimum_camera_zoom = 0.08
-		return
+		return Rect2(Vector2(-24, -24), Vector2(48, 48))
 	var bounds := Rect2(graph.stations[0].position, Vector2.ZERO)
 	for station: Station in graph.stations:
 		bounds = bounds.expand(station.position)
@@ -2040,7 +2432,15 @@ func _fit_layout_to_window() -> void:
 	for route: Dictionary in dispatcher.routes.values():
 		for point: Vector2 in route["points"]:
 			bounds = bounds.expand(point)
-	bounds = bounds.grow(24.0)
+	return bounds.grow(24.0)
+
+func _fit_layout_to_window() -> void:
+	if graph.stations.is_empty():
+		camera.position = Vector2.ZERO
+		camera.zoom = Vector2.ONE
+		_minimum_camera_zoom = 0.08
+		return
+	var bounds := _layout_bounds()
 	var viewport_size := get_viewport_rect().size
 	var usable := Rect2(Vector2(32, 80), (viewport_size - Vector2(64, 192)).max(Vector2.ONE))
 	camera.zoom = Vector2.ONE * minf(6.0, minf(usable.size.x / bounds.size.x, usable.size.y / bounds.size.y))

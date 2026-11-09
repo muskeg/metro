@@ -36,42 +36,58 @@ arrête le suivi d'une rame sans interrompre ni redémarrer les trains.
 **Menu → Load** propose aussi des schémas originaux fondés sur les stations,
 liaisons et correspondances de cartes ferroviaires publiques. Les noms de
 stations apparaissent au survol ; ceux des services sont visibles dans leurs
-réglages et les infobulles des onglets. Tokyo démarre avec un maximum de
-**deux trains par parcours** ; Montréal avec **six par ligne, sauf deux sur
-la jaune**. Toutes ces lignes utilisent des trains à deux wagons.
+réglages et les infobulles des onglets. Tokyo autorise **64 trains** au total
+(10 sur la Yamanote, 8 sur la Keihin-Tōhoku et la Tōkaidō, 6 sur la
+Chūō-Sōbu locale et les deux Shōnan-Shinjuku, 4 sur les autres, dont le monorail) ; Montréal
+**10 sur la verte, 12 sur l'orange, 6 sur la bleue et 2 sur la jaune**.
+Les trains comptent trois wagons, sauf la navette jaune qui en garde deux.
+Les flottes se remplissent progressivement, selon l'intervalle de service.
 Enregistrez une copie pour conserver vos modifications. Le petit réseau de
 démonstration reste celui du démarrage sur desktop et reste disponible dans Load sur le Web.
 
 - **Tokyo JR central** : remplace le grand preset régional par un schéma
-  de Tokyo et de ses branches Shōnan : 80 stations, 97 voies physiques et
-  dix parcours. La boucle verte Yamanote comprend
-  ses 30 stations, dont Takanawa Gateway ; Shinjuku est à l'ouest, Ikebukuro
-  au nord et Shinagawa au sud. Les lignes Chūō rapide et Chūō–Sōbu locale
+  de Tokyo et de ses branches Shōnan : 90 stations, 107 voies physiques et
+  onze parcours. La boucle verte Yamanote comprend
+  ses 30 stations, dont Takanawa Gateway. Le schéma reprend la disposition
+  aplatie de la carte de numérotation : côtés rectilignes, quatre épaules
+  diagonales équilibrées et plateaux centrés au nord et au sud, pour une
+  silhouette en boucle facettée reconnaissable. Les stations sont aussi
+  rapprochées que la grille le permet tout en gardant des trains de trois wagons.
+  Les lignes Chūō rapide et Chūō–Sōbu locale
   traversent son centre. Inclut aussi Keihin-Tōhoku (Akabane–Kamata, arrêts
-  locaux), Saikyō (Akabane–Ōsaki), Jōban rapide (Ueno–Kita-Senju) et
-  Keiyō locale (Tokyo–Shin-Kiba).
+  locaux, sur sa propre rangée à côté de la Tōkaidō), Saikyō (Akabane–Ōsaki), Jōban rapide (Ueno–Kita-Senju) et
+  Keiyō locale (Tokyo–Shin-Kiba), ainsi que le **Tokyo Monorail**
+  d'Hamamatsuchō à Haneda Terminal 2, le long de la baie (11 stations).
   La **Tōkaidō-sen** relie Tokyo à Odawara via Kawasaki, Yokohama, Ōfuna,
   Fujisawa, Chigasaki et **Hiratsuka**, avec les 16 arrêts locaux.
+  Elle part vers l'ouest de Shinagawa à Ōfuna, puis se replie vers le nord
+  à Chigasaki avant de revenir vers Odawara, sans étirer la carte au sud.
   **Shōnan–Shinjuku** comporte deux parcours depuis Akabane via Ikebukuro,
   Shinjuku et Shibuya : rapide vers Odawara et local vers Zushi via Kamakura.
   Le rapide (pas le « special rapid ») dessert tous les arrêts Tōkaidō au
   sud de Totsuka ; le local dessert aussi Nishi-Ōi, Shin-Kawasaki, Hodogaya
-  et Higashi-Totsuka. Chaque parcours reste limité initialement à deux trains.
+  et Higashi-Totsuka.
   Les extrémités indiquent les limites du
   preset, pas nécessairement les vrais terminus. Aucun métro Tokyo Metro/Toei,
-  réseau régional lointain ou liaison aéroport n'est inclus. Références :
+  réseau régional lointain ni ligne Keikyū vers l'aéroport n'est inclus. Références :
   [carte ferroviaire JR East](https://www.jreast.co.jp/e/info/map_a4ol.pdf).
   Les séquences et arrêts ont été recoupés avec les tableaux publics des
   lignes référencés dans le JSON et le générateur.
   Références pour les extensions :
   [Tōkaidō JR East](https://en.wikipedia.org/wiki/T%C5%8Dkaid%C5%8D_Line_(JR_East)) et
-  [Shōnan–Shinjuku](https://en.wikipedia.org/wiki/Sh%C5%8Dnan%E2%80%93Shinjuku_Line).
-  Les services partageant une voie sont présentés côte à côte, avec un espace
-  entre leurs bandes ; les trains suivent ces mêmes corridors séparés.
+  [Shōnan–Shinjuku](https://en.wikipedia.org/wiki/Sh%C5%8Dnan%E2%80%93Shinjuku_Line) et
+  [Tokyo Monorail](https://en.wikipedia.org/wiki/Tokyo_Monorail).
+  Les services partageant une voie sont présentés côte à côte entre les
+  stations, avec un espace entre leurs bandes ; les trains suivent ces mêmes
+  trajets. Chaque ligne rejoint les stations qu'elle dessert, puis retrouve son
+  corridor parallèle. Les rapides restent sur leur axe aux stations qu'ils
+  sautent, sans ajouter d'arrêts, y compris à l'ouest de Yamanote.
+  Les copies sauvegardées précédemment ne sont pas modifiées ; chargez la
+  version incluse pour retrouver cette nouvelle disposition.
 - **Montréal métro** : les 68 stations des lignes verte (27), orange (31),
   jaune (3) et bleue (12), avec leurs correspondances partagées :
-  68 stations, 69 voies physiques, quatre parcours et 20 trains :
-  six sur la verte, l'orange et la bleue, deux sur la jaune.
+  68 stations, 69 voies physiques, quatre parcours et 30 trains :
+  dix sur la verte, douze sur l'orange, six sur la bleue, deux sur la jaune.
   Le preset contient uniquement le métro existant, sans REM, exo, bus,
   extrémités de continuation ni extensions projetées.
   Son schéma conserve les repères visuels du réseau : diagonale nord de
@@ -204,6 +220,7 @@ les menus ouverts et les gestes en cours restent visibles.
 | Annuler / arrêter le suivi | Échap ; déplacer la vue arrête aussi le suivi |
 | Pause / plein écran | P / F11 |
 | Regarder sans interface | H ou **Menu → Hide interface** ; toucher la poignée en bas, H ou Échap pour revenir |
+| Écran de veille automatique | K ou **Menu → Screensaver** ; Échap ou clic/toucher pour revenir |
 
 Le remodelage ne change que la section choisie, entre deux points d'ancrage fixes
 indiqués par de petits cercles. Les autres coudes restent en place. Les poignées
@@ -212,6 +229,19 @@ déplacé suit la grille ; un aperçu rouge explique le blocage près du curseur
 
 Sans interface, le réseau continue de vivre : déplacez la vue, zoomez ou suivez
 une rame sans risquer de modifier la carte. La pause existante est conservée.
+
+L'**écran de veille** est un mode distinct : il passe en plein écran et alterne
+en boucle une vue du réseau complet (35 secondes), le suivi de différentes
+rames (40 secondes) et un lent panoramique sur une section zoomée (40 secondes).
+Les transitions durent six secondes. Aucune interface, poignée ou curseur
+n'apparaît ; bouger la souris ne l'interrompt pas. Échap ou un clic/toucher
+le quitte sans modifier la carte. Les trains tournent même si vous étiez en
+pause ; à la sortie, la pause, la vue, le suivi manuel éventuel et le mode
+de fenêtre précédents sont restaurés. Sans rame disponible, les plans de
+suivi montrent le réseau complet. Une carte vide reste utilisable.
+Le plein écran dépend de l'autorisation du navigateur sur le Web.
+Ce mode est lancé manuellement et n'est pas enregistré dans les sauvegardes.
+
 La carte n'a pas de bord fixe. Le dézoom manuel descend normalement à **0,08×** ;
 si l'ajustement d'un grand réseau exige une échelle plus petite, cette échelle
 devient le minimum de navigation. Après redimensionnement, utilisez le bouton
@@ -272,6 +302,9 @@ Les courbes sont subdivisées selon leur courbure pour rester lisses en gros pla
 Aux stations partagées, l'illumination des rails s'interrompt autour du raccord
 pour ne pas souligner les superpositions en croix.
 Les contrôles restent contrastés et s'estompent moins qu'en plein jour.
+La pause fige aussi l'ambiance jour/nuit. Après les transitions de l'interface,
+du titre et des notifications, le rendu continu s'arrête jusqu'au prochain
+mouvement, clic, touche ou redimensionnement ; le mode contemplation reste animé.
 En zoom rapproché, portes doubles, ventilation et soufflets articulés se révèlent ;
 à l'échelle de la carte, leur silhouette reste sobre.
 Lors d'un arrêt en vue rapprochée, un quai continu apparaît le long de la rame.
@@ -353,14 +386,15 @@ bash tests/run_smoke.sh extended
 godot --path . --script res://tests/visual_smoke.gd --audio-driver Dummy
 godot --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy
 godot --path . --script res://tests/interface_smoke.gd --audio-driver Dummy
+godot --path . --script res://tests/screensaver_smoke.gd --audio-driver Dummy
 godot --path . --script res://tests/urban_smoke.gd --audio-driver Dummy
 ```
 
 Le runner affiche le temps de chaque script et s'arrête à la première erreur.
 Si Godot n'est pas dans le `PATH`, définissez `GODOT_BIN` avec le chemin de
 l'exécutable. Le mode `smoke` est le mode par défaut et celui des PR et de Pages.
-Il exécute 14 scripts headless : géométrie, édition, interface, audio,
-sauvegarde, partage, presets et service. Les intersections prolongées sont
+Il exécute 15 scripts headless : géométrie, édition, interface, écran de veille,
+audio, sauvegarde, partage, presets et service. Les intersections prolongées sont
 réservées au mode `extended`.
 Les terminus conservent toutes les combinaisons de longueur et d'orientation,
 mais s'arrêtent dès que les seuils de retournements et d'arrêts sont atteints.
@@ -376,6 +410,18 @@ Les scripts individuels sans option conservent leur couverture complète.
 Les quatre commandes graphiques nécessitent un écran. La liste des validations
 et les derniers résultats figurent dans
 [MEMORY.md](../MEMORY.md#validation-and-delivery).
+
+### Mesurer les performances
+
+L'[investigation des performances](performance.md) distingue les coûts CPU
+mesurés des pistes GPU à vérifier sur une vraie carte graphique et propose un
+ordre de correction sans dégrader les visuels. La sonde reproductible est
+séparée des tests de non-régression et exclue des exports :
+
+```sh
+godot --headless --path . --script res://tests/performance_probe.gd
+godot --path . --script res://tests/performance_probe.gd --audio-driver Dummy -- --render
+```
 
 ### Logo et captures
 

@@ -6,6 +6,7 @@ const FADE_TIME := 1.2
 const PLACES_PER_CAR := 12
 const PASSENGER_RADIUS := 0.34
 const PASSENGER_SPEED := 4.0
+const PLATFORM_REACH := 16.0
 
 var elapsed := 0.0
 var departure_age := -1.0
@@ -20,15 +21,46 @@ var doors := PackedVector2Array()
 var normals := PackedVector2Array()
 var centers := PackedVector2Array()
 var axes := PackedVector2Array()
-var platform := PackedVector2Array()
-var platform_edge := PackedVector2Array()
-var platform_safety_edge := PackedVector2Array()
-var platform_seams := PackedVector2Array()
-var tactile_dots := PackedVector2Array()
+# Conservative bounds of every platform mark and walking passenger, known at arrival.
+var platform_bounds := Rect2()
 var boarding_traits := PackedVector4Array()
 var alighting_traits := PackedVector4Array()
-var boarding_paths: Array[PackedVector2Array] = []
-var alighting_paths: Array[PackedVector2Array] = []
+var platform: PackedVector2Array:
+	get:
+		_ensure_geometry()
+		return _platform
+var platform_edge: PackedVector2Array:
+	get:
+		_ensure_geometry()
+		return _platform_edge
+var platform_safety_edge: PackedVector2Array:
+	get:
+		_ensure_geometry()
+		return _platform_safety_edge
+var platform_seams: PackedVector2Array:
+	get:
+		_ensure_geometry()
+		return _platform_seams
+var tactile_dots: PackedVector2Array:
+	get:
+		_ensure_geometry()
+		return _tactile_dots
+var boarding_paths: Array[PackedVector2Array]:
+	get:
+		_ensure_geometry()
+		return _boarding_paths
+var alighting_paths: Array[PackedVector2Array]:
+	get:
+		_ensure_geometry()
+		return _alighting_paths
+var _geometry_built := false
+var _platform := PackedVector2Array()
+var _platform_edge := PackedVector2Array()
+var _platform_safety_edge := PackedVector2Array()
+var _platform_seams := PackedVector2Array()
+var _tactile_dots := PackedVector2Array()
+var _boarding_paths: Array[PackedVector2Array] = []
+var _alighting_paths: Array[PackedVector2Array] = []
 
 func _init(train: Metro, route: Dictionary, minimum_dwell: float, terminal: bool) -> void:
 	initial_passengers = train.passenger_count
@@ -58,16 +90,27 @@ func _init(train: Metro, route: Dictionary, minimum_dwell: float, terminal: bool
 	boarding_duration = raw_boarding * scale
 	var points: PackedVector2Array = route["points"]
 	var total: float = route["length"]
+	var cumulative: PackedFloat64Array = route["cumulative_lengths"]
 	for car in range(train.wagon_count + 1):
 		var distance := train.distance - float(car) * TrackGeometry.CAR_PITCH
-		var center := TrackGeometry.point_at_distance(points, fposmod(distance, total))
-		var axis := TrackGeometry.car_axis(points, total, distance, train.distance)
+		var center := TrackGeometry.point_at_distance(points, fposmod(distance, total), cumulative)
+		var axis := TrackGeometry.car_axis(points, total, distance, train.distance, cumulative)
 		var normal := Vector2(-axis.y, axis.x)
 		centers.append(center)
 		axes.append(axis)
 		for door_x: float in [-1.75, 1.15]:
 			doors.append(center + axis * door_x * TrackGeometry.CAR_SCALE + normal * 3.3)
 			normals.append(normal)
+	# Platform outer edges lie within half a car and 10.5 units of each car center.
+	platform_bounds = Rect2(centers[0], Vector2.ZERO)
+	for center: Vector2 in centers:
+		platform_bounds = platform_bounds.expand(center)
+	platform_bounds = platform_bounds.grow(PLATFORM_REACH)
+
+# Platform and walking-path geometry is visual only; build it on first use so
+# arrivals at overview zoom or offscreen never pay for smoothing and clipping.
+func _build_geometry() -> void:
+	_geometry_built = true
 	var outer := PackedVector2Array()
 	for car in range(centers.size()):
 		var normal := Vector2(-axes[car].y, axes[car].x)
@@ -78,64 +121,64 @@ func _init(train: Metro, route: Dictionary, minimum_dwell: float, terminal: bool
 			ends.append(-TrackGeometry.CAR_LENGTH * 0.5)
 		for end: float in ends:
 			var point := centers[car] + axes[car] * end
-			platform_edge.append(point + normal * 4.8)
+			_platform_edge.append(point + normal * 4.8)
 			outer.append(point + normal * 10.5)
 	var edge_steps := PackedInt32Array()
-	for index in range(1, platform_edge.size()):
-		edge_steps.append(maxi(1, ceili(maxf(platform_edge[index - 1].distance_to(platform_edge[index]), outer[index - 1].distance_to(outer[index])) / 2.0)))
-	platform_edge = _smooth_edge(platform_edge, edge_steps)
+	for index in range(1, _platform_edge.size()):
+		edge_steps.append(maxi(1, ceili(maxf(_platform_edge[index - 1].distance_to(_platform_edge[index]), outer[index - 1].distance_to(outer[index])) / 2.0)))
+	_platform_edge = _smooth_edge(_platform_edge, edge_steps)
 	outer = _smooth_edge(outer, edge_steps)
-	var inner_simplified := PackedVector2Array([platform_edge[0]])
+	var inner_simplified := PackedVector2Array([_platform_edge[0]])
 	var outer_simplified := PackedVector2Array([outer[0]])
-	for index in range(1, platform_edge.size() - 1):
-		var inner_turn := (platform_edge[index] - inner_simplified[inner_simplified.size() - 1]).cross(platform_edge[index + 1] - platform_edge[index])
+	for index in range(1, _platform_edge.size() - 1):
+		var inner_turn := (_platform_edge[index] - inner_simplified[inner_simplified.size() - 1]).cross(_platform_edge[index + 1] - _platform_edge[index])
 		var outer_turn := (outer[index] - outer_simplified[outer_simplified.size() - 1]).cross(outer[index + 1] - outer[index])
 		if absf(inner_turn) > 0.00001 or absf(outer_turn) > 0.00001:
-			inner_simplified.append(platform_edge[index])
+			inner_simplified.append(_platform_edge[index])
 			outer_simplified.append(outer[index])
-	inner_simplified.append(platform_edge[platform_edge.size() - 1])
+	inner_simplified.append(_platform_edge[_platform_edge.size() - 1])
 	outer_simplified.append(outer[outer.size() - 1])
-	platform_edge = inner_simplified
+	_platform_edge = inner_simplified
 	outer = outer_simplified
-	for index in range(platform_edge.size()):
-		platform_safety_edge.append(platform_edge[index].lerp(outer[index], 0.6 / 5.7))
-	platform = platform_edge.duplicate()
+	for index in range(_platform_edge.size()):
+		_platform_safety_edge.append(_platform_edge[index].lerp(outer[index], 0.6 / 5.7))
+	_platform = _platform_edge.duplicate()
 	outer.reverse()
-	platform.append_array(outer)
+	_platform.append_array(outer)
 	var outlines := 0
-	for polygon: PackedVector2Array in Geometry2D.merge_polygons(platform, platform):
+	for polygon: PackedVector2Array in Geometry2D.merge_polygons(_platform, _platform):
 		if not Geometry2D.is_polygon_clockwise(polygon):
-			platform = polygon
+			_platform = polygon
 			outlines += 1
-	assert(outlines == 1, "A station platform must remain one connected outline.")
+	assert(outlines == 1, "A station _platform must remain one connected outline.")
 	outer.reverse()
 	var traveled := 0.0
 	var next_dot := 0.5
 	var next_seam := 2.0
-	for index in range(1, platform_edge.size()):
-		var segment := platform_edge[index - 1].distance_to(platform_edge[index])
+	for index in range(1, _platform_edge.size()):
+		var segment := _platform_edge[index - 1].distance_to(_platform_edge[index])
 		while next_dot <= traveled + segment:
 			var fraction := (next_dot - traveled) / maxf(segment, 0.000001)
-			var inner := platform_edge[index - 1].lerp(platform_edge[index], fraction)
+			var inner := _platform_edge[index - 1].lerp(_platform_edge[index], fraction)
 			var far_edge := outer[index - 1].lerp(outer[index], fraction)
 			for depth: float in [0.45, 0.85]:
 				var dot := inner.lerp(far_edge, depth / 5.7)
-				if Geometry2D.is_point_in_polygon(dot, platform):
-					tactile_dots.append(dot)
+				if Geometry2D.is_point_in_polygon(dot, _platform):
+					_tactile_dots.append(dot)
 			next_dot += 1.0
 		while next_seam <= traveled + segment:
 			var fraction := (next_seam - traveled) / maxf(segment, 0.000001)
-			var inner := platform_edge[index - 1].lerp(platform_edge[index], fraction)
+			var inner := _platform_edge[index - 1].lerp(_platform_edge[index], fraction)
 			var far_edge := outer[index - 1].lerp(outer[index], fraction)
 			var seam_start := inner.lerp(far_edge, 1.2 / 5.7)
 			var seam_end := inner.lerp(far_edge, 5.3 / 5.7)
-			if Geometry2D.is_point_in_polygon(seam_start, platform) and Geometry2D.is_point_in_polygon(seam_end, platform):
-				platform_seams.append(seam_start)
-				platform_seams.append(seam_end)
+			if Geometry2D.is_point_in_polygon(seam_start, _platform) and Geometry2D.is_point_in_polygon(seam_end, _platform):
+				_platform_seams.append(seam_start)
+				_platform_seams.append(seam_end)
 			next_seam += 4.0
 		traveled += segment
-	var walking_areas := Geometry2D.offset_polygon(platform, -PASSENGER_RADIUS - 0.2, Geometry2D.JOIN_MITER)
-	assert(not walking_areas.is_empty(), "A platform must have room for its passengers.")
+	var walking_areas := Geometry2D.offset_polygon(_platform, -PASSENGER_RADIUS - 0.2, Geometry2D.JOIN_MITER)
+	assert(not walking_areas.is_empty(), "A _platform must have room for its passengers.")
 	for entering: bool in [false, true]:
 		for index in range(boarding if entering else alighting):
 			var traits := boarding_traits[index] if entering else alighting_traits[index]
@@ -164,9 +207,24 @@ func _init(train: Metro, route: Dictionary, minimum_dwell: float, terminal: bool
 			if entering:
 				var maximum_distance := PASSENGER_SPEED * (timing.x + timing.y) / 1.5
 				far = near.move_toward(far, maximum_distance)
-				boarding_paths.append(PackedVector2Array([far, near]))
+				_boarding_paths.append(PackedVector2Array([far, near]))
 			else:
-				alighting_paths.append(PackedVector2Array([near, far]))
+				_alighting_paths.append(PackedVector2Array([near, far]))
+	# visible_in() culls whole visits, so every platform mark and passenger disc must lie inside the eager bounds.
+	for vertex: Vector2 in _platform:
+		assert(platform_bounds.has_point(vertex), "Platform geometry must stay inside its culling bounds.")
+	for paths: Array[PackedVector2Array] in [_boarding_paths, _alighting_paths]:
+		for path: PackedVector2Array in paths:
+			for point: Vector2 in path:
+				assert(platform_bounds.encloses(Rect2(point, Vector2.ZERO).grow(PASSENGER_RADIUS)), "Passenger paths must stay inside platform culling bounds.")
+
+# The only draw-culling test for a visit; it must never hide a visible platform mark or passenger.
+func visible_in(area: Rect2) -> bool:
+	return platform_bounds.intersects(area)
+
+func _ensure_geometry() -> void:
+	if not _geometry_built:
+		_build_geometry()
 
 static func _inside_platform(point: Vector2, polygon: PackedVector2Array) -> Vector2:
 	if Geometry2D.is_point_in_polygon(point, polygon):

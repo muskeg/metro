@@ -14,7 +14,7 @@ if ! command -v "$godot" >/dev/null 2>&1; then
   exit 127
 fi
 
-tests=(audio branding editing interface layout localization loop preset schedule simulation terminal train_controls transfer urban)
+tests=(audio branding editing frame_pacing idle_render interface layout localization loop preset schedule screensaver simulation terminal train_controls transfer urban)
 if [ "$suite" = extended ]; then
   tests+=(intersection)
 fi

@@ -2,7 +2,12 @@ class_name WorldView
 extends Node2D
 
 const BACKDROP := preload("res://scripts/render/urban_backdrop.gd")
+const STATIC_TRACK_LAYER := preload("res://scripts/render/static_track_layer.gd")
+const RAIL_ILLUMINATION_LAYER := preload("res://scripts/render/rail_illumination_layer.gd")
+const RAIL_HALO_SHADER := preload("res://scripts/render/rail_halo.gdshader")
 const CORRIDOR_WIDTH := 28.0
+# Headlight reach (cab offset + 50-unit beam + 14 width) plus shadow offset, rounded up.
+const TRAIN_DRAW_MARGIN := 96.0
 const LANE_EDGE_WIDTH := 8.0
 const RUNNING_LANE_WIDTH := 4.0
 const PASSENGER_COATS := [Color("#526b79"), Color("#b98260"), Color("#798468"), Color("#8f7180"), Color("#647e83")]
@@ -36,33 +41,57 @@ var time_of_day: float = 0.5
 var _routes: Dictionary = {}
 var _illuminated_paths: Dictionary = {}
 var _illumination_strengths: Dictionary = {}
-var _rail_halos: Array[Polygon2D] = []
+var _rail_halos: Array[MeshInstance2D] = []
+var _rail_halos_by_line: Dictionary = {}
+var _rail_halo_polygons: Array[PackedVector2Array] = []
+var _rail_halo_material: ShaderMaterial
 var _track_shadows: Array[PackedVector2Array] = []
+var _track_shadow_meshes: Array[Mesh] = []
+var _shape_meshes: Dictionary = {}
+var _beams: Array = []
+var _beam_strength := -1.0
+var _visible_world := Rect2()
+var _shape_polygons: Dictionary = {}
+var _shape_indices: Dictionary = {}
 var _preview := PackedVector2Array()
 var _preview_color := Color.WHITE
 var _preview_error := ""
 var _preview_hint := ""
 var _backdrop: Node2D
+var _static_tracks: StaticTrackLayer
+var _rail_illumination: RailIlluminationLayer
 
 func _ready() -> void:
 	_backdrop = BACKDROP.new()
 	_backdrop.z_index = -10
 	add_child(_backdrop)
+	_static_tracks = STATIC_TRACK_LAYER.new()
+	_static_tracks.show_behind_parent = true
+	add_child(_static_tracks)
+	_static_tracks.set_network(lines, _routes)
+	_static_tracks.set_shadows(_track_shadow_meshes, _track_shadows)
+	_static_tracks.set_shadow_state(BACKDROP.shadow_opacity(time_of_day), BACKDROP.shadow_offset(time_of_day))
 
 func set_network(transit_graph: TransitGraph, transit_lines: Array[TransitLine], route_data: Dictionary = {}) -> void:
 	graph = transit_graph
 	lines = transit_lines
 	_routes = route_data
 	if _routes.is_empty():
+		var corridors := TrackGeometry.corridor_layout(graph, lines)
 		for line: TransitLine in lines:
-			_routes[line.id] = TrackGeometry.circuit(graph, line, lines)
+			_routes[line.id] = TrackGeometry.circuit(graph, line, lines, corridors)
+	if _static_tracks != null:
+		_static_tracks.set_network(lines, _routes)
 	_refresh_illumination()
 	queue_redraw()
 
 func refresh_geometry() -> void:
 	_routes.clear()
+	var corridors := TrackGeometry.corridor_layout(graph, lines)
 	for line: TransitLine in lines:
-		_routes[line.id] = TrackGeometry.circuit(graph, line, lines)
+		_routes[line.id] = TrackGeometry.circuit(graph, line, lines, corridors)
+	if _static_tracks != null:
+		_static_tracks.set_network(lines, _routes)
 	_refresh_illumination()
 	queue_redraw()
 
@@ -72,8 +101,14 @@ func set_dynamic_state(train_list: Array[Metro], center: Vector2, zoom: Vector2,
 	view_center = center
 	view_zoom = zoom
 	time_of_day = phase
-	for halo: Polygon2D in _rail_halos:
+	for halo: MeshInstance2D in _rail_halos:
 		halo.modulate.a = _night_strength()
+	if _rail_illumination != null:
+		_rail_illumination.set_night_strength(_night_strength())
+		_rail_illumination.set_antialiased(view_zoom.x < 1.5)
+	if _static_tracks != null:
+		_static_tracks.set_antialiased(view_zoom.x < 1.5)
+		_static_tracks.set_shadow_state(BACKDROP.shadow_opacity(phase), BACKDROP.shadow_offset(phase))
 	if _backdrop != null:
 		_backdrop.call("set_view", center, zoom, phase)
 	queue_redraw()
@@ -90,36 +125,24 @@ func _draw() -> void:
 		return
 	# The Compatibility renderer's line fringe scales in world units; omit it at close zoom.
 	var night := _night_strength()
-	_draw_ground_shadows()
-	for line: TransitLine in lines:
-		if not _routes.has(line.id):
-			continue
-		var route: Dictionary = _routes[line.id]
-		var points: PackedVector2Array = route["points"]
-		if points.size() < 2:
-			continue
-		for lane: PackedVector2Array in route["running_paths"]:
-			draw_polyline(lane, line.color, LANE_EDGE_WIDTH, view_zoom.x < 1.5)
-		draw_polyline(route["centerline"], line.color, CORRIDOR_WIDTH, view_zoom.x < 1.5)
-		if not line.is_loop():
-			var centerline: PackedVector2Array = route["centerline"]
-			for end: Vector2 in [centerline[0], centerline[centerline.size() - 1]]:
-				draw_circle(end, CORRIDOR_WIDTH * 0.5, line.color, true, -1.0, view_zoom.x < 1.5)
-		for lane: PackedVector2Array in route["running_paths"]:
-			draw_polyline(lane, line.color.darkened(0.3), RUNNING_LANE_WIDTH, view_zoom.x < 1.5)
-		if night > 0.001:
-			_draw_rail_illumination(line, night)
-	_draw_sun_shadows()
+	_visible_world = get_global_transform_with_canvas().affine_inverse() * get_viewport_rect()
+	var train_poses: Dictionary = {}
+	for metro: Metro in metros:
+		if _routes.has(metro.line_id):
+			var route := TrackGeometry.route_for_direction(_routes[metro.line_id], metro.travel_direction)
+			var poses := _build_train_poses(metro, route)
+			if _poses_visible(poses):
+				train_poses[metro.get_instance_id()] = poses
+	_draw_sun_shadows(train_poses)
 	if view_zoom.x > 1.5:
 		for visit: StationVisit in station_visits:
 			_draw_station_visit(visit)
 	for metro: Metro in metros:
-		if _routes.has(metro.line_id):
-			_draw_headlights(metro, TrackGeometry.route_for_direction(_routes[metro.line_id], metro.travel_direction))
+		if train_poses.has(metro.get_instance_id()):
+			_draw_headlights(train_poses[metro.get_instance_id()])
 	for metro: Metro in metros:
-		if not _routes.has(metro.line_id):
-			continue
-		_draw_train(metro, TrackGeometry.route_for_direction(_routes[metro.line_id], metro.travel_direction), lines[metro.line_id].color)
+		if train_poses.has(metro.get_instance_id()):
+			_draw_train(metro, lines[metro.line_id].color, train_poses[metro.get_instance_id()])
 	for station: Station in graph.stations:
 		_draw_network_station(station)
 		if interaction_overlays_visible and station.id == selected_station_id:
@@ -135,14 +158,59 @@ func _draw() -> void:
 			_draw_station(station_preview_position, Color(1.0, 1.0, 1.0, 0.22), Color(Color("#34464f").lerp(Color("#c5dce5"), night), 0.38))
 		_draw_gizmos()
 
+func _build_train_poses(metro: Metro, route: Dictionary) -> Dictionary:
+	var positions := PackedVector2Array()
+	var axes := PackedVector2Array()
+	var total: float = route["length"]
+	if total < 1.0:
+		return {"positions": positions, "axes": axes}
+	var points: PackedVector2Array = route["points"]
+	var cumulative: PackedFloat64Array = route["cumulative_lengths"]
+	var head_distance := metro.render_distance if metro.render_pose_valid else metro.distance
+	for car in range(metro.wagon_count + 1):
+		var distance := head_distance - float(car) * TrackGeometry.CAR_PITCH
+		positions.append(TrackGeometry.point_at_distance(points, fposmod(distance, total), cumulative))
+		axes.append(TrackGeometry.car_axis(points, total, distance, head_distance, cumulative))
+	return {"positions": positions, "axes": axes}
+
+# Drawing-only culling: the margin covers car shells, sun shadows and the full headlight beam.
+func _poses_visible(poses: Dictionary) -> bool:
+	var positions: PackedVector2Array = poses["positions"]
+	if positions.is_empty():
+		return true
+	var bounds := Rect2(positions[0], Vector2.ZERO)
+	for position: Vector2 in positions:
+		bounds = bounds.expand(position)
+	return bounds.grow(TRAIN_DRAW_MARGIN).intersects(_visible_world)
+
 func station_handle_position(station: Station, direction: Vector2) -> Vector2:
 	return station.position + direction * maxf(station_radius(station) + 12.0, 32.0 / view_zoom.x)
 
 func refresh_illumination() -> void:
 	_refresh_illumination()
 
+func refresh_line_color(line_id: int) -> void:
+	_static_tracks.set_network(lines, _routes)
+	if _rail_illumination != null:
+		for line: TransitLine in lines:
+			if line_id < 0 or line.id == line_id:
+				_rail_illumination.set_line_color(line.id, line.color)
+	for line: TransitLine in lines:
+		if line_id >= 0 and line.id != line_id:
+			continue
+		for halo: MeshInstance2D in _rail_halos_by_line.get(line.id, []):
+			var arrays := halo.mesh.surface_get_arrays(0)
+			var colors: PackedColorArray = arrays[Mesh.ARRAY_COLOR]
+			for index in range(colors.size()):
+				colors[index] = Color(line.color, colors[index].a)
+			arrays[Mesh.ARRAY_COLOR] = colors
+			var updated_mesh := ArrayMesh.new()
+			updated_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+			halo.mesh = updated_mesh
+
 func _refresh_illumination() -> void:
 	_track_shadows.clear()
+	_track_shadow_meshes.clear()
 	for line: TransitLine in lines:
 		if not _routes.has(line.id):
 			continue
@@ -150,10 +218,16 @@ func _refresh_illumination() -> void:
 		if centerline.size() >= 2:
 			for width: float in [CORRIDOR_WIDTH + 1.0, CORRIDOR_WIDTH + 3.0]:
 				_track_shadows.append_array(_halo_polygons(centerline, width))
-	for halo: Polygon2D in _rail_halos:
+	for polygon: PackedVector2Array in _track_shadows:
+		_track_shadow_meshes.append(_polygon_mesh(polygon))
+	if _static_tracks != null:
+		_static_tracks.set_shadows(_track_shadow_meshes, _track_shadows)
+	for halo: MeshInstance2D in _rail_halos:
 		remove_child(halo)
 		halo.queue_free()
 	_rail_halos.clear()
+	_rail_halos_by_line.clear()
+	_rail_halo_polygons.clear()
 	_illuminated_paths.clear()
 	_illumination_strengths.clear()
 	var junctions: Array[Station] = []
@@ -174,6 +248,7 @@ func _refresh_illumination() -> void:
 	for line: TransitLine in lines:
 		if not _routes.has(line.id):
 			continue
+		_rail_halos_by_line[line.id] = []
 		var paths: Array[PackedVector2Array] = []
 		for lane: PackedVector2Array in _routes[line.id]["running_paths"]:
 			paths.append(lane)
@@ -203,23 +278,72 @@ func _refresh_illumination() -> void:
 			strengths.append(alpha)
 		_illuminated_paths[line.id] = sampled_paths
 		_illumination_strengths[line.id] = strengths
+		var vertices := PackedVector3Array()
+		var colors := PackedColorArray()
+		var uvs := PackedVector2Array()
+		var indices := PackedInt32Array()
 		for index in range(sampled_paths.size()):
 			if sampled_paths[index].size() < 2:
 				continue
 			for width: float in [30.0, 22.0, 14.0]:
 				for polygon: PackedVector2Array in _halo_polygons(sampled_paths[index], width):
-					var halo := Polygon2D.new()
-					halo.polygon = polygon
-					halo.antialiased = true
-					var colors := PackedColorArray()
+					var triangle_indices := Geometry2D.triangulate_polygon(polygon)
+					var base := vertices.size()
 					for vertex: Vector2 in polygon:
+						vertices.append(Vector3(vertex.x, vertex.y, 0.0))
 						var strength := _junction_strength(vertex, junction_cells)
 						colors.append(Color(line.color, strength * 0.055))
-					halo.vertex_colors = colors
-					halo.z_index = -1
-					halo.modulate.a = _night_strength()
-					add_child(halo)
-					_rail_halos.append(halo)
+						uvs.append(Vector2(-1.0, 0.0))
+					for vertex_index: int in triangle_indices:
+						indices.append(base + vertex_index)
+					var clockwise := Geometry2D.is_polygon_clockwise(polygon)
+					for vertex_index in range(polygon.size()):
+						var start := polygon[vertex_index]
+						var finish := polygon[(vertex_index + 1) % polygon.size()]
+						var edge := finish - start
+						var outward := Vector2(-edge.y, edge.x) if clockwise else Vector2(edge.y, -edge.x)
+						outward = outward.normalized() * 12.0
+						var fringe_base := vertices.size()
+						for fringe_vertex: Vector2 in [start, finish, finish + outward, start + outward]:
+							vertices.append(Vector3(fringe_vertex.x, fringe_vertex.y, 0.0))
+						colors.append_array(PackedColorArray([
+							colors[base + vertex_index],
+							colors[base + (vertex_index + 1) % polygon.size()],
+							Color(line.color, 0.0),
+							Color(line.color, 0.0)
+						]))
+						uvs.append_array(PackedVector2Array([Vector2.ZERO, Vector2.ZERO, Vector2(12.0, 0.0), Vector2(12.0, 0.0)]))
+						indices.append_array(PackedInt32Array([fringe_base, fringe_base + 1, fringe_base + 2, fringe_base, fringe_base + 2, fringe_base + 3]))
+					_rail_halo_polygons.append(polygon)
+		if not indices.is_empty():
+			var mesh_arrays := []
+			mesh_arrays.resize(Mesh.ARRAY_MAX)
+			mesh_arrays[Mesh.ARRAY_VERTEX] = vertices
+			mesh_arrays[Mesh.ARRAY_COLOR] = colors
+			mesh_arrays[Mesh.ARRAY_TEX_UV] = uvs
+			mesh_arrays[Mesh.ARRAY_INDEX] = indices
+			var mesh := ArrayMesh.new()
+			mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, mesh_arrays)
+			var halo := MeshInstance2D.new()
+			halo.mesh = mesh
+			halo.z_index = -1
+			halo.modulate.a = _night_strength()
+			if _rail_halo_material == null:
+				_rail_halo_material = ShaderMaterial.new()
+				_rail_halo_material.shader = RAIL_HALO_SHADER
+			halo.material = _rail_halo_material
+			add_child(halo)
+			_rail_halos.append(halo)
+			_rail_halos_by_line[line.id].append(halo)
+	if _rail_illumination == null:
+		_rail_illumination = RAIL_ILLUMINATION_LAYER.new()
+		_rail_illumination.show_behind_parent = true
+		add_child(_rail_illumination)
+	else:
+		move_child(_rail_illumination, get_child_count() - 1)
+	_rail_illumination.set_network(lines, _illuminated_paths, _illumination_strengths)
+	_rail_illumination.set_night_strength(_night_strength())
+	_rail_illumination.set_antialiased(view_zoom.x < 1.5)
 
 func _junction_strength(point: Vector2, cells: Dictionary) -> float:
 	var strength := 1.0
@@ -287,16 +411,6 @@ static func _polygon_loops(polygon: PackedVector2Array) -> Array[PackedVector2Ar
 		if not split and contour.size() >= 3:
 			loops.append(contour)
 	return loops
-
-func _draw_rail_illumination(line: TransitLine, night: float) -> void:
-	var paths: Array[PackedVector2Array] = _illuminated_paths[line.id]
-	var strengths: Array[PackedFloat32Array] = _illumination_strengths[line.id]
-	var color := line.color.lightened(0.55)
-	for index in range(paths.size()):
-		var colors := PackedColorArray()
-		for strength: float in strengths[index]:
-			colors.append(Color(color, night * 0.8 * strength))
-		draw_polyline_colors(paths[index], colors, 1.2, view_zoom.x < 1.5)
 
 func station_line_colors(station: Station) -> PackedColorArray:
 	var colors := PackedColorArray()
@@ -456,11 +570,14 @@ func _draw_handle(position: Vector2, color: Color, symbol: String, scale: float)
 			var tip := position + (offset + Vector2(4.0 * direction, 0.0)) * scale
 			draw_polyline(PackedVector2Array([tip + Vector2(-2.0 * direction, -2.0) * scale, tip, tip + Vector2(-2.0 * direction, 2.0) * scale]), color, 1.5 * scale, true)
 
+
 func _draw_station_visit(visit: StationVisit) -> void:
 	var alpha := smoothstep(1.5, 3.0, view_zoom.x) * visit.platform_alpha()
 	if alpha <= 0.001:
 		return
-	var visible_area := get_global_transform_with_canvas().affine_inverse() * get_viewport_rect()
+	if not visit.visible_in(_visible_world):
+		return
+	var visible_area := _visible_world
 	var night := _night_strength()
 	if not visit.platform.is_empty():
 		var fill := Color("#d8dfdd").lerp(Color("#33464f"), night)
@@ -496,15 +613,15 @@ func _draw_station_visit(visit: StationVisit) -> void:
 			skin.a = opacity
 			draw_circle(position + normal * (0.1 if not entering else -0.1), 0.15, skin, true, -1.0, view_zoom.x < 3.0)
 
-func _draw_train(metro: Metro, route: Dictionary, color: Color) -> void:
-	var points: PackedVector2Array = route["points"]
-	var total: float = route["length"]
-	if total < 1.0:
+func _draw_train(metro: Metro, color: Color, poses: Dictionary) -> void:
+	var positions: PackedVector2Array = poses["positions"]
+	var axes: PackedVector2Array = poses["axes"]
+	if positions.is_empty():
 		return
 	for car in range(1, metro.wagon_count + 1):
 		draw_set_transform(Vector2.ZERO)
 
-		var edges := _gangway_edges(points, total, metro.distance, car)
+		var edges := _gangway_edges(positions, axes, car)
 		# A compressed connector can fold across itself on a tight bend.
 		for triangle: PackedVector2Array in [PackedVector2Array([edges[0], edges[1], edges[2]]), PackedVector2Array([edges[0], edges[2], edges[3]])]:
 			if absf((triangle[1] - triangle[0]).cross(triangle[2] - triangle[0])) > 0.0001:
@@ -514,92 +631,189 @@ func _draw_train(metro: Metro, route: Dictionary, color: Color) -> void:
 			for fold in range(1, 5):
 				var fraction := float(fold) / 5.0
 				draw_line(edges[0].lerp(edges[1], fraction), edges[3].lerp(edges[2], fraction), Color(0.58, 0.65, 0.66, detail * 0.65), 0.22, false)
+	var body_vertices := PackedVector2Array()
+	var body_colors := PackedColorArray()
+	var body_indices := PackedInt32Array()
 	for car in range(metro.wagon_count, -1, -1):
-		var distance := metro.distance - float(car) * TrackGeometry.CAR_PITCH
-		var position := TrackGeometry.point_at_distance(points, fposmod(distance, total))
-		var angle := TrackGeometry.car_axis(points, total, distance, metro.distance).angle()
-		draw_set_transform(position, angle, Vector2(TrackGeometry.CAR_SCALE, 1.0))
-		_draw_car(color, car == 0, car == metro.wagon_count, metro.at_station and metro.visit != null and metro.visit.elapsed >= metro.visit.opening_duration)
+		var leading := car == 0
+		var trailing := car == metro.wagon_count
+		var cab_end := 1 if leading else (-1 if trailing else 0)
+		_append_car_mesh(body_vertices, body_colors, body_indices, positions[car], axes[car], Vector3(5.9, 3.3, cab_end), color.darkened(0.48))
+		_append_car_mesh(body_vertices, body_colors, body_indices, positions[car], axes[car], Vector3(5.55, 2.85, cab_end), color)
+		if cab_end != 0:
+			var nose_key := Vector3(0.0, 0.0, cab_end)
+			var nose := PackedVector2Array([
+				Vector2(cab_end * 3.5, -1.75), Vector2(cab_end * 4.55, -1.35),
+				Vector2(cab_end * 4.55, 1.35), Vector2(cab_end * 3.5, 1.75)
+			])
+			_cache_shape(nose_key, nose)
+			_append_cached_shape(body_vertices, body_colors, body_indices, nose_key, positions[car], axes[car], Color("#344f5c"))
+	if not body_indices.is_empty():
+		draw_set_transform(Vector2.ZERO)
+		RenderingServer.canvas_item_add_triangle_array(get_canvas_item(), body_indices, body_vertices, body_colors)
+	var doors_open := metro.at_station and metro.visit != null and metro.visit.elapsed >= metro.visit.opening_duration
+	for car in range(metro.wagon_count, -1, -1):
+		draw_set_transform(positions[car], axes[car].angle(), Vector2(TrackGeometry.CAR_SCALE, 1.0))
+		_draw_car(color, car == 0, car == metro.wagon_count, doors_open)
 	draw_set_transform(Vector2.ZERO)
+
+func _append_car_mesh(vertices: PackedVector2Array, colors: PackedColorArray, indices: PackedInt32Array, position: Vector2, axis: Vector2, key: Vector3, color: Color) -> void:
+	var polygon: PackedVector2Array
+	if _shape_polygons.has(key):
+		polygon = _shape_polygons[key]
+	else:
+		var half_length := key.x
+		var half_width := key.y
+		var cab_end := int(key.z)
+		var left_bevel := 1.2 if cab_end < 0 else 0.6
+		var right_bevel := 1.2 if cab_end > 0 else 0.6
+		polygon = PackedVector2Array([
+			Vector2(-half_length + left_bevel, -half_width), Vector2(half_length - right_bevel, -half_width),
+			Vector2(half_length, -half_width + right_bevel), Vector2(half_length, half_width - right_bevel),
+			Vector2(half_length - right_bevel, half_width), Vector2(-half_length + left_bevel, half_width),
+			Vector2(-half_length, half_width - left_bevel), Vector2(-half_length, -half_width + left_bevel)
+		])
+		_cache_shape(key, polygon)
+	_append_cached_shape(vertices, colors, indices, key, position, axis, color)
+
+func _cache_shape(key: Vector3, polygon: PackedVector2Array) -> void:
+	if _shape_polygons.has(key):
+		return
+	var triangle_indices := Geometry2D.triangulate_polygon(polygon)
+	if triangle_indices.is_empty():
+		push_error("Could not triangulate cached train shape.")
+		return
+	_shape_polygons[key] = polygon
+	_shape_indices[key] = triangle_indices
+	_shape_meshes[key] = _polygon_mesh(polygon)
+
+func _append_cached_shape(vertices: PackedVector2Array, colors: PackedColorArray, indices: PackedInt32Array, key: Vector3, position: Vector2, axis: Vector2, color: Color) -> void:
+	if not _shape_polygons.has(key):
+		return
+	var polygon: PackedVector2Array = _shape_polygons[key]
+	var base := vertices.size()
+	var angle := axis.angle()
+	for vertex: Vector2 in polygon:
+		vertices.append(position + Vector2(vertex.x * TrackGeometry.CAR_SCALE, vertex.y).rotated(angle))
+		colors.append(color)
+	for vertex_index: int in _shape_indices[key]:
+		indices.append(base + vertex_index)
 
 func _draw_ground_shadows() -> void:
 	var opacity := BACKDROP.shadow_opacity(time_of_day)
 	if opacity < 0.001:
 		return
 	var offset := BACKDROP.shadow_offset(time_of_day)
-	var color := Color(0.12, 0.17, 0.23, opacity * 0.5)
+	var color := Color(0.12, 0.17, 0.23, opacity * 0.36)
 	draw_set_transform(offset * 0.45)
-	for polygon: PackedVector2Array in _track_shadows:
-		draw_colored_polygon(polygon, Color(color, opacity * 0.36))
+	for index in range(_track_shadows.size()):
+		var mesh := _track_shadow_meshes[index]
+		if mesh == null:
+			draw_colored_polygon(_track_shadows[index], color)
+		else:
+			draw_mesh(mesh, null, Transform2D.IDENTITY, color)
 	draw_set_transform(Vector2.ZERO)
 
-func _draw_sun_shadows() -> void:
+# Matches draw_colored_polygon's own triangulation so cached meshes keep identical pixels.
+func _polygon_mesh(polygon: PackedVector2Array) -> Mesh:
+	if polygon.size() < 3:
+		return null
+	var indices := Geometry2D.triangulate_polygon(polygon)
+	if indices.is_empty():
+		push_error("Could not triangulate cached polygon.")
+		return null
+	var vertices := PackedVector3Array()
+	for vertex: Vector2 in polygon:
+		vertices.append(Vector3(vertex.x, vertex.y, 0.0))
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_INDEX] = indices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh if mesh.get_surface_count() > 0 else null
+
+func _draw_sun_shadows(train_poses: Dictionary) -> void:
 	var opacity := BACKDROP.shadow_opacity(time_of_day)
 	if opacity < 0.001:
 		return
 	var offset := BACKDROP.shadow_offset(time_of_day)
 	var color := Color(0.12, 0.17, 0.23, opacity * 0.5)
 	for metro: Metro in metros:
-		if not _routes.has(metro.line_id):
+		if not train_poses.has(metro.get_instance_id()):
 			continue
-		var route := TrackGeometry.route_for_direction(_routes[metro.line_id], metro.travel_direction)
-		var points: PackedVector2Array = route["points"]
-		var total: float = route["length"]
-		if total < 1.0:
+		var poses: Dictionary = train_poses[metro.get_instance_id()]
+		var positions: PackedVector2Array = poses["positions"]
+		var axes: PackedVector2Array = poses["axes"]
+		if positions.is_empty():
 			continue
 		for car in range(metro.wagon_count + 1):
-			var distance := metro.distance - car * TrackGeometry.CAR_PITCH
-			var position := TrackGeometry.point_at_distance(points, fposmod(distance, total))
-			var angle := TrackGeometry.car_axis(points, total, distance, metro.distance).angle()
-			draw_set_transform(position + offset * 0.65, angle, Vector2(TrackGeometry.CAR_SCALE, 1.0))
+			draw_set_transform(positions[car] + offset * 0.65, axes[car].angle(), Vector2(TrackGeometry.CAR_SCALE, 1.0))
 			for spread: float in [0.15, 0.45]:
 				_draw_car_shell(5.9 + spread, 3.3 + spread, color, 1 if car == 0 else (-1 if car == metro.wagon_count else 0))
 	draw_set_transform(Vector2.ZERO)
 
-func _gangway_edges(points: PackedVector2Array, total: float, distance: float, car: int) -> PackedVector2Array:
-	var front_distance := distance - float(car - 1) * TrackGeometry.CAR_PITCH
-	var back_distance := distance - float(car) * TrackGeometry.CAR_PITCH
-	var front_axis := TrackGeometry.car_axis(points, total, front_distance, distance)
-	var back_axis := TrackGeometry.car_axis(points, total, back_distance, distance)
-	var front := TrackGeometry.point_at_distance(points, fposmod(front_distance, total)) - front_axis * 5.2 * TrackGeometry.CAR_SCALE
-	var back := TrackGeometry.point_at_distance(points, fposmod(back_distance, total)) + back_axis * 5.2 * TrackGeometry.CAR_SCALE
+func _gangway_edges(positions: PackedVector2Array, axes: PackedVector2Array, car: int) -> PackedVector2Array:
+	var front_axis := axes[car - 1]
+	var back_axis := axes[car]
+	var front := positions[car - 1] - front_axis * 5.2 * TrackGeometry.CAR_SCALE
+	var back := positions[car] + back_axis * 5.2 * TrackGeometry.CAR_SCALE
 	var front_normal := front_axis.orthogonal() * 2.0
 	var back_normal := back_axis.orthogonal() * 2.0
 	return PackedVector2Array([front + front_normal, back + back_normal, back - back_normal, front - front_normal])
 
-func _draw_headlights(metro: Metro, route: Dictionary) -> void:
-	var points: PackedVector2Array = route["points"]
-	var total: float = route["length"]
-	if total < 1.0:
+func _draw_headlights(poses: Dictionary) -> void:
+	var positions: PackedVector2Array = poses["positions"]
+	var axes: PackedVector2Array = poses["axes"]
+	if positions.is_empty():
 		return
-	draw_set_transform(TrackGeometry.point_at_distance(points, metro.distance), TrackGeometry.car_axis(points, total, metro.distance, metro.distance).angle())
 	var strength := 0.42 * _night_strength()
-	if strength > 0.001:
-		for side: float in [-1.0, 1.0]:
-			var source := Vector2(5.0 * TrackGeometry.CAR_SCALE, side * 2.0)
-			for radius: float in [5.0, 3.5, 2.0]:
-				draw_circle(source, radius, Color(1.0, 0.91, 0.69, strength * 0.22), true, -1.0, true)
-			for section in range(24):
-				var a := float(section) / 24.0
-				var b := float(section + 1) / 24.0
-				var width_a := lerpf(2.5, 14.0, a)
-				var width_b := lerpf(2.5, 14.0, b)
-				var x_a := lerpf(0.0, 50.0, a)
-				var x_b := lerpf(0.0, 50.0, b)
-				var alpha_a := strength * pow(1.0 - a, 2.0)
-				var alpha_b := strength * pow(1.0 - b, 2.0)
-				for half: float in [-1.0, 1.0]:
-					var vertices := PackedVector2Array([source + Vector2(x_a, 0), source + Vector2(x_b, 0), source + Vector2(x_b, half * width_b), source + Vector2(x_a, half * width_a)])
-					draw_polygon(vertices, PackedColorArray([Color(1.0, 0.91, 0.69, alpha_a), Color(1.0, 0.91, 0.69, alpha_b), Color(1.0, 0.91, 0.69, 0.0), Color(1.0, 0.91, 0.69, 0.0)]))
+	if strength <= 0.001:
+		return
+	if strength != _beam_strength:
+		_rebuild_beams(strength)
+	draw_set_transform(positions[0], axes[0].angle())
+	for side_index in range(2):
+		var source := Vector2(5.0 * TrackGeometry.CAR_SCALE, (side_index * 2 - 1) * 2.0)
+		for radius: float in [5.0, 3.5, 2.0]:
+			draw_circle(source, radius, Color(1.0, 0.91, 0.69, strength * 0.22), true, -1.0, true)
+		var beam: Array = _beams[side_index]
+		RenderingServer.canvas_item_add_triangle_array(get_canvas_item(), beam[2], beam[0], beam[1])
 	draw_set_transform(Vector2.ZERO)
+
+# One fading beam per side, shared by every train. Raw triangle arrays keep float vertex
+# colors (ArrayMesh would quantize the faint alpha) and match draw_polygon's triangulation.
+func _rebuild_beams(strength: float) -> void:
+	_beam_strength = strength
+	_beams.clear()
+	for side: float in [-1.0, 1.0]:
+		var source := Vector2(5.0 * TrackGeometry.CAR_SCALE, side * 2.0)
+		var vertices := PackedVector2Array()
+		var colors := PackedColorArray()
+		var indices := PackedInt32Array()
+		for section in range(24):
+			var a := float(section) / 24.0
+			var b := float(section + 1) / 24.0
+			var width_a := lerpf(2.5, 14.0, a)
+			var width_b := lerpf(2.5, 14.0, b)
+			var x_a := lerpf(0.0, 50.0, a)
+			var x_b := lerpf(0.0, 50.0, b)
+			var alpha_a := strength * pow(1.0 - a, 2.0)
+			var alpha_b := strength * pow(1.0 - b, 2.0)
+			for half: float in [-1.0, 1.0]:
+				var quad := PackedVector2Array([source + Vector2(x_a, 0), source + Vector2(x_b, 0), source + Vector2(x_b, half * width_b), source + Vector2(x_a, half * width_a)])
+				var base := vertices.size()
+				for index: int in Geometry2D.triangulate_polygon(quad):
+					indices.append(base + index)
+				vertices.append_array(quad)
+				colors.append_array(PackedColorArray([Color(1.0, 0.91, 0.69, alpha_a), Color(1.0, 0.91, 0.69, alpha_b), Color(1.0, 0.91, 0.69, 0.0), Color(1.0, 0.91, 0.69, 0.0)]))
+		_beams.append([vertices, colors, indices])
 
 func _draw_car(color: Color, leading_cab: bool, trailing_cab: bool, doors_open: bool = false) -> void:
 	var antialias := view_zoom.x < 1.5
 	var cab_end := 1 if leading_cab else (-1 if trailing_cab else 0)
 	var detail := smoothstep(1.5, 3.0, view_zoom.x)
 	var fine_detail := smoothstep(3.0, 4.5, view_zoom.x)
-	_draw_car_shell(5.9, 3.3, color.darkened(0.48), cab_end)
-	_draw_car_shell(5.55, 2.85, color, cab_end)
 	var roof_start := -3.35 if trailing_cab else -4.8
 	var roof_end := 3.35 if leading_cab else 4.8
 	draw_rect(Rect2(roof_start, -1.75, roof_end - roof_start, 3.5), Color("#dde3e2"))
@@ -626,19 +840,25 @@ func _draw_car(color: Color, leading_cab: bool, trailing_cab: bool, doors_open: 
 		draw_line(Vector2(0.0, -1.65), Vector2(0.0, 1.65), Color(0.57, 0.64, 0.65, fine_detail * 0.5), 0.18, false)
 		draw_line(Vector2(roof_start + 0.3, -1.35), Vector2(roof_end - 0.3, -1.35), Color(1.0, 1.0, 1.0, detail * 0.55), 0.25, false)
 	if cab_end != 0:
-		draw_colored_polygon(PackedVector2Array([Vector2(cab_end * 3.5, -1.75), Vector2(cab_end * 4.55, -1.35), Vector2(cab_end * 4.55, 1.35), Vector2(cab_end * 3.5, 1.75)]), Color("#344f5c"))
 		for side: float in [-1.0, 1.0]:
 			draw_circle(Vector2(cab_end * 5.0, side * 1.9), 0.4, Color("#fff3c9") if leading_cab else Color("#d84e55"), true, -1.0, antialias)
 
+
 func _draw_car_shell(half_length: float, half_width: float, color: Color, cab_end: int = 0) -> void:
-	var left_bevel := 1.2 if cab_end < 0 else 0.6
-	var right_bevel := 1.2 if cab_end > 0 else 0.6
-	draw_colored_polygon(PackedVector2Array([
-		Vector2(-half_length + left_bevel, -half_width), Vector2(half_length - right_bevel, -half_width),
-		Vector2(half_length, -half_width + right_bevel), Vector2(half_length, half_width - right_bevel),
-		Vector2(half_length - right_bevel, half_width), Vector2(-half_length + left_bevel, half_width),
-		Vector2(-half_length, half_width - left_bevel), Vector2(-half_length, -half_width + left_bevel)
-	]), color)
+	var key := Vector3(half_length, half_width, cab_end)
+	var mesh: Mesh = _shape_meshes.get(key)
+	if mesh == null:
+		var left_bevel := 1.2 if cab_end < 0 else 0.6
+		var right_bevel := 1.2 if cab_end > 0 else 0.6
+		var polygon := PackedVector2Array([
+			Vector2(-half_length + left_bevel, -half_width), Vector2(half_length - right_bevel, -half_width),
+			Vector2(half_length, -half_width + right_bevel), Vector2(half_length, half_width - right_bevel),
+			Vector2(half_length - right_bevel, half_width), Vector2(-half_length + left_bevel, half_width),
+			Vector2(-half_length, half_width - left_bevel), Vector2(-half_length, -half_width + left_bevel)
+		])
+		_cache_shape(key, polygon)
+		mesh = _shape_meshes.get(key)
+	draw_mesh(mesh, null, Transform2D.IDENTITY, color)
 
 func _night_strength() -> float:
 	return clampf((cos(time_of_day * TAU) + 0.3) / 1.3, 0.0, 1.0)
