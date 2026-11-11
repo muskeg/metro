@@ -308,7 +308,7 @@ jobs:
             "${name}-macos-universal.zip"
             "${name}-linux-x86_64.tar.gz"
             "${name}-web.zip"
-            "${name}-android-unsigned.apk"
+            "${name}-android.apk"
             "${name}-ios-xcode-unsigned.zip"
           )
           for asset in "${assets[@]}"; do
@@ -319,7 +319,7 @@ jobs:
           Builds for Windows x86_64, macOS Intel/Apple Silicon, Linux x86_64, Web, Android and iOS.
 
           The macOS app is ad-hoc signed, not notarized.
-          Android is an unsigned APK: sign it before installing.
+          Android is signed with the release keystore; sideloading restrictions still apply.
           iOS is an unsigned Xcode project with bundled engine/game data, not an IPA. Replace the placeholder team ID in Signing & Capabilities and sign/build with Xcode before installing.
           Serve the Web archive over HTTP; opening index.html directly is unsupported.
           SHA256SUMS.txt contains checksums for all six assets.
