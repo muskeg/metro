@@ -147,9 +147,9 @@ une surcharge de modele. Les responsabilites de fichiers sont distinctes.
   le recoloriage. La largeur reste constante dans les courbes comme sur les droites.
   Les voies ouvertes gardent une bordure coloree de 8 pixels ; les raccords
   des terminus suivent les chemins physiques visibles. L'aperçu garde ses largeurs.
-- Le groove rythmique est genere une fois en PCM et mis en cache. Les notes
-  synthetisees par les arrivees et les trains en mouvement sont quantifiees sur
-  son tempo, mises en cache par hauteur et jouees sur un petit pool de voix.
+- La musique de fond utilise la piste MP3 fournie, mise en boucle comme un flux audio ; elle remplace le groove PCM et les notes synthetisees.
+  Les effets ferroviaires sont conserves mais leur volume commence a zero et leur
+  curseur est retire temporairement, en attendant de nouveaux sons.
   Pas de synthese par echantillon dans la boucle de rendu.
 
 ## Limites assumees
