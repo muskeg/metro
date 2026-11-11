@@ -1,6 +1,6 @@
 # Metro - repository memory
 
-Last updated: 2026-11-10.
+Last updated: 2026-11-11.
 
 ## Read first
 
@@ -15,9 +15,11 @@ Detailed controls and commands: [docs/guide.md](./docs/guide.md). Decisions and 
   failure pressure or network-wide demand simulation. Light bounded local
   passenger exchanges affect stop times without destinations or transfers.
   Release targets: Windows x86_64, universal macOS (Intel x86_64 + Apple Silicon
-  arm64), Linux x86_64, single-thread Web hosted on GitHub Pages, unsigned
-  Android ARMv7/ARM64 APK and unsigned iOS Xcode project archive (not an IPA).
-  Mobile artifacts require signing/building before installation.
+  arm64), Linux x86_64, single-thread Web hosted on GitHub Pages, Android
+  ARMv7/ARM64 APK signed in the GitHub release workflow with a stable
+  Actions-managed keystore, and unsigned iOS Xcode project archive (not an IPA).
+  The Android workflow requires four signing secrets; iOS still requires
+  building/signing before installation.
 - English default; French can be selected live in Menu. Language is persisted
   through ConfigFile. Add all new UI messages to [ui.csv](./translations/ui.csv).
 - Menu provides Save / Load / Clear for multiple named local layouts, with
@@ -632,6 +634,25 @@ godot --headless --path . --export-release "Web" dist/web/index.html
   Windows log-file path if specifying one.
 
 ## Recent work and verification record
+
+### Android release APK signing in Actions (2026-11-11)
+
+- [releases.yml](./.github/workflows/releases.yml) now rejects dispatches
+  outside the default branch, keeps the unsigned Android export under
+  `dist/package/`, signs it in an Android-only step using `apksigner`, verifies
+  the signature and ZIP, and publishes only the signed APK. Signing uses four
+  repository Actions secrets: `ANDROID_KEYSTORE_BASE64`,
+  `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`.
+  The private keystore stays in runner temp and is removed at step exit.
+- [guide](./docs/guide.md) documents keystore generation, secret setup,
+  default-branch restriction and sideloading limits. No signing key or secret
+  was created or accessed in this session.
+- Passed: PyYAML parsed `releases.yml`; `bash -n` passed for all 11 workflow
+  `run` blocks; `git diff --check` passed. `actionlint` is unavailable.
+- Signing could not be exercised locally: `ANDROID_HOME` is unset and no GitHub
+  signing secrets are configured here. First GitHub release signing remains
+  pending secret setup and an Actions run. Windows/macOS builds were not run;
+  only workflow/documentation/memory files changed.
 
 ### Saved custom layouts in Web startup links (2026-11-10)
 

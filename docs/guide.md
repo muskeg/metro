@@ -525,25 +525,45 @@ il faut le pousser sur `main` ou lancer le workflow.
 Le workflow [releases.yml](../.github/workflows/releases.yml) est distinct du
 déploiement Pages. Pour publier une version :
 
-1. Rendez le workflow disponible sur la branche par défaut du dépôt.
-2. Dans **Actions → Build and publish Metro release → Run workflow**,
-   choisissez la branche à publier et saisissez une version, par exemple
-   `1.0.0` ou `v1.0.0`.
-3. Le workflow vérifie le projet, construit les six cibles puis publie une
+Avant la première publication, créez un keystore Android dédié dans un
+répertoire sécurisé hors du dépôt et gardez-en une sauvegarde chiffrée. Exemple
+avec `keytool` :
+
+```sh
+mkdir -m 700 -p "$HOME/metro-signing"
+cd "$HOME/metro-signing"
+keytool -genkeypair -v -keystore metro-release.jks -storetype JKS \
+  -alias metro -keyalg RSA -keysize 2048 -validity 10000
+base64 < metro-release.jks | tr -d '\n'
+```
+
+Dans **Settings → Secrets and variables → Actions**, ajoutez les secrets
+`ANDROID_KEYSTORE_BASE64` (le résultat encodé), `ANDROID_KEYSTORE_PASSWORD`,
+`ANDROID_KEY_ALIAS` et `ANDROID_KEY_PASSWORD`. Ne commitez ni ne téléversez le
+keystore. La perte de la clé empêche de signer des mises à jour compatibles de
+l'application. Le workflow vérifie ces secrets et ne publie que depuis la
+branche par défaut afin de limiter leur exposition à du code non fiable.
+
+Pour publier une version :
+
+1. Dans **Actions → Build and publish Metro release → Run workflow**, lancez
+   le workflow depuis la branche par défaut et saisissez une version, par
+   exemple `1.0.0` ou `v1.0.0`.
+2. Le workflow vérifie le projet, construit les six cibles puis publie une
    release liée au commit choisi, sous le tag `v1.0.0`. Un tag déjà existant
    est refusé ; aucun export échoué ne déclenche de publication.
 
 La release contient les archives Windows x86_64, macOS universel, Linux
-x86_64 et Web, un APK Android non signé, un projet Xcode iOS non signé et
-un fichier `SHA256SUMS.txt`. La version saisie est intégrée aux exports.
-Windows et Linux embarquent leurs données ; l'archive Linux conserve le droit
-d'exécution. L'archive Web doit être servie par HTTP.
+x86_64 et Web, un APK Android signé, un projet Xcode iOS non signé et un fichier
+`SHA256SUMS.txt`. La signature Android est vérifiée dans Actions ; elle permet
+l'installation et les mises à jour signées avec cette même clé, mais ne supprime
+pas les avertissements de chargement latéral ni ne valide l'identité via Google
+Play. La version saisie est intégrée aux exports. Windows et Linux embarquent
+leurs données ; l'archive Linux conserve le droit d'exécution. L'archive Web
+doit être servie par HTTP.
 
-Les versions mobiles ne sont pas prêtes à installer : Android nécessite une
-signature et iOS une compilation et une signature dans Xcode. Aucun certificat,
-keystore ou compte Apple n'est utilisé par ce workflow. L'app macOS reste
-signée ad hoc et non notariée.
-
+iOS nécessite encore une compilation et une signature dans Xcode. Le workflow
+n'utilise pas de compte Apple ; l'app macOS reste signée ad hoc et non notariée.
 Le job Android installe explicitement `platform-tools`, `build-tools;35.0.1`
 et `platforms;android-35`, sans le paquet historique `tools` proposé par défaut
 par l'action de configuration du SDK.

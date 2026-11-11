@@ -41,6 +41,17 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
 
+      - name: Restrict releases to the default branch
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]]; then
+            echo "::error::Run release workflows from the default branch ($DEFAULT_BRANCH) so signing secrets are only exposed to trusted code."
+            exit 1
+          fi
+
       - name: Check out repository
         uses: actions/checkout@v4
 
@@ -196,8 +207,8 @@ jobs:
               (cd dist/package/web && zip -r "../../release/${name}-web.zip" .)
               ;;
             android)
-              godot --headless --path . --export-release "$EXPORT_PRESET" "dist/release/${name}-android-unsigned.apk"
-              unzip -t "dist/release/${name}-android-unsigned.apk"
+              godot --headless --path . --export-release "$EXPORT_PRESET" "dist/package/${name}-android-unsigned.apk"
+              unzip -t "dist/package/${name}-android-unsigned.apk"
               ;;
             ios)
               mkdir -p dist/package/ios
@@ -216,9 +227,47 @@ jobs:
               unzip -t "$archive"
             fi
           done
-          for asset in dist/release/*; do
-            test -s "$asset"
-          done
+          if [[ "$TARGET" != "android" ]]; then
+            for asset in dist/release/*; do
+              test -s "$asset"
+            done
+          fi
+
+      - name: Sign Android APK
+        if: matrix.target == 'android'
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$ANDROID_KEYSTORE_BASE64" || -z "$ANDROID_KEYSTORE_PASSWORD" || -z "$ANDROID_KEY_ALIAS" || -z "$ANDROID_KEY_PASSWORD" ]]; then
+            echo "::error::Configure ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD GitHub Actions secrets."
+            exit 1
+          fi
+
+          keystore="$RUNNER_TEMP/metro-release.jks"
+          trap 'rm -f "$keystore"' EXIT
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          chmod 600 "$keystore"
+          test -s "$keystore"
+
+          apksigner="$ANDROID_HOME/build-tools/35.0.1/apksigner"
+          test -x "$apksigner"
+          name="Metro-${RELEASE_VERSION}"
+          unsigned_apk="dist/package/${name}-android-unsigned.apk"
+          signed_apk="dist/release/${name}-android.apk"
+          "$apksigner" sign \
+            --ks "$keystore" \
+            --ks-key-alias "$ANDROID_KEY_ALIAS" \
+            --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
+            --key-pass env:ANDROID_KEY_PASSWORD \
+            --out "$signed_apk" \
+            "$unsigned_apk"
+          "$apksigner" verify --verbose --print-certs "$signed_apk"
+          unzip -t "$signed_apk"
 
       - name: Upload release asset
         uses: actions/upload-artifact@v4
