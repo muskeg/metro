@@ -15,6 +15,7 @@
       "dwell_time": 3.0,
       "max_trains": 10,
       "name": "JY Yamanote (30-station loop)",
+      "render_priority": 1,
       "stations": [
         0,
         1,

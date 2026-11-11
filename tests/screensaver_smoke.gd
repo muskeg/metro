@@ -2,6 +2,16 @@ extends SceneTree
 
 var _failed := false
 
+class KioskStartup extends "res://scripts/main.gd":
+	var kiosk_requested := false
+	var startup_layout := ""
+
+	func _web_kiosk_requested() -> bool:
+		return kiosk_requested
+
+	func _web_startup_parameter(parameter: String) -> String:
+		return startup_layout if parameter == "layout" else ""
+
 func _initialize() -> void:
 	_run.call_deferred()
 
@@ -25,8 +35,10 @@ func _capture(main: Node, name: String) -> void:
 	_check(root.get_texture().get_image().save_png("/tmp/metro-screensaver-%s.png" % name) == OK, "Screensaver screenshot must be saved.")
 
 func _run() -> void:
+	await _test_kiosk_startup()
 	var main: Node = load("res://scenes/main.tscn").instantiate()
 	root.add_child(main)
+	_check(not main.get("_screensaver_active"), "Normal startup must never enable screensaver by default.")
 	root.content_scale_factor = 1.0
 	root.min_size = Vector2i.ZERO
 	root.size = Vector2i(1440, 900)
@@ -50,6 +62,8 @@ func _run() -> void:
 	await process_frame
 	await process_frame
 	_check(main.get("_screensaver_active") and not main.get("paused"), "Menu entry must start screensaver and temporarily unpause.")
+	_check(main.get("world_view").get("_motion_antialiasing").visible, "Screensaver must enable screen-space edge smoothing.")
+	_check(main.get("_ui_root").get_parent().layer > main.get("world_view").get("_motion_antialiasing").layer, "The HUD must render after edge smoothing so text and controls stay untouched.")
 	_check(not main.get("_ui_root").visible and not main.get("_restore_ui_button").visible and not main.get("_brand").visible, "Screensaver must hide every HUD element, including brand and Watch grip.")
 	_check(not main.get("world_view").interaction_overlays_visible, "Screensaver must hide editing overlays.")
 	if DisplayServer.get_name() != "headless":
@@ -107,6 +121,7 @@ func _run() -> void:
 	_check(camera.position.is_equal_approx(bounds.get_center()) and bounds.size.x * camera.zoom.x <= main.get_viewport_rect().size.x - 64.0 + 0.01, "Overview must adapt to viewport resizing.")
 	main.call("_input", _key(KEY_ESCAPE))
 	_check(not main.get("_screensaver_active") and main.get("paused") and main.get("_followed_train") == first_train, "Escape must restore pause and previous manual follow.")
+	_check(not main.get("world_view").get("_motion_antialiasing").visible, "Leaving screensaver must disable its smoothing pass.")
 	_check(camera.position.is_equal_approx(saved_position) and camera.zoom.is_equal_approx(saved_zoom) and camera.position_smoothing_enabled == saved_smoothing, "Exit must restore camera framing and smoothing.")
 	_check(main.get("_ui_root").visible and not main.get("_restore_ui_button").visible and Input.mouse_mode == saved_mouse_mode and DisplayServer.window_get_mode() == saved_window_mode, "Exit must restore interface, cursor and exact window mode.")
 	_check(main.get("_minimum_camera_zoom") == saved_floor and graph == main.get("graph"), "Screensaver must not change navigation limits or replace the map.")
@@ -152,6 +167,78 @@ func _run() -> void:
 	else:
 		print("Screensaver smoke passed.")
 		quit(0)
+
+func _test_kiosk_startup() -> void:
+	for requested: bool in [false, true]:
+		var main: Node = load("res://scenes/main.tscn").instantiate()
+		main.set_script(KioskStartup)
+		main.set("kiosk_requested", requested)
+		var window_mode := DisplayServer.window_get_mode()
+		root.add_child(main)
+		main.set_process(false)
+		await process_frame
+		_check(main.get("_screensaver_active") == requested, "Only an explicit kiosk startup request may activate screensaver.")
+		_check(not main.get("graph").stations.is_empty(), "Kiosk entry must happen after the bundled layout has loaded.")
+		_check(DisplayServer.window_get_mode() == window_mode, "URL startup must not attempt fullscreen without a browser user gesture.")
+		if requested:
+			_check(not main.get("_ui_root").visible and not main.get("_restore_ui_button").visible, "Kiosk startup must hide all controls.")
+			main.call("_update_screensaver", 36.0)
+			_check(main.get("_screensaver_shot") == 1, "Kiosk startup must run the existing cinematic cycle.")
+			main.call("_input", _key(KEY_ESCAPE))
+			_check(not main.get("_screensaver_active") and main.get("_ui_root").visible, "Escape must restore normal play after URL-triggered startup.")
+		main.queue_free()
+		await process_frame
+	for layout: String in ["metro_demo", "montreal", "jr_east", "../invalid"]:
+		var main: Node = load("res://scenes/main.tscn").instantiate()
+		main.set_script(KioskStartup)
+		main.set("kiosk_requested", true)
+		main.set("startup_layout", layout)
+		root.add_child(main)
+		main.set_process(false)
+		await process_frame
+		if layout == "../invalid":
+			_check(not main.get("_screensaver_active") and main.get("_ui_root").visible, "Invalid startup layouts must not hide a load failure behind kiosk mode.")
+			_check(not main.get("_panel_status").text.is_empty(), "Invalid layout requests must report a visible load error.")
+		else:
+			var expected := LayoutStore.new().load_bundled_layout("res://layouts/" + layout + ".json")
+			_check(main.get("graph").stations.size() == expected["graph"].stations.size() and main.get("lines").size() == expected["lines"].size(), "URL layout selection must load the requested bundled network before entering kiosk.")
+			_check(main.get("_screensaver_active"), "Each valid bundled layout must support kiosk startup.")
+			main.call("_stop_screensaver")
+		main.queue_free()
+		await process_frame
+	var store := LayoutStore.new()
+	store.directory = "user://kiosk-startup-smoke-layouts"
+	var graph := TransitGraph.new()
+	graph.add_station(Vector2.ZERO)
+	graph.add_station(Vector2(576, 0))
+	var line := TransitLine.new(0, Color("#58b8bd"))
+	line.append_station(graph, 0)
+	line.append_station(graph, 1)
+	var lines: Array[TransitLine] = [line]
+	var name := "Réseau kiosque & essais"
+	_check(store.save_layout(name, store.capture(graph, lines, 0, Vector2.ZERO, 0.5)), "Custom startup fixture must save through the normal layout store.")
+	for requested: bool in [false, true]:
+		for saved_name: String in [name, "absent", ""]:
+			var main: Node = load("res://scenes/main.tscn").instantiate()
+			main.set_script(KioskStartup)
+			main.set("layout_store", store)
+			main.set("kiosk_requested", requested)
+			main.set("startup_layout", "saved:" + saved_name)
+			root.add_child(main)
+			main.set_process(false)
+			await process_frame
+			if saved_name == name:
+				_check(main.get("graph").stations.size() == 2 and main.get("lines").size() == 1, "Saved startup must load the custom network, not a bundled fallback.")
+				_check(main.get("_screensaver_active") == requested, "Saved layouts must work with and without kiosk.")
+				if requested:
+					main.call("_stop_screensaver")
+			else:
+				_check(not main.get("_screensaver_active") and main.get("_ui_root").visible, "Missing or invalid saved names must leave the interface accessible.")
+				_check(not main.get("_panel_status").text.is_empty(), "Missing or invalid saved names must show the startup load error.")
+			main.queue_free()
+			await process_frame
+	_check(DirAccess.remove_absolute(store._path(name)) == OK, "Custom startup fixture cleanup must succeed.")
+	_check(DirAccess.remove_absolute(store.directory) == OK, "Custom startup test directory cleanup must succeed.")
 
 func _test_empty_map() -> void:
 	var main: Node = load("res://scenes/main.tscn").instantiate()

@@ -6,6 +6,7 @@ var stations: Array[int] = []
 var tracks: Array[int] = []
 var color: Color
 var display_name := ""
+var render_priority := 0
 var dispatch_rate: float = 18.0
 var dwell_time: float = 3.0
 var cruise_velocity: float = 100.0

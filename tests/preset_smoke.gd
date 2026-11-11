@@ -70,6 +70,9 @@ func _test_preset(path: String, jr_east: bool) -> void:
 			for station_id: int in saved["stations"]:
 				metro_stations[station_id] = true
 	if jr_east:
+		_check(lines[0].render_priority == 1, "Yamanote must have the highest render priority.")
+		for line: TransitLine in lines.slice(1):
+			_check(line.render_priority == 0, "Other Tokyo lines must retain their relative draw order.")
 		_test_tokyo(graph, lines, names)
 		_check(json.data.get("scope") == "central-tokyo-jr", "Tokyo must replace the sprawling regional preset.")
 	else:
@@ -172,6 +175,9 @@ func _test_preset(path: String, jr_east: bool) -> void:
 	var menu_load_ms := (Time.get_ticks_usec() - start) / 1000.0
 	_check(main.get("graph").stations.size() == graph.stations.size() and main.get("lines").size() == lines.size(), "Real menu loading must install the complete network.")
 	if jr_east:
+		var tracks: StaticTrackLayer = main.get("world_view").get("_static_tracks")
+		for line: TransitLine in lines.slice(1):
+			_check(tracks.line_layer(0).get_index() > tracks.line_layer(line.id).get_index(), "Yamanote rails and trains must render above every other Tokyo line after a menu load.")
 		var camera: Camera2D = main.get("camera")
 		var viewport_size: Vector2 = main.get_viewport_rect().size
 		var usable := Rect2(Vector2(32, 80), viewport_size - Vector2(64, 160))

@@ -36,10 +36,25 @@ satisfaire, aucun compte a rebours. Le nom du jeu devient **Metro**.
 - Le fond est dessine dans le monde et change de palette au fil de la journee.
   Les voies, trains et controles ne subissent pas la modulation sombre du
   decor. Phares et fenetres deviennent plus visibles la nuit.
-- Une composition lo-fi originale de 48 secondes : piano electrique chaleureux,
-  batterie a 80 BPM avec hats legrement swingues, harmonies evolutives et
-  pauses musicales. Les annonces sont des accords graves et doux ; le bruit
-  des rails reste discret. Musique et sons ferroviaires ont des volumes separes.
+- La musique de fond utilise « lofi_metro_NO_DRUMS », fourni en WAV et encode
+  en MP3 stereo 128 kbit/s (3.35 Mo au lieu de 55.45 Mo), sans couper ses 209.56s.
+  La piste boucle sur toute sa duree. Les effets ferroviaires sont a zero par
+  defaut et leur curseur est retire temporairement, en attendant de nouveaux sons.
+  Les volumes general et musique restent disponibles.
+
+Le Web accepte un demarrage explicite en veille avec `?kiosk=1` dans l'URL
+(`URLSearchParams`, valeur exacte `1`). Sans ce parametre, aucun changement
+au demarrage. Activation apres chargement du reseau, via le meme mode veille,
+sans demande de plein ecran automatique (restriction de geste navigateur).
+Pas de persistance ni de verrouillage ; Echap/clic/toucher gardent leur sortie
+normale. Le navigateur gere le plein ecran kiosque et les permissions audio.
+Le parametre independant `layout` selectionne `metro_demo`, `montreal` ou
+`jr_east` parmi les presets inclus, ou `saved:Nom` pour une sauvegarde du meme
+site/profil navigateur via `LayoutStore.load_layout` et ses validations normales.
+Le nom est decode par URLSearchParams ; les caracteres speciaux doivent etre
+encodes dans le lien. Le lien ne transporte pas le contenu du reseau.
+Sans valeur, conserver le preset habituel ; valeur inconnue : erreur visible,
+pas de veille ni de chargement arbitraire par chemin/URL.
 
 ## Organisation du travail
 
@@ -132,9 +147,10 @@ une surcharge de modele. Les responsabilites de fichiers sont distinctes.
   le recoloriage. La largeur reste constante dans les courbes comme sur les droites.
   Les voies ouvertes gardent une bordure coloree de 8 pixels ; les raccords
   des terminus suivent les chemins physiques visibles. L'aperçu garde ses largeurs.
-- La musique est une miniature originale de 48 secondes, composee de notes
-  avec des silences et des decays, generee une fois et mise en cache. Pas de
-  synthese par echantillon dans la boucle de rendu.
+- Le groove rythmique est genere une fois en PCM et mis en cache. Les notes
+  synthetisees par les arrivees et les trains en mouvement sont quantifiees sur
+  son tempo, mises en cache par hauteur et jouees sur un petit pool de voix.
+  Pas de synthese par echantillon dans la boucle de rendu.
 
 ## Limites assumees
 
@@ -310,7 +326,18 @@ hors station ne sont pas une simulation de passages a niveau.
   une ombre legere sur le fond, a partir de contours arrondis caches (largeurs
   29/31px), avec seulement 45 % du decalage solaire et 36 % de son opacite
   par couche. Les trous de boucles sont preserves. Les ombres des trains restent
-  au-dessus des voies, sous les voitures.
+  au-dessus de leur voie, sous les voitures et les voies superieures.
+- Aux croisements, l'ordre existant des lignes definit automatiquement la
+  hauteur visuelle : chaque ligne dessine ses rails, leur eclairage, ses quais
+  temporaires puis ses rames avant la ligne suivante. Une voie superieure cache
+  donc les voitures, soufflets, ombres et phares des rames inferieures sans
+  masquer la rame entiere. Les stations et controles restent au-dessus.
+  Aucun niveau manuel ni changement de simulation. Le champ optionnel
+  `lines[].render_priority` du JSON v1 est un entier de 0 a 15 (0 par defaut) :
+  priorites croissantes, puis ordre existant des lignes en cas d'egalite.
+  Le preset Tokyo met Yamanote a 1 et toutes les autres lignes a 0.
+  Sauvegarde/import/export et fragments conservent cette priorite, sans changer
+  les identifiants de simulation ni l'ordre des onglets ou anneaux de station.
 - Le monde n'a pas de bord fixe. Molette et pincement partagent le zoom
   0,08-6x, contre 0,45-6x auparavant, pour les grandes cartes. Pas d'import
   geographique ni de garantie de performances pour les grandes cartes.
@@ -333,6 +360,24 @@ hors station ne sont pas une simulation de passages a niveau.
   Les roues restent cachees. Les phares ont des halos locaux visibles et des
   faisceaux plus intenses mais decroissants a la nuit. Le lissage est desactive au
   zoom rapproche car sa frange en unites monde rend les contours flous.
+- Sous 0.8x, chaque rame devient un point lumineux avec trainee suivant les rails :
+  tete blanche de rayon 2.2 pixels, contour sombre de 1 pixel et halo de rayon 4.
+  La trainee memorise la derniere seconde de mouvement interpole :
+  elle s'allonge avec la vitesse et s'efface progressivement a l'arret.
+  La disparition avance depuis l'arriere vers la tete : expiration des
+  positions anciennes et raccourcissement smoothstep a l'arret en une seconde.
+  Aucun multiplicateur d'opacite global selon l'age : l'avant reste lumineux.
+  Gradient spatial (exposant 1.4, maximum 0.8), coeur de 1.5 pixels et halo de 4
+  (opacite maximale 0.18) ;
+  longueur plafonnee a 1.5 fois la longueur physique de chaque rame ou un tour.
+  Historique echantillonne a environ 30 Hz, gele en pause, efface lors des
+  changements de geometrie, retraits et inversions de cabine (pas de teleport).
+  Tous les sommets du circuit sont inclus pour respecter les virages.
+  Les voies superieures et stations recouvrent toujours marqueurs et voitures.
+  Fondu complementaire smoothstep entre marqueur et voitures de 0.5x a 0.8x,
+  via deux enfants du meme calque de ligne ; aucun changement de z-index.
+  Les phares/ombres des voitures sont omis en vue point lumineux. Le picking et la
+  marge de culling suivent la meme representation, sans changer la simulation.
 
 ## Edition contextuelle et topologie
 
@@ -518,6 +563,12 @@ hors station ne sont pas une simulation de passages a niveau.
   restaure pause, cadrage, suivi manuel, curseur et mode de fenetre exacts.
   Mouvement, molette et autres touches sont ignores pour un usage kiosque.
   Aucun lancement automatique par inactivite ni etat persiste.
+  Un passage FXAA avec stabilisation des details sous-pixel lisse les bords
+  en pixels ecran pendant ce mode uniquement. Il reduit le scintillement des
+  rails et voitures lors des mouvements fractionnaires, sans elargir la frange
+  en unites monde ni toucher au HUD (compose ensuite). Le mode Compatibility
+  ne permet pas de compter sur le MSAA 2D ; aucun historique temporel ou
+  arrondi des positions de camera/train n'est utilise.
 
 - La carte reste le premier plan : plus de panneau lateral permanent.
   Une barre discrete en haut regroupe Pause, Aide et Menu ; un

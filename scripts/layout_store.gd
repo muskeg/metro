@@ -56,6 +56,8 @@ func capture(graph: TransitGraph, lines: Array[TransitLine], active_id: int, pos
 		var saved := {"color": line.color.to_html(false), "stations": Array(line.stations)}
 		if not line.display_name.is_empty():
 			saved["name"] = line.display_name
+		if line.render_priority != 0:
+			saved["render_priority"] = line.render_priority
 		for field: String in LINE_FIELDS:
 			saved[field] = line.get(field)
 		saved_lines.append(saved)
@@ -262,6 +264,10 @@ func restore(data: Dictionary) -> Dictionary:
 				_fail("Invalid line name.")
 				return {}
 			line.display_name = saved["name"]
+		if not _index_valid(saved.get("render_priority", 0), MAX_LINES):
+			_fail("Invalid line data.")
+			return {}
+		line.render_priority = int(saved.get("render_priority", 0))
 		for field: String in LINE_FIELDS:
 			if not _line_value_valid(field, saved.get(field)):
 				_fail("Invalid line setting: " + field)

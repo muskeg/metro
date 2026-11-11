@@ -218,13 +218,38 @@ func _ready() -> void:
 	_create_line()
 	_refresh_network()
 	_update_configuration_ui()
+	var startup_ready := true
 	if startup_layout_enabled:
-		var starter := layout_store.load_starter_layout()
+		var starter := _load_startup_layout()
 		if starter.is_empty():
+			startup_ready = false
 			_set_status("Impossible de charger le réseau inclus. Utilisez Charger pour réessayer.")
 		else:
 			_replace_layout(starter, true)
 	get_window().mouse_exited.connect(_on_pointer_exited)
+	if startup_ready and _web_kiosk_requested():
+		_start_screensaver(false)
+
+func _web_kiosk_requested() -> bool:
+	return _web_startup_parameter("kiosk") == "1"
+
+func _web_startup_parameter(parameter: String) -> String:
+	if not OS.has_feature("web"):
+		return ""
+	var value: Variant = JavaScriptBridge.eval("new URLSearchParams(window.location.search).get(%s)" % JSON.stringify(parameter))
+	return value if value is String else ""
+
+func _load_startup_layout() -> Dictionary:
+	var requested := _web_startup_parameter("layout")
+	if requested.is_empty():
+		return layout_store.load_starter_layout()
+	if requested.begins_with("saved:"):
+		return layout_store.load_layout(requested.trim_prefix("saved:"))
+	for path: String in LayoutStoreScript.BUNDLED_LAYOUTS:
+		if path.get_file().get_basename() == requested:
+			return layout_store.load_bundled_layout(path)
+	push_warning("Unknown startup layout: " + requested)
+	return {}
 
 func _configure_display() -> void:
 	var window := get_window()
@@ -269,10 +294,9 @@ func _process(delta: float) -> void:
 			_stop_following()
 	if dispatcher.arrival_count > _previous_arrival_count:
 		_previous_arrival_count = dispatcher.arrival_count
-		var last_line := lines[dispatcher.last_arrival_line_id]
-		audio.call("play_arrival", last_line.color.h, night_factor)
+		audio.call("play_arrival")
 	_update_interaction_overlays()
-	world_view.set_dynamic_state(dispatcher.metros, camera.get_screen_center_position(), camera.zoom, time_of_day, dispatcher.visits)
+	world_view.set_dynamic_state(dispatcher.metros, camera.get_screen_center_position(), camera.zoom, time_of_day, dispatcher.visits, 0.0 if paused else delta)
 	_update_connection_guidance()
 	if _connect_drag_source_id < 0 and _dragging_station_id < 0 and _editing_track_id < 0:
 		if _pointer_inside and not _ui_hidden and not _any_sheet_open() and not _space_down and get_viewport().gui_get_hovered_control() == null and not _panning:
@@ -636,6 +660,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _create_interface() -> void:
 	var layer := CanvasLayer.new()
+	layer.layer = 2
 	add_child(layer)
 	var ui_root := Control.new()
 	_ui_root = ui_root
@@ -858,7 +883,6 @@ func _create_interface() -> void:
 	_settings_grid.add_child(_fullscreen_button)
 	_master_volume = _add_volume(_settings_grid, "Volume général", AudioServer.get_bus_volume_linear(0), _set_master_volume)
 	_add_volume(_settings_grid, "Musique", 0.4, func(value: float) -> void: audio.call("set_music_volume", value))
-	_add_volume(_settings_grid, "Sons des trains", 0.5, func(value: float) -> void: audio.call("set_effects_volume", value))
 	_hide_ui_button = _button("Masquer l'interface (H)", _toggle_ui)
 	_hide_ui_button.tooltip_text = "H / Échap ou toucher la poignée en bas pour revenir"
 	_settings_grid.add_child(_hide_ui_button)
@@ -1362,7 +1386,7 @@ func _toggle_ui() -> void:
 	_update_interaction_overlays()
 	world_view.queue_redraw()
 
-func _start_screensaver() -> void:
+func _start_screensaver(request_fullscreen: bool = true) -> void:
 	if _screensaver_active:
 		return
 	_cancel_gesture()
@@ -1391,10 +1415,12 @@ func _start_screensaver() -> void:
 	_touch_world_index = -1
 	_restore_ui_button.hide()
 	Input.mouse_mode = Input.MOUSE_MODE_HIDDEN
-	_set_fullscreen(true)
+	if request_fullscreen:
+		_set_fullscreen(true)
 	paused = false
 	camera.position_smoothing_enabled = false
 	_screensaver_active = true
+	world_view.set_motion_antialiasing(true)
 	_screensaver_last_train = null
 	_screensaver_train_cursor = 0
 	_screensaver_pan_cursor = 0
@@ -1404,6 +1430,7 @@ func _stop_screensaver() -> void:
 	if not _screensaver_active:
 		return
 	_screensaver_active = false
+	world_view.set_motion_antialiasing(false)
 	_screensaver_train = null
 	_screensaver_last_train = null
 	paused = _screensaver_saved_paused
@@ -1823,6 +1850,14 @@ func _train_near(position: Vector2) -> Metro:
 	var distance := maxf(7.0, 10.0 / camera.zoom.x)
 	for train: Metro in dispatcher.metros:
 		var route := TrackGeometry.route_for_direction(dispatcher.routes[train.line_id], train.travel_direction)
+		if camera.zoom.x < WorldView.OVERVIEW_TRAIN_ZOOM:
+			var path := world_view.overview_train_path(train, route, camera.zoom.x)
+			var candidate := TrackGeometry.closest_point(path, position).distance_to(position)
+			if candidate <= distance:
+				closest = train
+				distance = candidate
+			if camera.zoom.x <= WorldView.OVERVIEW_BLEND_START:
+				continue
 		for car in range(train.wagon_count + 1):
 			var center := TrackGeometry.car_position(route["points"], route["length"], train.distance, car, route["cumulative_lengths"])
 			var candidate := center.distance_to(position)

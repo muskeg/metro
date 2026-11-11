@@ -25,6 +25,14 @@ func _run() -> void:
 	await process_frame
 	await process_frame
 	var panel: PanelContainer = main.get("_main_panel")
+	_check(main.get("audio").get("_effects_volume") == 0.0, "Train sounds must default to muted until replacement effects are available.")
+	var settings: GridContainer = main.get("_settings_grid")
+	var volume_sliders := 0
+	for cell: Node in settings.get_children():
+		for control: Node in cell.get_children():
+			_check(not (control is Label and control.text == "Sons des trains"), "Train effects volume controls must remain absent for now.")
+			volume_sliders += int(control is HSlider)
+	_check(volume_sliders == 2, "Settings must retain only master and music volume sliders.")
 	_check_dock_overflow(main)
 	_check_contrast(Color("#253b40"), Color("#faf9f4"), 7.0, "Primary UI text")
 	_check_contrast(Color("#53666a"), Color("#faf9f4"), 4.5, "Secondary UI text")

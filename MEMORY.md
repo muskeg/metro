@@ -1,6 +1,6 @@
 # Metro - repository memory
 
-Last updated: 2026-11-09.
+Last updated: 2026-11-10.
 
 ## Read first
 
@@ -97,6 +97,32 @@ Detailed controls and commands: [docs/guide.md](./docs/guide.md). Decisions and 
   No scenery or visible grid; the 48-pixel
   construction grid remains active.
   Earlier procedural-city iterations were deliberately removed, not unfinished.
+- Crossing height follows ascending `render_priority`, then existing line-array
+  draw order for ties: each
+  line's retained rails, night rail highlights, platforms, train shadows,
+  headlights and cars render before the next line. Higher rails occlude lower
+  trains only where they overlap; stations/edit overlays remain on top. No
+  manual section heights, same-line grade separation or simulation changes.
+  Optional v1 JSON `lines[].render_priority` is an integer 0-15 (default 0);
+  capture/import/export and fragments preserve it. Bundled Tokyo puts Yamanote
+  at 1 above all other lines (0), without changing IDs, tabs or station rings.
+  Existing saved copies retain their old ordering; reload the included Tokyo.
+- Below 0.8x, trains use pulse dots with rail-following tails: white head radius
+  2.2 logical pixels, 1px dark outline, 4px head glow, 1.5px tail core and
+  4px tail glow (max alpha 0.18).
+  Actual interpolated movement history lasts 1 second (about 30Hz samples);
+  spatial alpha exponent 1.4, max 0.8, no flashing. Length follows speed,
+  capped at 1.5 times each train's physical length/one circuit (no screen-space minimum).
+  Old history expires from the rear; at rest a smoothstep length envelope
+  retracts the tip toward the fixed bright head within one second. No age-based
+  global alpha fade: the surviving front remains luminous like a comet.
+  History clock freezes in pause; clear on geometry changes, retirement or
+  cab/direction reversal to avoid phantom teleport trails. No startup fake tail.
+  Complementary smoothstep marker/car crossfade spans 0.5x-0.8x.
+  Heads follow interpolated distance and the same per-line layer; higher
+  rails/stations still occlude them. Include all route vertices, wrap loop seams,
+  cap at one circuit; reset open tails at cab reversal to avoid folding.
+  No car shadows/headlight beams in pulse-dot mode; simulation is unchanged.
 - Metro branding uses an orange/teal/purple transit M with station rings,
   redrawn as self-contained SVG paths from the supplied image. Source mark and
   wordmark: [assets/branding](./assets/branding). The in-game title uses both;
@@ -173,6 +199,16 @@ Detailed controls and commands: [docs/guide.md](./docs/guide.md). Decisions and 
   Entering cancels in-progress edits safely. No setting is persisted.
 - Screensaver is separate from manual Watch: K or Menu > Screensaver (French
   Veille) requests fullscreen and hides every control, bottom grip and cursor.
+  Web URL `?kiosk=1` opts into this mode after startup; absent/other values do
+  not. Independent `layout=metro_demo|montreal|jr_east` selects a bundled preset
+  before entry (works without kiosk too). Defaults stay unchanged, no persistence
+  or native URL behavior. `layout=saved:Name` loads an existing named save from
+  the same site/browser profile through LayoutStore; encode spaces as `%20`
+  and special characters with `encodeURIComponent`. This is the in-game save
+  name, not an imported filename; the URL does not carry layout data.
+  Unknown/missing/invalid layouts report a visible load error and skip
+  kiosk. URL entry skips fullscreen requests without a browser gesture; configure
+  browser kiosk/fullscreen externally. Escape/click/touch still exit normally.
   Continuous cycle: full-map overview 35s, train follow 40s, zoomed slow pan
   40s, different train follow 40s; six-second smoothstep transitions.
   Follow selection prefers another line, then another train. Missing trains
@@ -249,9 +285,13 @@ Detailed controls and commands: [docs/guide.md](./docs/guide.md). Decisions and 
   exclusive tracks/stations, preserves shared and unrelated infrastructure,
   reindexes surviving IDs and rebuilds service; the last deletion leaves an
   empty editable line. Pause/camera persist and stale following/visits clear.
-- Original 48-second PCM music uses a consonant repeating eight-bar progression,
-  a swung 80 BPM kick/snare groove, sparse melody and muted hats. Music starts
-  at 0.4 volume; train effects have a separate volume.
+- Background music is the supplied “lofi_metro_NO_DRUMS”, encoded from the
+  source WAV to stereo 128kbps MP3 (209.56s, 3.35MB instead of 55.45MB).
+  Full track loops as a stream; no synthetic train notes or drums layered over
+  it. Train effects default to zero and their volume control is temporarily
+  removed pending replacement sounds; master/music controls remain available.
+  Replaced Sansho asset is removed. No license/author metadata accompanied the
+  new source; do not infer CC0 from the old soundtrack.
 - Trains are top-down metro trainsets with matching cab ends, pale neutral roofs,
   line-colored body edges and articulated accordion gangways. Doors/windows,
   ventilation and folds fade in at zoom 1.5-3; fine seams/grilles at 3-4.5.
@@ -447,7 +487,8 @@ Detailed controls and commands: [docs/guide.md](./docs/guide.md). Decisions and 
   schedule_smoke checks discs plus viewports grazing only one passenger.
   [world_view.gd](./scripts/render/world_view.gd) consumes visits only for drawing;
   whole visits cull via `StationVisit.visible_in(area)` only; trains (pose bounds + 96-unit margin) are
-  culled from drawing only; simulation is never culled. [main.gd](./scripts/main.gd) passes
+  culled from drawing only (include the comet path and its screen-sized glow);
+  simulation is never culled. [main.gd](./scripts/main.gd) passes
   visits alongside trains, without a separate wall-clock animation timer.
 - [world_view.gd](./scripts/render/world_view.gd): draw rail bands from centerline
   and open running paths, not the closed simulation circuit. A rounded band cap
@@ -456,7 +497,18 @@ Detailed controls and commands: [docs/guide.md](./docs/guide.md). Decisions and 
   [static_track_layer.gd](./scripts/render/static_track_layer.gd) retains base
   rails and corridor shadows across camera motion and ordinary frames; topology,
   recolor and AA-threshold changes redraw the rail commands.
-  All cars, gangways and lights remain drawn during terminal movement; train
+  `StaticTrackLayer.line_layer` exposes retained per-line parents, sorted by
+  render priority with stable original-order ties; each owns its rail highlights
+  and dynamic train drawing child.
+  WorldView's `_draw_line_trains` directs existing train/platform helpers to that
+  child CanvasItem; parent `_draw` keeps station/edit overlays above every line.
+  Screensaver enables `set_motion_antialiasing`: a full-screen CanvasLayer 1
+  FXAA/subpixel pass from `motion_antialiasing.gdshader`; HUD layer 2 stays
+  untouched. Exit hides the pass, restoring exact unfiltered rendering.
+  StationVisit snapshots `line_id` so fading platforms retain their layer even
+  after a train retires. Track callbacks resolve current models by ID to avoid
+  retaining old colors/topology when a load reuses IDs.
+  In real-car mode, all cars, gangways and lights remain drawn during terminal movement; train
   picking has no visibility guard. Car shells/noses and shadows draw cached
   `draw_mesh` meshes; headlight beams use `canvas_item_add_triangle_array`
   (float colors; ArrayMesh 8-bit colors broke parity) rebuilt only on strength change.
@@ -466,6 +518,12 @@ Detailed controls and commands: [docs/guide.md](./docs/guide.md). Decisions and 
   Night glow is local layered geometry, compatible with native/Web Compatibility
   rendering, not an HDR/environment dependency. Compressed gangways use two
   triangles so a folded connector cannot fail polygon triangulation.
+  `overview_train_path` shares the retained temporal trail with main's picking;
+  `overview_train_trail` also supplies per-point ages for temporal tests. Main passes
+  unpaused frame delta to `set_dynamic_state` (zero in pause/refresh-only calls).
+  Separate detailed/overview children under each line apply complementary
+  alpha from `overview_opacity` without changing cross-line ordering. Picking
+  includes both representations in the blend range.
   `station_line_colors` derives membership once per line, in array order;
   `station_radius` is shared with input picking. `_draw_network_station` is
   also used for route source/target repaint, preserving committed line rings.
@@ -574,6 +632,551 @@ godot --headless --path . --export-release "Web" dist/web/index.html
   Windows log-file path if specifying one.
 
 ## Recent work and verification record
+
+### Saved custom layouts in Web startup links (2026-11-10)
+
+- User selected browser-saved networks, not remote JSON URLs.
+  [main.gd](./scripts/main.gd) accepts `layout=saved:Name` and calls the existing
+  `LayoutStore.load_layout` before kiosk starts. Preset IDs remain unambiguous,
+  no arbitrary file paths/remote sources or silent fallback. Missing/invalid
+  names use normal visible startup failure and never hide the UI in kiosk.
+- Updated [README.md](./README.md), [guide.md](./docs/guide.md) and
+  [DESIGN.md](./DESIGN.md) with same-site/profile requirement, save/import-first
+  workflow, case-sensitive in-game name (not filename or `.json`), spaces `%20`,
+  accents and reserved URL characters. `URLSearchParams` already decodes these
+  once; do not add double URI decoding. Example:
+  `?kiosk=1&layout=saved:Mon%20r%C3%A9seau`.
+- Passed:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://tests/screensaver_smoke.gd --audio-driver Dummy`
+  (normal and kiosk startup from an isolated saved two-station fixture named
+  with spaces/accent/ampersand, missing/empty saved names, existing preset,
+  startup/exit/fullscreen/camera regressions). Test file/directory cleaned.
+  Expected negative-fixture errors and existing llvmpipe VSync warning only.
+  `git diff --check` passed.
+- All fresh exports succeeded:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "Web" dist/web/index.html`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "Windows Desktop" dist/Metro.exe`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "macOS" dist/Metro-macOS.zip`.
+  `./dist/Metro.exe --headless --quit-after 10 --audio-driver Dummy` succeeded,
+  `file dist/Metro.exe` identified x86-64 PE32+ and
+  `unzip -tq dist/Metro-macOS.zip` passed. Native macOS launch remains untested.
+- Browser test of exported Web: served temporarily with
+  `python3 -m http.server 8765 --bind 0.0.0.0 --directory dist/web` (HTTP 200).
+  Verified URL encoding round trips for spaces, accents, `&`, `#` and `+`.
+  Seeded an isolated browser IndexedDB saved-layout fixture, then reloaded
+  `?kiosk=1&layout=saved%3AR%C3%A9seau%20kiosque%20%26%20essais`.
+  Confirmed its two-station custom map renders with hidden HUD and Escape exits.
+  Initial fixture probes used wrong user-data paths/incomplete JSON; after
+  resolving engine path and supplying standard line settings, final load passed.
+  Removed seeded records afterwards. This tested persisted loading, not UI save
+  creation; the native fixture used the actual LayoutStore save API.
+  Web build is local only, not deployed to GitHub Pages.
+
+### Opt-in Web kiosk and startup layout URL parameters (2026-11-10)
+
+- Added Web-only `?kiosk=1` opt-in through `JavaScriptBridge`/`URLSearchParams`
+  in [main.gd](./scripts/main.gd), after the startup layout is ready. Standard
+  Web startup remains unchanged; no persistence. Reuse normal screensaver and
+  all exit controls; `_start_screensaver(false)` avoids an unauthorized browser
+  fullscreen request. Manual K/menu still request fullscreen normally.
+- User then requested simultaneous network selection: independent `layout`
+  parameter accepts only bundled IDs `metro_demo`, `montreal`, `jr_east`,
+  resolved against `LayoutStore.BUNDLED_LAYOUTS` rather than arbitrary paths.
+  Example `?kiosk=1&layout=jr_east`. Without a layout value, keep usual startup
+  (Montréal on Web); invalid values log a warning, show the existing load error
+  and do not enter screensaver. No remote/saved-layout loading added.
+- Updated [README.md](./README.md), [guide.md](./docs/guide.md) and
+  [DESIGN.md](./DESIGN.md): browser fullscreen/audio restrictions, non-locking
+  behavior, exact kiosk value, allowed layouts and examples.
+- Passed:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://tests/screensaver_smoke.gd --audio-driver Dummy`
+  checks normal vs explicit startup, no automatic fullscreen change, loaded
+  layout before kiosk, cinematic progression, Escape restoration, all three
+  bundled choices and visible invalid-layout failure. Existing screenshots/
+  native fullscreen/exit tests passed. Expected invalid-layout warning and
+  known llvmpipe VSync warning only.
+- Fresh exports all succeeded:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "Web" dist/web/index.html`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "Windows Desktop" dist/Metro.exe`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "macOS" dist/Metro-macOS.zip`.
+  `./dist/Metro.exe --headless --quit-after 10 --audio-driver Dummy` succeeded,
+  `file dist/Metro.exe` identified x86-64 PE32+, and
+  `unzip -tq dist/Metro-macOS.zip` passed. Native macOS launch remains untested.
+- Served final Web build temporarily with
+  `python3 -m http.server 8765 --bind 0.0.0.0 --directory dist/web` (HTTP 200).
+  Integrated browser verified Tokyo with hidden HUD at `?kiosk=1&layout=jr_east`,
+  Escape restores controls, base URL opens normal Montréal, and
+  `?kiosk=0&layout=metro_demo` opens the demo with controls. Inspected screenshots;
+  no automatic fullscreen. Remote port forwarding initially escaped query
+  separators; corrected the browser URL with history replacement/reload before
+  checks. Stopped the temporary server afterwards. `git diff --check` passed.
+  Web files are exported locally, not deployed to GitHub Pages by this session.
+
+### Softer glow and replacement no-drums soundtrack (2026-11-10)
+
+- Slightly thickened the overview tail core from 1.2px to 1.5px in
+  [world_view.gd](./scripts/render/world_view.gd); glow width 3px -> 4px and
+  peak alpha 0.12 -> 0.18. Length, rear-first expiry, head and zoom blend unchanged.
+- Replaced Sansho with the supplied `dist/lofi_metro_NO_DRUMS_20261110_231145_instrumental.wav`.
+  Encoded [lofi_metro_no_drums.mp3](./assets/audio/lofi_metro_no_drums.mp3)
+  using `ffmpeg -hide_banner -loglevel error -n -i dist/lofi_metro_NO_DRUMS_20261110_231145_instrumental.wav -map_metadata -1 -vn -c:a libmp3lame -b:a 128k assets/audio/lofi_metro_no_drums.mp3`.
+  Stereo 44.1kHz retained; full source duration 209.558662s, MP3 container
+  duration 209.606531s including encoder padding. Size 55,449,266 -> 3,354,166
+  bytes (~94% smaller). Original WAV untouched; removed replaced Sansho MP3/import
+  so it is no longer packaged. Full ffmpeg decode to null passed.
+- [ambient_audio.gd](./scripts/audio/ambient_audio.gd) points to the new MP3
+  and defaults train effects to 0.0. Removed the train-effects slider creation
+  from [main.gd](./scripts/main.gd), retaining the underlying effects setter
+  and master/music controls for future sound replacement. Updated
+  [DESIGN.md](./DESIGN.md), [guide.md](./docs/guide.md) and
+  [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md); new author/license metadata
+  was not supplied, so no old CC0 claim is applied to the new composition.
+- Passed:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --editor --path . --quit`
+  (new MP3 imported);
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://tests/audio_smoke.gd --audio-driver Dummy`
+  (new track path, full duration, <3.5MB, looping, muted effects default, lifecycle);
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://tests/interface_smoke.gd --audio-driver Dummy`
+  (exactly two volume sliders, no train-volume label, muted default and UI regressions);
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy`
+  (glow/visibility, rear-first expiry, layering, crossfade and panning regressions).
+  Tests ran sequentially graphically; known llvmpipe VSync warning only.
+  `git diff --check` passed.
+- User closed the running game; fresh exports both succeeded:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "Windows Desktop" dist/Metro.exe`
+  and `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "macOS" dist/Metro-macOS.zip`.
+  Export logs include the new imported MP3 and no Sansho. Windows headless
+  launch `./dist/Metro.exe --headless --quit-after 10 --audio-driver Dummy`
+  succeeded; `file dist/Metro.exe` identified x86-64 PE32+ and
+  `unzip -tq dist/Metro-macOS.zip` passed. Native macOS launch, Windows GPU and
+  real-speaker subjective listening remain untested (audio validation used Dummy).
+
+### Slightly longer comet tail (2026-11-10)
+
+- User requested a little more length now that rear-first expiry works.
+  Raised the cap in [world_view.gd](./scripts/render/world_view.gd) from 1.0 to
+  1.5 times each train's physical length; retain the one-second history,
+  spatial gradient, rear-first retraction, white outlined head and zoom blend.
+  Updated [DESIGN.md](./DESIGN.md) and [guide.md](./docs/guide.md).
+- Passed exact commands:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --script res://tests/train_controls_smoke.gd`
+  (1.5x physical cap for 1/3/8 wagons at multiple zooms, temporal and picking
+  regressions);
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy`
+  (rear-first clearing, retained front contrast, expiry, visibility, layering,
+  zoom and panning). Initial near-head fade pixel was too close to the head
+  for the longer tail's gradient; moved it farther back, keeping the >=0.05
+  luminance-change requirement and separate bright-front retention test.
+  Final rerun passed, known llvmpipe VSync warning only.
+- Both fresh exports succeeded:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "Windows Desktop" dist/Metro.exe`
+  and `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "macOS" dist/Metro-macOS.zip`.
+  `./dist/Metro.exe --headless --quit-after 10 --audio-driver Dummy` succeeded;
+  `file dist/Metro.exe` identified x86-64 PE32+ and
+  `unzip -tq dist/Metro-macOS.zip` passed. Native macOS launch and Windows GPU
+  appearance remain untested. `git diff --check` passed.
+
+### Rear-first comet erosion instead of whole-trail fade (2026-11-10)
+
+- User clarified that the problem was the entire trail fading together, not
+  only excessive length. Kept the physical train-length cap and one-second
+  history, but removed age-based opacity multiplication in
+  [world_view.gd](./scripts/render/world_view.gd). The surviving tail keeps its
+  spatial gradient and bright front; old positions expire from the back.
+  When stopped, a smoothstep length envelope retracts the rear toward the fixed
+  head over one second, including immediately for high-speed length-capped
+  traces (rather than waiting for every recent point to reach the age limit).
+  Head outline, pause, crossfade, layer order and Yamanote remain unchanged.
+- Updated [DESIGN.md](./DESIGN.md), [guide.md](./docs/guide.md) and current state.
+  The earlier temporal-alpha description below is superseded.
+- Passed:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --script res://tests/train_controls_smoke.gd`
+  (rear retracts by >30% after 0.4s while head stays fixed, plus length, speed,
+  pause, wrapping, picking and expiry coverage);
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy`
+  (rear pixel clears while a near-head tail pixel retains >=75% of its initial
+  contrast after 0.4s, disappearance after 1.1s, plus layer/zoom/panning coverage).
+  Initial absolute near-front luminance target ignored the already-bright rail;
+  replaced with measured contrast retention relative to the same pixel without
+  a train. Final rerun passed; known llvmpipe VSync warning only.
+- Fresh exports both succeeded:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "Windows Desktop" dist/Metro.exe`
+  and `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "macOS" dist/Metro-macOS.zip`.
+  `./dist/Metro.exe --headless --quit-after 10 --audio-driver Dummy` succeeded;
+  `file dist/Metro.exe` identified x86-64 PE32+ and
+  `unzip -tq dist/Metro-macOS.zip` passed. Native macOS launch and Windows GPU
+  appearance remain untested. `git diff --check` passed.
+
+### Train-length trails and faster decay (2026-11-10)
+
+- User found the 48px/three-second trace too long and visually attached.
+  [world_view.gd](./scripts/render/world_view.gd) now caps route length with
+  `TrackGeometry.train_length(metro.wagon_count)` in world units, not screen
+  pixels. Trace may be shorter when slow and nearly hidden by the head at
+  extreme zoom-out; no artificial minimum. Head/outline and zoom crossfade
+  are unchanged. Updated [DESIGN.md](./DESIGN.md) and [guide.md](./docs/guide.md).
+- Lifetime is one second (was three), temporal fade exponent 2 (was 1.4).
+  Replace the fixed 6px end feather with a full-length spatial gradient,
+  exponent 1.4. This addresses the root of the uniform-white-line appearance:
+  a length-capped trail at high speed can contain only very recent samples,
+  so age alone previously left almost its entire visible length bright.
+- Passed:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --script res://tests/train_controls_smoke.gd`
+  (exact physical cap for 1/3/8 wagons at 0.02/0.15/0.79x, speed proportionality,
+  pause, one-second expiry, wrapping, vertices and picking);
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy`
+  (strong spatial gradient even for fresh high-speed samples, measurable fade
+  after 0.4s, disappearance after 1.1s, persistent head/outline, crossfade,
+  crossing/priority/station and screensaver/panning regressions).
+  Initial expiry pixel check overlapped the head's unchanged glow; moved the
+  expiry pixel beyond the glow while retaining the near-head fade measurement.
+  Final rerun passed, with only the known llvmpipe VSync warning.
+- User closed the running Windows game to unlock the usual export. Both fresh
+  exports succeeded:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "Windows Desktop" dist/Metro.exe`
+  and `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "macOS" dist/Metro-macOS.zip`.
+  `./dist/Metro.exe --headless --quit-after 10 --audio-driver Dummy` succeeded;
+  `file dist/Metro.exe` identified x86-64 PE32+ and
+  `unzip -tq dist/Metro-macOS.zip` passed. Native macOS launch and Windows GPU
+  appearance remain untested. `git diff --check` passed.
+
+### Persistent trails, outlined heads and smooth zoom (2026-11-10)
+
+- User selected a true time-fading history rather than a speed-sized attached
+  tail. [world_view.gd](./scripts/render/world_view.gd) now retains three seconds
+  of interpolated route-distance/time samples per train, approximately 30Hz.
+  Length follows actual speed, capped at 48 logical pixels or one circuit;
+  include route vertices and soften the last 6px to avoid a hard clipped end.
+  Per-point ages drive opacity, including fading at rest. Keep the white head
+  visible after the trace disappears; add a 1px dark outline (outer radius 3.2px,
+  white radius 2.2px). No extra flashing or daytime palette change.
+- Main passes unpaused delta to `set_dynamic_state`. Pause freezes history;
+  retired trains and topology changes clear it. Cab/direction reversals reset
+  instead of drawing a phantom path across the logical head jump. Stop/restart
+  timestamps retain the idle interval rather than ageing newly travelled track.
+- Detailed and overview draw children stay inside each retained line parent.
+  Complementary `smoothstep` alpha blends them from 0.5x to 0.8x; neither
+  cross-line order nor station precedence changes. Picking includes both real
+  cars and the shared curved trace during the blend. Skip detailed drawing
+  entirely in full overview mode.
+- Updated [DESIGN.md](./DESIGN.md), [guide.md](./docs/guide.md) and current-state
+  notes. Earlier fixed-length pulse/comet entries below are historical.
+- Passed exact commands:
+  - `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --script res://tests/train_controls_smoke.gd`
+    checks speed/length proportionality (3x speed -> 3x length), 48px cap, loop
+    seams, vertices, age ordering, pause, expiry, reversal reset, retired-history
+    cleanup, curved picking and midpoint crossfade alpha.
+  - `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy`
+    checks white head/dark rim, day/night overview visibility, complementary
+    rendered layer alpha, measurable stationary-tail fade after 1.5s and full
+    disappearance after 3.1s, head persistence, crossings/priority/stations,
+    screensaver smoothing and existing detailed-car/panning regressions.
+  - `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --script res://tests/performance_probe.gd --check-only`
+  - `git diff --check`.
+  Initial tests exposed a synthetic-route fixture mutating shared dispatcher
+  data (isolated its dictionary), and old opaque-marker expectations inside the
+  new fade range (check complementary rendered alpha there instead). Also guard
+  overview drawing for empty/invalid route poses. Final reruns passed.
+- Session-only production capture command used Godot `--path . --script
+  <external capture script> --audio-driver Dummy`, with three seconds of real
+  fleet advancement before capture. Inspected full-network day/night images:
+  47 trains at 0.127x, mean fleet trail geometry 5.509ms over 200 iterations.
+  This measures CPU path generation, not full frame time.
+- Both fresh exports succeeded:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "Windows Desktop" dist/Metro.exe`
+  and `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "macOS" dist/Metro-macOS.zip`.
+  `./dist/Metro.exe --headless --quit-after 10 --audio-driver Dummy` succeeded;
+  `file dist/Metro.exe` identified x86-64 PE32+ and
+  `unzip -tq dist/Metro-macOS.zip` passed. Native macOS launch and Windows GPU
+  appearance remain untested; Linux graphics used llvmpipe with its known
+  harmless VSync warning.
+
+### Pulse dot selected instead of comet (2026-11-10)
+
+- User changed the selected overview style to the previously previewed pulse
+  dot + thin tail. Updated [world_view.gd](./scripts/render/world_view.gd):
+  opaque white disc radius 2.2 logical pixels with radius-4 faint glow; 18px
+  rail-following tail with 1.2px core, 3px glow and alpha exponent 1.4 capped
+  at 0.8. No flashing. The dot remains drawn even when terminal clipping
+  leaves only one path point. Expanded culling margin for the head glow.
+  Shared curved picking, terminal/loop handling, 0.8x detailed-car transition,
+  per-line layering and Yamanote priority are unchanged.
+- Updated [DESIGN.md](./DESIGN.md), [guide.md](./docs/guide.md) and current state
+  above; the earlier comet entry is historical and superseded.
+- Passed:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --script res://tests/train_controls_smoke.gd`
+  (18px tail length, curve/loop/terminal geometry, picking and culling);
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy`
+  (opaque white disc center and interior, thicker-than-tail nighttime head,
+  far-zoom visibility, gradient, layering/priority and screensaver regressions).
+  Initial disc-thickness contrast checks failed on the pale daytime background
+  at 0.08/0.15x; verify disc thickness at night instead, while retaining daytime
+  visibility and opaque-head checks. Known llvmpipe VSync warning only.
+- Fresh Windows and macOS exports both succeeded with:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "Windows Desktop" dist/Metro.exe`
+  and `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "macOS" dist/Metro-macOS.zip`.
+  `./dist/Metro.exe --headless --quit-after 10 --audio-driver Dummy` succeeded;
+  `file dist/Metro.exe` identified x86-64 PE32+ and
+  `unzip -tq dist/Metro-macOS.zip` passed. Native macOS launch and Windows GPU
+  appearance remain untested. White-on-daytime contrast remains weaker by design.
+
+### Selected comet / tail integration (2026-11-10)
+
+- Replaced the geometric overview markers with the selected white comet in
+  [world_view.gd](./scripts/render/world_view.gd): 20px tail, 2.5px core, faint
+  5px glow and alpha exponent 1.4, below the unchanged 0.8x threshold. No dot,
+  outline or flashing. Detailed cars and per-line layering remain unchanged;
+  Yamanote keeps its priority and stations remain above trains.
+- `overview_train_path` uses interpolated head distance, direction-specific
+  circuits, half-pixel samples and every intervening route vertex. Wrap loop
+  seams, cap at one circuit and clip open tails at the last terminus instead
+  of retracing the opposite leg. This intentionally shortens a departing tail.
+  [main.gd](./scripts/main.gd) picks the same curved path; culling includes the
+  whole tail and glow even when the real cars are offscreen. Updated
+  [DESIGN.md](./DESIGN.md) and [guide.md](./docs/guide.md).
+- Passed exact commands:
+  - `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --script res://tests/train_controls_smoke.gd`
+    (head/tail picking at 0.02/0.08/0.4/0.79x, exact screen length, loop seams,
+    no corner shortcuts, terminal clipping and offscreen-car culling).
+  - `./dist/Godot_v4.7.2-stable_linux.x86_64 --path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy`
+    (day/night visibility through 0.02x, nighttime gradient, screensaver
+    smoothing, crossing occlusion, priority, station precedence and detailed
+    car/panning regressions). Initial inherited marker-sized contrast checks
+    failed: the selected thin white comet has weaker daytime contrast, notably
+    at 0.02x. Updated expectations for the actual chosen style, not a dark rim;
+    daytime extreme-zoom contrast threshold is 0.02 versus 0.2 elsewhere.
+  - `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --script res://tests/performance_probe.gd --check-only`
+  - `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --script res://tests/performance_probe.gd -- jr_east --fleet`
+    (53/76/129/195 trains; simulation means 1.070/1.574/2.638/4.582ms).
+  - Session-only production capture command used Godot `--path . --script
+    <external capture script> --audio-driver Dummy`: inspected full-network
+    day/night images with 47 trains at 0.127x; mean complete-fleet path generation
+    5.086ms over 200 iterations. This is CPU geometry cost, not frame/GPU time.
+- Both fresh release exports succeeded:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "Windows Desktop" dist/Metro.exe`
+  and `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "macOS" dist/Metro-macOS.zip`.
+  `./dist/Metro.exe --headless --quit-after 10 --audio-driver Dummy` started
+  successfully, `file dist/Metro.exe` identified x86-64 PE32+, and
+  `unzip -tq dist/Metro-macOS.zip` reported no errors. `git diff --check` passed.
+  Native macOS launch and Windows GPU appearance remain untested; graphical
+  checks used Linux llvmpipe with its known harmless VSync warning.
+
+### Rail-following pulse alternatives (2026-11-10)
+
+- User replaced the geometric-shape proposals with three rail-following ideas:
+  fading comet, white line highlight, and bright head dot with a fine tail.
+  Created external session-only WorldView preview overrides; shipped code and
+  release builds were unchanged for these previews; the comet was then selected
+  and integrated (see the newer entry).
+- Captured six individual full-network screenshots and labeled day/night
+  comparison sheets with identical 47-train positions at 0.127x. Samples follow
+  each train's actual direction circuit (20px/2.5px comet, 16px/4px highlight,
+  18px/1.2px tail with 2.2px-radius dot), inside existing per-line parents.
+  Yamanote stays on top, stations and upper rails retain normal occlusion.
+  Pure white has weaker contrast against the pale daytime background; no dark
+  outline was added so these previews faithfully compare the requested styles.
+- A six-second, 36-frame GIF compares all three on the same evolving fleet at
+  0.4x, day above/night below. This is moving illumination, not flashing opacity.
+  Preview Godot command (`./dist/Godot_v4.7.2-stable_linux.x86_64 --path .
+  --script <session preview script> --audio-driver Dummy`) passed with only the
+  known VSync warning. ffmpeg encoded it; ffprobe confirmed 1620x660, 36 frames,
+  6.0 seconds. Inspected both sheets and a middle animation frame.
+  `git diff --check` passed. No shipped-code tests/exports were needed for previews.
+
+### Overview shape comparison previews (2026-11-10)
+
+- User likes overview markers but not the current silhouette and requested
+  screenshots of all proposed alternatives before choosing. Captured rounded
+  capsule, rounded rectangle, circle and chevron variants using an external
+  session-only WorldView subclass; shipped game code remains unchanged.
+- Eight full-size screenshots and two labeled day/night comparison sheets use
+  identical Tokyo framing (0.127x), the same frozen 47 trains after 180 simulated
+  seconds, original line accents and preserved Yamanote/crossing layering.
+  Headers include actual-size and 4x shape samples.
+- Preview Godot command (`./dist/Godot_v4.7.2-stable_linux.x86_64 --path .
+  --script <session preview script> --audio-driver Dummy`) completed successfully;
+  inspected both comparison sheets. Only the known VSync warning appeared.
+  No release rebuild required for preview-only work. Superseded by rail comets.
+
+### Readable overview trains and Yamanote on top (2026-11-10)
+
+- Added screen-sized directional train symbols below 0.8x in
+  [world_view.gd](./scripts/render/world_view.gd): 14-22px long, 6px thick,
+  dark rim/pale roof/cab window/line stripe. They follow the interpolated
+  mid-train circuit position, with direct return to full cars at 0.8x as
+  accepted by the user. Culling margins and
+  [main.gd](./scripts/main.gd) picking use the same representation. No changes
+  to simulation, real vehicle dimensions or network framing.
+- Added optional validated `render_priority` (0-15, default 0) to
+  [transit_line.gd](./scripts/sim/transit_line.gd) and version-1 JSON through
+  [layout_store.gd](./scripts/layout_store.gd). Stable priority ordering in
+  [static_track_layer.gd](./scripts/render/static_track_layer.gd) keeps rails,
+  highlights and trains together; stations remain above everything.
+  [transit_graph.gd](./scripts/sim/transit_graph.gd) fragments inherit it.
+  [build_jr_east.gd](./scripts/tools/build_jr_east.gd) gives Yamanote priority 1;
+  regenerated [jr_east.json](./layouts/jr_east.json) changes only that field.
+  Saved old copies are not rewritten; reload the included preset.
+- Graphical assertions check at least 40 contrasting pixels, 12px length and
+  5px thickness at 0.02/0.08/0.15/0.4/0.79x by day/night, compatibility with
+  screensaver smoothing, partial occlusion by higher tracks, raised ordinary
+  cars/rails and station precedence. Headless checks cover interpolated-marker
+  picking, fragment inheritance, priority round-trip/invalid values and actual
+  Tokyo menu-load ordering. Inspected full-network day/night captures after
+  180 simulated seconds: 47 trains at 0.117x remained clearly distinguishable.
+- Passed commands (prefix `./dist/Godot_v4.7.2-stable_linux.x86_64`):
+  `--headless --path . --script res://scripts/tools/build_jr_east.gd`;
+  `--headless --editor --path . --quit`;
+  `--path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy`;
+  `--path . --script res://tests/visual_smoke.gd --audio-driver Dummy`;
+  `--headless --path . --script res://tests/train_controls_smoke.gd`;
+  `--headless --path . --script res://tests/layout_smoke.gd`;
+  `--headless --path . --script res://tests/transfer_smoke.gd`;
+  `--headless --path . --script res://tests/preset_smoke.gd -- jr-east --fast`;
+  `--headless --path . --script res://tests/performance_probe.gd --check-only`.
+  Initial test edits had indentation/fixture failures, corrected before final
+  passes. One exact-pixel exposed-marker assertion sampled the yellow stripe
+  on yellow rail; changed to measure contrast across the exposed cross-section.
+  Layout/transfer negative fixtures intentionally log validation errors;
+  graphical tests emit the known unsupported VSync warning.
+- Fresh release exports passed:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "Windows Desktop" dist/Metro.exe`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "macOS" dist/Metro-macOS.zip`.
+  The user closed the running Windows game before export.
+  `./dist/Metro.exe --headless --quit-after 10 --audio-driver Dummy`,
+  `file dist/Metro.exe`, `unzip -tq dist/Metro-macOS.zip` and
+  `git diff --check` passed. Windows GPU confirmation, native macOS launch,
+  Web export/browser checks and extended service/performance suites not run.
+
+### Screensaver panning shimmer (2026-11-10)
+
+- User reported vibrating track/train edges in the Windows release. Close-up
+  world-space AA remains disabled to avoid its oversized fringe. Added
+  [motion_antialiasing.gdshader](./scripts/render/motion_antialiasing.gdshader),
+  a screen-space FXAA/subpixel edge pass enabled only during screensaver via
+  [main.gd](./scripts/main.gd) and
+  [world_view.gd](./scripts/render/world_view.gd). HUD renders afterward;
+  no camera snapping, temporal history, simulation or editor-render changes.
+- [train_visual_smoke.gd](./tests/train_visual_smoke.gd) measures consecutive
+  frame luminance jumps over 17 subpixel pan positions, straight/diagonal rails
+  and trains, 2x/5x, day/night. All 16 comparisons improved 21-46%, exceeding
+  the 20% minimum. Checks also preserve matte background and exact pixel data
+  after disabling the pass. Initial directional-only shader failed one 20%
+  threshold; added local subpixel stabilization, then all comparisons passed.
+- Passed commands with `./dist/Godot_v4.7.2-stable_linux.x86_64`:
+  `--headless --editor --path . --quit`;
+  `--path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy`;
+  `--path . --script res://tests/visual_smoke.gd --audio-driver Dummy`;
+  `--path . --script res://tests/idle_render_smoke.gd --audio-driver Dummy`;
+  `--path . --script res://tests/screensaver_smoke.gd --audio-driver Dummy`;
+  `--headless --path . --script res://tests/screensaver_smoke.gd`;
+  `--headless --path . --script res://tests/interface_smoke.gd`;
+  `--headless --path . --script res://tests/idle_render_smoke.gd`.
+  Fullscreen screensaver initially failed while another graphical test ran;
+  rerunning alone passed. Do not run fullscreen graphical tests concurrently.
+- Fresh release exports passed:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "Windows Desktop" dist/Metro.exe`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "macOS" dist/Metro-macOS.zip`.
+  `./dist/Metro.exe --headless --quit-after 10 --audio-driver Dummy`,
+  `unzip -tq dist/Metro-macOS.zip` and `git diff --check` passed.
+  Windows GPU/fullscreen visual confirmation, native macOS execution, Web and
+  GPU performance benchmarks remain unrun; measurements used Linux llvmpipe.
+
+### Automatic track/train crossing layers (2026-11-10)
+
+- User selected automatic stacking rather than manually assigned section
+  heights. Updated [static_track_layer.gd](./scripts/render/static_track_layer.gd),
+  [rail_illumination_layer.gd](./scripts/render/rail_illumination_layer.gd) and
+  [world_view.gd](./scripts/render/world_view.gd) to interleave retained rails,
+  rail highlights and dynamic content by existing line order. Upper tracks hide
+  lower cars, gangways, solar shadows and headlights while leaving uncovered
+  parts visible. Stations and editing overlays remain above all lines.
+- Added line ownership to [station_visit.gd](./scripts/sim/station_visit.gd)
+  without holding retired trains alive. Adapted
+  [performance_probe.gd](./tests/performance_probe.gd) to the target CanvasItem
+  signatures and include per-line drawing in total CPU measurements. Updated
+  [DESIGN.md](./DESIGN.md) and [docs/guide.md](./docs/guide.md).
+- Expanded [train_visual_smoke.gd](./tests/train_visual_smoke.gd) with actual
+  occlusion pixels across the upper band, both open-line directions, day/night,
+  1x/6x zoom, visible upper trains/uncovered lower wagons, reused IDs and
+  reversed line order.
+- Passed commands (Godot prefix below is
+  `./dist/Godot_v4.7.2-stable_linux.x86_64`):
+  `--headless --editor --path . --quit`;
+  `--path . --script res://tests/train_visual_smoke.gd --audio-driver Dummy`;
+  `--path . --script res://tests/visual_smoke.gd --audio-driver Dummy`;
+  `--headless --path . --script res://tests/schedule_smoke.gd -- --fast`;
+  `--headless --path . --script res://tests/idle_render_smoke.gd`;
+  `--headless --path . --script res://tests/layout_smoke.gd`;
+  `--headless --path . --script res://tests/performance_probe.gd --check-only`.
+  Layout validation errors were intentional negative fixtures; graphical runs
+  emitted only the known unsupported VSync warning.
+- Fresh release commands passed:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "Windows Desktop" dist/Metro.exe`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "macOS" dist/Metro-macOS.zip`.
+  First Windows export failed to rename its temporary file because the game
+  was running; the user closed it and the same export succeeded on retry.
+  `./dist/Metro.exe --headless --quit-after 10 --audio-driver Dummy` launched
+  successfully, `file dist/Metro.exe` identified PE x86-64, and
+  `unzip -tq dist/Metro-macOS.zip` passed. `git diff --check` passed.
+- No manual section heights or same-line overpasses; stacking is per line.
+  Extended service/performance benchmarks, Web export/browser validation and
+  native macOS execution were not run for this change.
+
+### Replacing the procedural soundtrack with Sansho (2026-11-10)
+
+- Per the user's selection and confirmation that the direct download is CC0,
+  added the full 136-second, 320 kbps MP3 to `assets/audio/sansho.mp3` and
+  looped the MP3 stream. Removed the generated drum groove and tonal train
+  notes; arrivals retain only the quiet, non-pitched rail effect so they do
+  not clash with the produced music. Kept separate music/effects volume controls.
+- Added courtesy attribution and CC0 details in
+  [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md); updated
+  [DESIGN.md](./DESIGN.md) and [docs/guide.md](./docs/guide.md).
+- The source MP3 passes `ffmpeg -v error -i /tmp/sansho.mp3 -f null -`; SHA-256:
+  `a61c39e932c5e90d09e75b2058d9840a5bb795a069dbd025f7697dc166373906`.
+- An initial direct script run could not load the new, not-yet-imported MP3.
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --editor --path . --quit`
+  imported it; afterward
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --script res://tests/audio_smoke.gd --audio-driver Dummy`
+  passed. The smoke suite
+  `GODOT_BIN=./dist/Godot_v4.7.2-stable_linux.x86_64 bash tests/run_smoke.sh smoke`
+  passed all 17 scripts in 63 seconds.
+- Fresh Windows, macOS and Web exports succeeded:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "Windows Desktop" dist/Metro.exe`,
+  the same command with `"macOS" dist/Metro-macOS.zip`, and with
+  `"Web" dist/web/index.html`. Windows is PE x86_64 and launched with
+  `./dist/Metro.exe --headless --quit-after 10 --audio-driver Dummy`;
+  `unzip -tq dist/Metro-macOS.zip` and all Web artifact nonempty checks passed.
+  Confirmed `sansho` resource paths in Windows, macOS and Web packages.
+  `git diff --check` passed. No native macOS launch or listening/audition was
+  possible in this Linux environment.
+
+### Train-led interactive soundtrack (2026-11-09)
+
+- After the user said they preferred the smooth beat but wanted trains to
+  compose the notes, replaced the ambient chord bed with a fixed 80 BPM
+  kick/snare/hat groove. Station arrivals queue a line-hue pentatonic note for
+  the next beat; moving trains add at most one rotating phrase note every two
+  beats. A four-player pool keeps short notes from cutting each other off;
+  effect volume controls train notes, and pause suppresses movement notes.
+- The first bright, plucked train-note prototype was rejected by the user as
+  cheap. Per their preference for subtle texture, train sounds now have a slow
+  280ms swell, near-sine tone with slight detuning, long fade, and lower gain.
+  The beat remains the rhythmic backing; no chord bed was reintroduced.
+- The user also found the kick obnoxious. Shortened it from 320ms to 200ms,
+  reduced its main gain from 0.8 to 0.22, lowered the pitch sweep, and reduced
+  the syncopated hit to 0.09; snare and hats were attenuated as well.
+- Updated [DESIGN.md](./DESIGN.md) and [audio_smoke.gd](./tests/audio_smoke.gd)
+  to verify groove structure/gain, note scale/register, generated-note PCM and
+  slow train-note attack.
+- `GODOT_BIN=./dist/Godot_v4.7.2-stable_linux.x86_64 bash tests/run_smoke.sh smoke`
+  passed all 17 scripts in 63 seconds; the headless editor import/parse passed.
+  Targeted `audio_smoke.gd` passed after both sound updates. Fresh Windows and
+  macOS release exports passed; `file` identified their package formats and
+  `unzip -tq dist/Metro-macOS.zip` passed. The Windows build launched with
+  `./dist/Metro.exe --headless --quit-after 10 --audio-driver Dummy`; macOS
+  native launch/listening check is not available on Linux. `git diff --check`
+  passed.
 
 ### Tighter Tokyo station spacing (2026-11-09)
 

@@ -9,6 +9,13 @@ temps, chacun peut façonner son réseau à son rythme.
 
 **[Jouer à Metro dans le navigateur](https://muskeg.github.io/metro/)**
 
+Pour un affichage kiosque, utilisez [le démarrage en mode veille](https://muskeg.github.io/metro/?kiosk=1).
+Le lien normal ne l'active pas. Le plein écran doit être configuré dans le navigateur.
+Ajoutez `&layout=jr_east` pour Tokyo, `&layout=montreal` pour Montréal ou
+`&layout=metro_demo` pour la démo ; `?layout=jr_east` fonctionne aussi sans veille.
+Pour une sauvegarde de ce navigateur : `?kiosk=1&layout=saved:Mon%20r%C3%A9seau`.
+Enregistrez d'abord le réseau sur le même site et dans le même profil navigateur.
+
 | Montréal, le jour | Montréal, la nuit |
 | --- | --- |
 | ![Un réseau de métro montréalais baigné de lumière](docs/images/metro-day.png) | ![Le même réseau et ses trains lumineux dans la nuit](docs/images/metro-night.png) |

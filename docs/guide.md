@@ -31,6 +31,31 @@ Les boutons **− / + / ajuster** au-dessus du rail des lignes permettent de
 dézoomer, zoomer et retrouver le réseau complet après déplacement. Ajuster
 arrête le suivi d'une rame sans interrompre ni redémarrer les trains.
 
+Aux croisements, les voies superposées ont automatiquement un ordre visuel :
+une rame passe sous la voie dessinée au-dessus de sa ligne, puis réapparaît
+de l'autre côté. Les stations restent visibles au-dessus des voies et des rames.
+Il n'y a pas de réglage manuel de hauteur.
+Dans le Tokyo inclus, Yamanote est au-dessus de toutes les autres lignes.
+Rechargez le preset inclus pour retrouver cet ordre dans une ancienne copie ;
+les nouvelles sauvegardes le conservent.
+
+En vue éloignée (sous **0,8×**), les rames deviennent des **points lumineux** :
+une tête blanche ronde de **4,4 pixels**, cerclée d'un contour sombre de 1 pixel,
+et une fine traînée suivant les rails. Cette trace conserve la **dernière
+seconde** de mouvement : plus longue à grande vitesse, elle ne dépasse pas
+**1,5 fois la longueur réelle de la rame**. Son dégradé s'atténue rapidement vers
+l'arrière ; à l'arrêt, sa fin se résorbe vers la tête en une seconde, sans
+assombrir toute la trace d'un coup. Elle se fige en pause.
+Elle indique le sens de marche et reste
+sous les voies supérieures et les stations, avec Yamanote au-dessus des autres
+lignes dans Tokyo. Le blanc est plus discret sur le fond clair du jour.
+Entre **0,5× et 0,8×**, le marqueur laisse progressivement place aux voitures
+détaillées par un fondu ; la simulation ne change pas.
+
+La musique de fond est **lofi_metro_NO_DRUMS**, en boucle. Les réglages de volume
+général et de musique restent disponibles ; les sons des trains sont muets par
+défaut et leur curseur est temporairement masqué, en attendant de nouveaux effets.
+
 ### Réseaux réels inclus
 
 **Menu → Load** propose aussi des schémas originaux fondés sur les stations,
@@ -241,6 +266,8 @@ de fenêtre précédents sont restaurés. Sans rame disponible, les plans de
 suivi montrent le réseau complet. Une carte vide reste utilisable.
 Le plein écran dépend de l'autorisation du navigateur sur le Web.
 Ce mode est lancé manuellement et n'est pas enregistré dans les sauvegardes.
+Un lissage des bords en pixels écran réduit le scintillement des voies et des
+rames pendant les panoramiques et suivis, sans modifier le rendu de l'éditeur.
 
 La carte n'a pas de bord fixe. Le dézoom manuel descend normalement à **0,08×** ;
 si l'ajustement d'un grand réseau exige une échelle plus petite, cette échelle
@@ -363,7 +390,35 @@ godot --headless --path . --export-release "Web" dist/web/index.html
 - **Web** : sans threads, compatible avec GitHub Pages sans en-têtes spéciaux.
   Pour l'essayer : `python3 -m http.server 8000 --directory dist/web`, puis
   ouvrez `http://localhost:8000/`. Un premier clic peut être nécessaire pour le son.
-  La musique générée utilise le mode audio Stream dans le navigateur.
+  La musique MP3 utilise le mode audio Stream dans le navigateur.
+  Pour démarrer directement en **mode veille**, ajoutez **`?kiosk=1`** à l'URL :
+  `https://muskeg.github.io/metro/?kiosk=1` (ou `&kiosk=1` si elle contient déjà
+  des paramètres). Sans cette valeur exacte, le démarrage reste normal.
+  Ce déclencheur n'est ni enregistré ni appliqué aux versions natives.
+  Ajoutez **`&layout=jr_east`** pour Tokyo, **`&layout=montreal`** pour Montréal
+  ou **`&layout=metro_demo`** pour la démo. Exemple :
+  `https://muskeg.github.io/metro/?kiosk=1&layout=jr_east`.
+  Le paramètre `layout` fonctionne aussi seul (`?layout=montreal`).
+  Pour un réseau personnalisé, enregistrez-le d'abord dans ce navigateur via
+  **Menu → Enregistrer**, puis utilisez **`layout=saved:Nom du réseau`**.
+  Exemple pour une sauvegarde nommée « Mon réseau » :
+  `https://muskeg.github.io/metro/?kiosk=1&layout=saved:Mon%20r%C3%A9seau`.
+  Encodez les caractères spéciaux du nom dans l'URL (`%20` pour l'espace,
+  `%26` pour `&`, `%23` pour `#` ; `encodeURIComponent` convient).
+  Le nom est sensible à la casse. Le préfixe `saved:` distingue une sauvegarde
+  d'un preset, même si les noms se ressemblent. Cela fonctionne sans `kiosk`.
+  La sauvegarde doit exister sur **le même site et dans le même profil
+  navigateur** ; le lien ne transporte pas ses données. Pour une autre borne,
+  importez le JSON, enregistrez-le localement et utilisez le même nom.
+  Aucun chemin de fichier ni URL externe n'est chargé.
+  Sans `layout`, le réseau de démarrage habituel reste inchangé.
+  Une sauvegarde absente/invalide ou un preset inconnu affiche une erreur et
+  n'active pas la veille, pour permettre de corriger ou importer le réseau.
+  Il active le cycle de caméras et masque l'interface et le curseur ;
+  **Échap ou clic/toucher** ramène au jeu normal. Ce n'est pas un verrouillage.
+  Le déclencheur ne demande pas le plein écran sans geste utilisateur :
+  configurez le plein écran/kiosque dans le navigateur pour une borne.
+  Le son automatique reste soumis aux règles du navigateur.
 - **Linux** : exécutable x86_64 avec les données du jeu intégrées.
 - **Android** : APK ARMv7 / ARM64 non signé. Il faut Java 17, les outils du
   SDK Android et les chemins correspondants dans les réglages de Godot.

@@ -46,6 +46,7 @@ func _run() -> void:
 	shared.terminal_recovery = 7.0
 	shared.wagon_count = 3
 	shared.max_trains = 5
+	shared.render_priority = 3
 	lines.append(TransitLine.new(2, Color("#e98668")))
 	main.get("dispatcher").lines.assign(lines)
 	main.call("_refresh_network")
@@ -123,6 +124,10 @@ func _run() -> void:
 	invalid = snapshot.duplicate(true)
 	invalid["lines"][0]["wagon_count"] = 2.5
 	_check(store.restore(invalid).is_empty(), "Fractional integer settings must be rejected.")
+	for value: Variant in [-1, 16, 1.5, "1", null]:
+		invalid = snapshot.duplicate(true)
+		invalid["lines"][0]["render_priority"] = value
+		_check(store.restore(invalid).is_empty(), "Invalid render priorities must be rejected.")
 	invalid = snapshot.duplicate(true)
 	invalid["lines"][0]["stations"] = [0, 2]
 	_check(store.restore(invalid).is_empty(), "Missing line tracks must be rejected.")

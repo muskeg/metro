@@ -148,6 +148,7 @@ func _split_lines(lines: Array[TransitLine], station_id: int, track_id: int) -> 
 		for index in range(1, fragments.size()):
 			var extra := TransitLine.new(lines.size(), line.color)
 			extra.display_name = line.display_name
+			extra.render_priority = line.render_priority
 			extra.dispatch_rate = line.dispatch_rate
 			extra.dwell_time = line.dwell_time
 			extra.cruise_velocity = line.cruise_velocity
