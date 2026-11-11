@@ -14,16 +14,45 @@ var _shadow_opacity := 0.0
 var _shadow_offset := Vector2.ZERO
 var _legacy_shadows := false
 var _shadows_enabled := true
+var _line_layers: Dictionary[int, Node2D] = {}
+var _line_models: Dictionary[int, TransitLine] = {}
 
 func set_network(transit_lines: Array[TransitLine], route_data: Dictionary) -> void:
-	lines = transit_lines
+	lines = transit_lines.duplicate()
+	lines.sort_custom(func(a: TransitLine, b: TransitLine) -> bool:
+		if a.render_priority != b.render_priority:
+			return a.render_priority < b.render_priority
+		return transit_lines.find(a) < transit_lines.find(b))
 	routes = route_data
+	_line_models.clear()
+	var retained: Dictionary[int, Node2D] = {}
+	for line: TransitLine in lines:
+		_line_models[line.id] = line
+		var layer: Node2D = _line_layers.get(line.id)
+		if layer == null:
+			layer = Node2D.new()
+			layer.draw.connect(_draw_line.bind(layer, line.id))
+			add_child(layer)
+		move_child(layer, get_child_count() - 1)
+		layer.queue_redraw()
+		retained[line.id] = layer
+	for line_id: int in _line_layers:
+		if not retained.has(line_id):
+			var layer := _line_layers[line_id]
+			remove_child(layer)
+			layer.queue_free()
+	_line_layers = retained
 	queue_redraw()
+
+func line_layer(line_id: int) -> Node2D:
+	return _line_layers[line_id]
 
 func set_antialiased(enabled: bool) -> void:
 	if antialiased == enabled:
 		return
 	antialiased = enabled
+	for layer: Node2D in _line_layers.values():
+		layer.queue_redraw()
 	queue_redraw()
 
 func set_shadows(meshes: Array[Mesh], polygons: Array[PackedVector2Array]) -> void:
@@ -91,19 +120,21 @@ func _draw() -> void:
 		for polygon: PackedVector2Array in _shadow_polygons:
 			draw_colored_polygon(polygon, Color(0.12, 0.17, 0.23, _shadow_opacity * 0.36))
 		draw_set_transform(Vector2.ZERO)
-	for line: TransitLine in lines:
-		if not routes.has(line.id):
-			continue
-		var route: Dictionary = routes[line.id]
-		var points: PackedVector2Array = route["points"]
-		if points.size() < 2:
-			continue
-		for lane: PackedVector2Array in route["running_paths"]:
-			draw_polyline(lane, line.color, LANE_EDGE_WIDTH, antialiased)
-		draw_polyline(route["centerline"], line.color, CORRIDOR_WIDTH, antialiased)
-		if not line.is_loop():
-			var centerline: PackedVector2Array = route["centerline"]
-			for endpoint: Vector2 in [centerline[0], centerline[centerline.size() - 1]]:
-				draw_circle(endpoint, CORRIDOR_WIDTH * 0.5, line.color, true, -1.0, antialiased)
-		for lane: PackedVector2Array in route["running_paths"]:
-			draw_polyline(lane, line.color.darkened(0.3), RUNNING_LANE_WIDTH, antialiased)
+
+func _draw_line(layer: Node2D, line_id: int) -> void:
+	var line := _line_models[line_id]
+	if not routes.has(line.id):
+		return
+	var route: Dictionary = routes[line.id]
+	var points: PackedVector2Array = route["points"]
+	if points.size() < 2:
+		return
+	for lane: PackedVector2Array in route["running_paths"]:
+		layer.draw_polyline(lane, line.color, LANE_EDGE_WIDTH, antialiased)
+	layer.draw_polyline(route["centerline"], line.color, CORRIDOR_WIDTH, antialiased)
+	if not line.is_loop():
+		var centerline: PackedVector2Array = route["centerline"]
+		for endpoint: Vector2 in [centerline[0], centerline[centerline.size() - 1]]:
+			layer.draw_circle(endpoint, CORRIDOR_WIDTH * 0.5, line.color, true, -1.0, antialiased)
+	for lane: PackedVector2Array in route["running_paths"]:
+		layer.draw_polyline(lane, line.color.darkened(0.3), RUNNING_LANE_WIDTH, antialiased)

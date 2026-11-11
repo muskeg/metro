@@ -454,13 +454,327 @@ func _run() -> void:
 	await process_frame
 	await RenderingServer.frame_post_draw
 	_check(_difference(isolated_image.get_pixelv(former_shadow), root.get_texture().get_image().get_pixelv(former_shadow)) < 0.005, "Stations must not cast any shadow on the surrounding surface.")
+	await _check_crossing_layers(view, camera)
+	await _check_overview_trains(view, camera)
+	for axis: Vector2 in [Vector2(1, 1), Vector2.RIGHT]:
+		await _check_panning_edges(view, camera, axis)
 	world.queue_free()
 	await process_frame
 	if failed:
 		quit(1)
 	else:
-		print("Train visual smoke passed: metro details, transient zoomed platforms, tiny passengers, articulated gangways and soft headlights.")
+		print("Train visual smoke passed: metro details, transient zoomed platforms, tiny passengers, articulated gangways, soft headlights, layered crossings and reduced panning shimmer.")
 		quit()
 
 func _difference(a: Color, b: Color) -> float:
 	return absf(a.r - b.r) + absf(a.g - b.g) + absf(a.b - b.b)
+
+func _check_crossing_layers(view: WorldView, camera: Camera2D) -> void:
+	var graph := TransitGraph.new()
+	for position: Vector2 in [Vector2(-576, 0), Vector2(576, 0), Vector2(0, -576), Vector2(0, 576)]:
+		graph.add_station(position)
+	var lower := TransitLine.new(0, Color("#ffd400"))
+	lower.append_station(graph, 0)
+	lower.append_station(graph, 1)
+	var upper := TransitLine.new(1, Color("#d8758b"))
+	upper.append_station(graph, 2)
+	upper.append_station(graph, 3)
+	var lines: Array[TransitLine] = [lower, upper]
+	view.set_network(graph, lines)
+	var routes: Dictionary = view.get("_routes")
+	var train := Metro.new(0, 0, Vector2.ZERO)
+	train.wagon_count = 2
+	var upper_train := Metro.new(1, 1, Vector2.ZERO)
+	upper_train.wagon_count = 2
+	camera.position = Vector2.ZERO
+	for zoom: float in [1.0, 6.0]:
+		camera.zoom = Vector2.ONE * zoom
+		camera.reset_smoothing()
+		for phase: float in [0.5, 0.0]:
+			view.set_dynamic_state([], camera.position, camera.zoom, phase)
+			await process_frame
+			await RenderingServer.frame_post_draw
+			var empty := root.get_texture().get_image()
+			for direction: int in [1, -1]:
+				train.travel_direction = direction
+				var route := TrackGeometry.route_for_direction(routes[0], direction)
+				var location := TrackGeometry._distance_to_point(route["points"], Vector2.ZERO, 0)
+				if direction < 0:
+					location = TrackGeometry._distance_to_point(route["points"], Vector2.ZERO, int(location.y) + 1)
+				train.distance = location.x
+				var poses := view._build_train_poses(train, route)
+				var positions: PackedVector2Array = poses["positions"]
+				var covered := Vector2i(view.get_global_transform_with_canvas() * positions[0])
+				var uncovered := Vector2i(view.get_global_transform_with_canvas() * (positions[2] + Vector2(1.0, 1.0)))
+				view.set_dynamic_state([train], camera.position, camera.zoom, phase)
+				await process_frame
+				await RenderingServer.frame_post_draw
+				var image := root.get_texture().get_image()
+				_check(_difference(image.get_pixelv(covered), empty.get_pixelv(covered)) < 0.005, "Upper tracks must completely cover a lower train in both directions, by day/night at map/follow zoom.")
+				for x in range(-12, 13, 2):
+					for y in range(-20, 21, 2):
+						var pixel := Vector2i(view.get_global_transform_with_canvas() * Vector2(x, y))
+						_check(_difference(image.get_pixelv(pixel), empty.get_pixelv(pixel)) < 0.005, "Upper track surfaces must occlude lower cars, gangways, shadows and headlights across their full width.")
+				_check(_difference(image.get_pixelv(uncovered), empty.get_pixelv(uncovered)) > 0.1, "The same lower train must remain visible outside the crossing.")
+				if phase == 0.0:
+					var axes: PackedVector2Array = poses["axes"]
+					var beam_point := positions[0] + axes[0] * 8.0
+					var beam_pixel := Vector2i(view.get_global_transform_with_canvas() * beam_point)
+					_check(_difference(image.get_pixelv(beam_pixel), empty.get_pixelv(beam_pixel)) < 0.005, "A lower train's headlights must not shine through the upper track.")
+			upper_train.distance = TrackGeometry._distance_to_point(routes[1]["points"], Vector2.ZERO, 0).x
+			var upper_poses := view._build_train_poses(upper_train, routes[1])
+			var upper_positions: PackedVector2Array = upper_poses["positions"]
+			var top_pixel := Vector2i(view.get_global_transform_with_canvas() * (upper_positions[0] + Vector2(1.0, 1.0)))
+			view.set_dynamic_state([train, upper_train], camera.position, camera.zoom, phase)
+			await process_frame
+			await RenderingServer.frame_post_draw
+			_check(_difference(root.get_texture().get_image().get_pixelv(top_pixel), empty.get_pixelv(top_pixel)) > 0.1, "An upper train must remain visible above both tracks and lower trains.")
+	# Reusing line IDs on load must replace the retained track's color and model.
+	var replacement := TransitLine.new(1, Color("#9ba85e"))
+	replacement.append_station(graph, 2)
+	replacement.append_station(graph, 3)
+	view.set_network(graph, [lower, replacement])
+	view.set_dynamic_state([], camera.position, camera.zoom, 0.5)
+	await process_frame
+	await RenderingServer.frame_post_draw
+	var center := Vector2i(view.get_global_transform_with_canvas() * Vector2.ZERO)
+	_check(_difference(root.get_texture().get_image().get_pixelv(center), replacement.color) < 0.025, "Loading a new line with an existing ID must replace its retained track model.")
+	var reversed: Array[TransitLine] = [replacement, lower]
+	view.set_network(graph, reversed)
+	view.set_dynamic_state([], camera.position, camera.zoom, 0.5)
+	await process_frame
+	await RenderingServer.frame_post_draw
+	var reversed_empty := root.get_texture().get_image()
+	train.travel_direction = 1
+	train.distance = TrackGeometry._distance_to_point(routes[0]["points"], Vector2.ZERO, 0).x
+	view.set_dynamic_state([train], camera.position, camera.zoom, 0.5)
+	await process_frame
+	await RenderingServer.frame_post_draw
+	var lower_poses := view._build_train_poses(train, routes[0])
+	var lower_positions: PackedVector2Array = lower_poses["positions"]
+	var raised := Vector2i(view.get_global_transform_with_canvas() * (lower_positions[0] + Vector2(1.0, 1.0)))
+	_check(_difference(root.get_texture().get_image().get_pixelv(raised), reversed_empty.get_pixelv(raised)) > 0.1, "Changing track draw order must raise the matching trains as well.")
+
+func _check_panning_edges(view: WorldView, camera: Camera2D, axis: Vector2) -> void:
+	var graph := TransitGraph.new()
+	graph.add_station(axis * -576.0)
+	graph.add_station(axis * 576.0)
+	var line := TransitLine.new(0, Color("#58b8bd"))
+	line.append_station(graph, 0)
+	line.append_station(graph, 1)
+	var lines: Array[TransitLine] = [line]
+	view.set_network(graph, lines)
+	var route: Dictionary = view.get("_routes")[0]
+	var train := Metro.new(0, 0, Vector2.ZERO)
+	train.wagon_count = 2
+	train.distance = TrackGeometry._distance_to_point(route["points"], Vector2.ZERO, 0).x
+	var poses := view._build_train_poses(train, route)
+	var positions: PackedVector2Array = poses["positions"]
+	var normal := axis.orthogonal().normalized()
+	var regions: Array[Rect2i] = []
+	for phase: float in [0.5, 0.0]:
+		for zoom: float in [2.0, 5.0]:
+			camera.zoom = Vector2.ONE * zoom
+			var changes: Array[PackedFloat32Array] = []
+			var unfiltered: Image
+			for enabled: bool in [false, true]:
+				view.set_motion_antialiasing(enabled)
+				var previous: Image
+				var peaks := PackedFloat32Array([0.0, 0.0])
+				for step in range(17):
+					camera.position = normal * (float(step) * 0.125 / zoom)
+					camera.reset_smoothing()
+					camera.force_update_scroll()
+					view.set_dynamic_state([train], camera.position, camera.zoom, phase)
+					await process_frame
+					await RenderingServer.frame_post_draw
+					var image := root.get_texture().get_image()
+					if step == 0:
+						if not enabled:
+							unfiltered = image
+						else:
+							for corner: Vector2i in [Vector2i(16, 16), root.size - Vector2i(16, 16)]:
+								_check(_difference(image.get_pixelv(corner), unfiltered.get_pixelv(corner)) < 0.005, "Edge smoothing must leave low-contrast matte background pixels unchanged.")
+						regions.clear()
+						for position: Vector2 in [axis * 45.0 + normal * 14.0, positions[1]]:
+							var center := Vector2i(view.get_global_transform_with_canvas() * position)
+							regions.append(Rect2i(center - Vector2i(16, 16), Vector2i(32, 32)))
+					if previous != null:
+						for index in range(regions.size()):
+							var peak := 0.0
+							var region := regions[index]
+							for y in range(region.position.y, region.end.y):
+								for x in range(region.position.x, region.end.x):
+									peak = maxf(peak, absf(image.get_pixel(x, y).get_luminance() - previous.get_pixel(x, y).get_luminance()))
+							peaks[index] += peak
+					previous = image
+				changes.append(peaks)
+			print("Pan edge changes axis=%s day=%.1f zoom=%.1f: raw %s, smoothed %s" % [axis, phase, zoom, changes[0], changes[1]])
+			for index in range(regions.size()):
+				_check(changes[0][index] > 0.1 and changes[1][index] < changes[0][index] * 0.8, "Screen-space smoothing must reduce peak frame-to-frame edge shimmer by at least 20%% for tracks and trains (phase %.1f, zoom %.1f, region %d)." % [phase, zoom, index])
+			view.set_motion_antialiasing(false)
+			camera.position = Vector2.ZERO
+			camera.reset_smoothing()
+			camera.force_update_scroll()
+			view.set_dynamic_state([train], camera.position, camera.zoom, phase)
+			await process_frame
+			await RenderingServer.frame_post_draw
+			_check(root.get_texture().get_image().get_data() == unfiltered.get_data(), "Disabling screensaver smoothing must restore the exact unfiltered frame.")
+	view.set_motion_antialiasing(false)
+
+func _check_overview_trains(view: WorldView, camera: Camera2D) -> void:
+	var graph := TransitGraph.new()
+	for position: Vector2 in [Vector2(-24000, 0), Vector2(24000, 0), Vector2(0, -24000), Vector2(0, 24000)]:
+		graph.add_station(position)
+	var lower := TransitLine.new(0, Color("#58b8bd"))
+	lower.append_station(graph, 0)
+	lower.append_station(graph, 1)
+	var upper := TransitLine.new(1, Color("#d8758b"))
+	upper.append_station(graph, 2)
+	upper.append_station(graph, 3)
+	var lines: Array[TransitLine] = [lower]
+	view.set_network(graph, lines)
+	var route: Dictionary = view.get("_routes")[0]
+	var train := Metro.new(0, 0, Vector2.ZERO)
+	train.wagon_count = 3
+	var head := TrackGeometry._distance_to_point(route["points"], Vector2.ZERO, 0).x
+	train.distance = head - 200.0
+	train.render_distance = head
+	train.render_pose_valid = true
+	camera.position = Vector2.ZERO
+	for zoom: float in [0.02, 0.08, 0.15, 0.4, 0.79]:
+		camera.zoom = Vector2.ONE * zoom
+		camera.reset_smoothing()
+		camera.force_update_scroll()
+		for phase: float in [0.5, 0.0]:
+			view.set_dynamic_state([], camera.position, camera.zoom, phase)
+			await process_frame
+			await RenderingServer.frame_post_draw
+			var empty := root.get_texture().get_image()
+			_seed_overview_trail(view, camera, train, head, phase)
+			await process_frame
+			await RenderingServer.frame_post_draw
+			var image := root.get_texture().get_image()
+			var poses := view._build_train_poses(train, route)
+			_check(poses.has("overview_path"), "Far zoom must replace subpixel cars with a pulse dot and rail-following tail.")
+			var path: PackedVector2Array = poses["overview_path"]
+			var center := Vector2i(view.get_global_transform_with_canvas() * path[path.size() - 1])
+			var changed := 0
+			var threshold := 0.02 if zoom == 0.02 and phase == 0.5 else 0.2
+			var bounds := Rect2i(center, Vector2i.ZERO)
+			for y in range(center.y - 5, center.y + 6):
+				for x in range(center.x - 20, center.x + 6):
+					if _difference(image.get_pixel(x, y), empty.get_pixel(x, y)) > threshold:
+						changed += 1
+						bounds = bounds.expand(Vector2i(x, y))
+			_check(changed >= 12 and bounds.size.x >= 4 and bounds.size.y >= 1, "Pulse heads must remain visible even when the train-length tail is subpixel (zoom %.2f, phase %.1f, %d pixels, %s)." % [zoom, phase, changed, bounds.size])
+			if zoom <= WorldView.OVERVIEW_BLEND_START:
+				_check(image.get_pixelv(center).get_luminance() > 0.95, "The pulse head must have an opaque white center outside the zoom blend.")
+			var bright := image.get_pixelv(center)
+			var faint := image.get_pixelv(center + Vector2i(-17, 0))
+			if phase == 0.0 and zoom <= WorldView.OVERVIEW_BLEND_START:
+				_check(bright.get_luminance() > faint.get_luminance() + 0.1, "The pulse head must be visibly brighter than its fading tail.")
+				_check(bounds.size.y >= 3, "The pulse dot must be thicker than its thin tail.")
+				for offset: Vector2i in [Vector2i(0, -1), Vector2i(0, 1), Vector2i(1, 0)]:
+					_check(image.get_pixelv(center + offset).get_luminance() > 0.9, "The pulse head must be a white disc, not just a bright line endpoint.")
+			if zoom <= 0.4:
+				_check(image.get_pixelv(center + Vector2i(0, -3)).get_luminance() < 0.35, "The white pulse head must have a dark contrasting outline.")
+			if zoom == 0.4 and phase == 0.0:
+				_check(image.get_pixelv(center + Vector2i(-5, 0)).get_luminance() > image.get_pixelv(center + Vector2i(-17, 0)).get_luminance() + 0.1, "The whole train-length trace must have a strong brightness gradient, even when moving too fast for appreciable sample ageing.")
+				view.set_dynamic_state([train], camera.position, camera.zoom, phase, [], 0.4)
+				await process_frame
+				await RenderingServer.frame_post_draw
+				var eroding := root.get_texture().get_image()
+				var near := center + Vector2i(-5, 0)
+				var rear := center + Vector2i(-34, 0)
+				_check(_difference(eroding.get_pixelv(rear), empty.get_pixelv(rear)) < 0.01, "The rear of a stopped comet must clear first as its tip advances toward the head.")
+				var initial_contrast := _difference(image.get_pixelv(near), empty.get_pixelv(near))
+				var retained_contrast := _difference(eroding.get_pixelv(near), empty.get_pixelv(near))
+				_check(retained_contrast > 0.1 and retained_contrast >= initial_contrast * 0.75, "The front must retain at least 75%% of its contrast while the rear disappears, not fade globally (initial %.3f, retained %.3f)." % [initial_contrast, retained_contrast])
+			var detail_layer: Node2D = view._train_layers[0]
+			var overview_layer: Node2D = view._overview_layers[0]
+			_check(is_equal_approx(overview_layer.modulate.a, view.overview_opacity(zoom)) and is_equal_approx(detail_layer.modulate.a, 1.0 - view.overview_opacity(zoom)), "Marker and detailed layers must crossfade with complementary smooth opacities.")
+			if zoom <= 0.15:
+				view.set_motion_antialiasing(true)
+				await process_frame
+				await RenderingServer.frame_post_draw
+				var smoothed := root.get_texture().get_image()
+				var roof_pixel := center + Vector2i(-2, 0)
+				_check(_difference(smoothed.get_pixelv(roof_pixel), empty.get_pixelv(roof_pixel)) > threshold, "Pulse dots must remain distinct with screensaver edge smoothing.")
+				view.set_motion_antialiasing(false)
+			if zoom == 0.15 and phase == 0.0:
+				var tail_pixel := center + Vector2i(-8, 0)
+				view.set_dynamic_state([train], camera.position, camera.zoom, phase, [], 0.4)
+				await process_frame
+				await RenderingServer.frame_post_draw
+				var fading := root.get_texture().get_image()
+				_check(image.get_pixelv(tail_pixel).get_luminance() > fading.get_pixelv(tail_pixel).get_luminance() + 0.05, "A stationary train's trail must visibly fade as its history ages.")
+				view.set_dynamic_state([train], camera.position, camera.zoom, phase, [], 0.7)
+				await process_frame
+				await RenderingServer.frame_post_draw
+				var stopped := root.get_texture().get_image()
+				var expired_tail_pixel := center + Vector2i(-6, 0)
+				_check(_difference(stopped.get_pixelv(expired_tail_pixel), empty.get_pixelv(expired_tail_pixel)) < 0.01, "A stopped train must lose its trail after one second outside the head glow.")
+				_check(stopped.get_pixelv(center).get_luminance() > 0.95, "The outlined white head must remain visible after its trail disappears.")
+	view.view_zoom = Vector2.ONE * WorldView.OVERVIEW_TRAIN_ZOOM
+	_check(not view._build_train_poses(train, route).has("overview_path"), "Detailed cars must resume at the overview threshold.")
+	lines.append(upper)
+	view.set_network(graph, lines)
+	for zoom: float in [0.08, 0.15, 0.4, 0.65]:
+		camera.zoom = Vector2.ONE * zoom
+		camera.force_update_scroll()
+		view.set_dynamic_state([], camera.position, camera.zoom, 0.5)
+		await process_frame
+		await RenderingServer.frame_post_draw
+		var empty := root.get_texture().get_image()
+		_seed_overview_trail(view, camera, train, head, 0.5)
+		await process_frame
+		await RenderingServer.frame_post_draw
+		var image := root.get_texture().get_image()
+		var path := view.overview_train_path(train, route, zoom)
+		var transform := view.get_global_transform_with_canvas()
+		var covered := Vector2i(transform * path[path.size() - 1]) + Vector2i(-1, 0)
+		_check(_difference(image.get_pixelv(covered), empty.get_pixelv(covered)) < 0.005, "Upper tracks must occlude the enlarged lower overview marker.")
+		var exposed_difference := 0.0
+		for local_y in range(-1, 2):
+			var offset := mini(10, maxi(3, roundi(TrackGeometry.train_length(train.wagon_count) * zoom * 0.35)))
+			var exposed := Vector2i(transform * path[path.size() - 1]) + Vector2i(-offset, local_y)
+			exposed_difference = maxf(exposed_difference, _difference(image.get_pixelv(exposed), empty.get_pixelv(exposed)))
+		_check(exposed_difference > 0.05, "Only the covered portion of an overview marker may be hidden (zoom %.2f, contrast %.3f)." % [zoom, exposed_difference])
+	lower.render_priority = 1
+	view.set_network(graph, lines)
+	view.set_dynamic_state([train], camera.position, camera.zoom, 0.5)
+	await process_frame
+	await RenderingServer.frame_post_draw
+	var raised := root.get_texture().get_image()
+	var path := view.overview_train_path(train, route, camera.zoom.x)
+	var center := Vector2i(view.get_global_transform_with_canvas() * path[path.size() - 1])
+	_check(_difference(raised.get_pixelv(center + Vector2i(-1, 0)), upper.color) > 0.2, "Render priority must raise the first line's comet over later tracks.")
+	var tracks: StaticTrackLayer = view.get("_static_tracks")
+	_check(tracks.line_layer(0).get_index() > tracks.line_layer(1).get_index(), "Render priority must override array order without changing line IDs.")
+	camera.zoom = Vector2.ONE
+	camera.force_update_scroll()
+	view.set_dynamic_state([train], camera.position, camera.zoom, 0.5)
+	await process_frame
+	await RenderingServer.frame_post_draw
+	var detailed := root.get_texture().get_image()
+	var detailed_poses := view._build_train_poses(train, route)
+	var positions: PackedVector2Array = detailed_poses["positions"]
+	var roof := Vector2i(view.get_global_transform_with_canvas() * positions[1])
+	_check(_difference(detailed.get_pixelv(roof), Color("#dde3e2")) < 0.05, "Priority must raise detailed cars as well as overview markers.")
+	var rail := Vector2i(view.get_global_transform_with_canvas() * Vector2.ZERO)
+	_check(_difference(detailed.get_pixelv(rail), lower.color) < 0.025, "Priority must raise the complete rail corridor, not just its trains.")
+	var station := graph.add_station(Vector2.ZERO)
+	view.queue_redraw()
+	await process_frame
+	await RenderingServer.frame_post_draw
+	var station_pixel := Vector2i(view.get_global_transform_with_canvas() * station.position)
+	_check(root.get_texture().get_image().get_pixelv(station_pixel).get_luminance() > 0.95, "Stations must stay above overview markers, including raised lines.")
+
+func _seed_overview_trail(view: WorldView, camera: Camera2D, train: Metro, head: float, phase: float) -> void:
+	view._train_trails.clear()
+	train.render_distance = head - 36.0 / camera.zoom.x
+	view.set_dynamic_state([train], camera.position, camera.zoom, phase)
+	for step in range(1, 31):
+		train.render_distance = head - (1.0 - float(step) / 30.0) * 36.0 / camera.zoom.x
+		view.set_dynamic_state([train], camera.position, camera.zoom, phase, [], 1.0 / 30.0)

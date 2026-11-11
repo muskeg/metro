@@ -9,6 +9,7 @@ const PASSENGER_SPEED := 4.0
 const PLATFORM_REACH := 16.0
 
 var elapsed := 0.0
+var line_id: int
 var departure_age := -1.0
 var initial_passengers := 0
 var alighting := 0
@@ -63,6 +64,7 @@ var _boarding_paths: Array[PackedVector2Array] = []
 var _alighting_paths: Array[PackedVector2Array] = []
 
 func _init(train: Metro, route: Dictionary, minimum_dwell: float, terminal: bool) -> void:
+	line_id = train.line_id
 	initial_passengers = train.passenger_count
 	var door_count := (train.wagon_count + 1) * 2
 	var seed_value := train.line_id * 17 + train.arrival_count * 11 + train.next_stop_index * 3

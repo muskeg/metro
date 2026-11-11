@@ -24,18 +24,23 @@ class ProfileView extends WorldView:
 		_record("train_poses", started)
 		return poses
 
-	func _draw_train(train: Metro, color: Color, poses: Dictionary) -> void:
+	func _draw_line_trains(layer: Node2D, line: TransitLine) -> void:
+		var started := Time.get_ticks_usec()
+		super._draw_line_trains(layer, line)
+		_record("draw_total", started)
+
+	func _draw_train(train: Metro, color: Color, poses: Dictionary, target: Node2D) -> void:
 		if omit == "trains":
 			return
 		var started := Time.get_ticks_usec()
-		super._draw_train(train, color, poses)
+		super._draw_train(train, color, poses, target)
 		_record("trains", started)
 
-	func _draw_sun_shadows(train_poses: Dictionary) -> void:
+	func _draw_sun_shadows(train_poses: Dictionary, target: Node2D) -> void:
 		if omit == "shadows":
 			return
 		var started := Time.get_ticks_usec()
-		super._draw_sun_shadows(train_poses)
+		super._draw_sun_shadows(train_poses, target)
 		_record("train_shadows", started)
 
 	func _draw_ground_shadows() -> void:
@@ -53,28 +58,28 @@ class ProfileView extends WorldView:
 			super._draw_ground_shadows()
 		_record("ground_shadows", started)
 
-	func _draw_headlights(poses: Dictionary) -> void:
+	func _draw_headlights(poses: Dictionary, target: Node2D) -> void:
 		if omit == "headlights":
 			return
 		var started := Time.get_ticks_usec()
 		if omit == "legacy_ground":
-			_legacy_headlights(poses)
+			_legacy_headlights(poses, target)
 		else:
-			super._draw_headlights(poses)
+			super._draw_headlights(poses, target)
 		_record("headlights", started)
 
-	func _legacy_headlights(poses: Dictionary) -> void:
+	func _legacy_headlights(poses: Dictionary, target: Node2D) -> void:
 		var positions: PackedVector2Array = poses["positions"]
 		var axes: PackedVector2Array = poses["axes"]
 		if positions.is_empty():
 			return
-		draw_set_transform(positions[0], axes[0].angle())
+		target.draw_set_transform(positions[0], axes[0].angle())
 		var strength := 0.42 * _night_strength()
 		if strength > 0.001:
 			for side: float in [-1.0, 1.0]:
 				var source := Vector2(5.0 * TrackGeometry.CAR_SCALE, side * 2.0)
 				for radius: float in [5.0, 3.5, 2.0]:
-					draw_circle(source, radius, Color(1.0, 0.91, 0.69, strength * 0.22), true, -1.0, true)
+					target.draw_circle(source, radius, Color(1.0, 0.91, 0.69, strength * 0.22), true, -1.0, true)
 				for section in range(24):
 					var a := float(section) / 24.0
 					var b := float(section + 1) / 24.0
@@ -82,16 +87,16 @@ class ProfileView extends WorldView:
 					var alpha_b := strength * pow(1.0 - b, 2.0)
 					for half: float in [-1.0, 1.0]:
 						var vertices := PackedVector2Array([source + Vector2(lerpf(0.0, 50.0, a), 0), source + Vector2(lerpf(0.0, 50.0, b), 0), source + Vector2(lerpf(0.0, 50.0, b), half * lerpf(2.5, 14.0, b)), source + Vector2(lerpf(0.0, 50.0, a), half * lerpf(2.5, 14.0, a))])
-						draw_polygon(vertices, PackedColorArray([Color(1.0, 0.91, 0.69, alpha_a), Color(1.0, 0.91, 0.69, alpha_b), Color(1.0, 0.91, 0.69, 0.0), Color(1.0, 0.91, 0.69, 0.0)]))
-		draw_set_transform(Vector2.ZERO)
+						target.draw_polygon(vertices, PackedColorArray([Color(1.0, 0.91, 0.69, alpha_a), Color(1.0, 0.91, 0.69, alpha_b), Color(1.0, 0.91, 0.69, 0.0), Color(1.0, 0.91, 0.69, 0.0)]))
+		target.draw_set_transform(Vector2.ZERO)
 
-	func _draw_car_shell(half_length: float, half_width: float, color: Color, cab_end: int = 0) -> void:
+	func _draw_car_shell(half_length: float, half_width: float, color: Color, cab_end: int, target: Node2D) -> void:
 		if omit != "legacy_ground":
-			super._draw_car_shell(half_length, half_width, color, cab_end)
+			super._draw_car_shell(half_length, half_width, color, cab_end, target)
 			return
 		var left_bevel := 1.2 if cab_end < 0 else 0.6
 		var right_bevel := 1.2 if cab_end > 0 else 0.6
-		draw_colored_polygon(PackedVector2Array([
+		target.draw_colored_polygon(PackedVector2Array([
 			Vector2(-half_length + left_bevel, -half_width), Vector2(half_length - right_bevel, -half_width),
 			Vector2(half_length, -half_width + right_bevel), Vector2(half_length, half_width - right_bevel),
 			Vector2(half_length - right_bevel, half_width), Vector2(-half_length + left_bevel, half_width),
@@ -101,11 +106,11 @@ class ProfileView extends WorldView:
 	func _poses_visible(poses: Dictionary) -> bool:
 		return true if omit == "legacy_ground" else super._poses_visible(poses)
 
-	func _draw_station_visit(visit: StationVisit) -> void:
+	func _draw_station_visit(visit: StationVisit, target: Node2D) -> void:
 		if omit == "platforms":
 			return
 		var started := Time.get_ticks_usec()
-		super._draw_station_visit(visit)
+		super._draw_station_visit(visit, target)
 		_record("platforms", started)
 
 func _initialize() -> void:

@@ -101,6 +101,7 @@ func _build() -> void:
 		loop.append(stations[index][0])
 	loop.append(loop[0])
 	_line("JY Yamanote (30-station loop)", "#80c241", loop)
+	lines[0].render_priority = 1
 	_line("JK Keihin-Tohoku (Akabane - Kamata, local)", "#00b2e5", [
 		"Akabane", "Higashi-Jujo", "Oji", "Kami-Nakazato", "Tabata",
 		"Nishi-Nippori", "Nippori", "Uguisudani", "Ueno", "Okachimachi",

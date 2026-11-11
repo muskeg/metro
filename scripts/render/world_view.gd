@@ -5,12 +5,23 @@ const BACKDROP := preload("res://scripts/render/urban_backdrop.gd")
 const STATIC_TRACK_LAYER := preload("res://scripts/render/static_track_layer.gd")
 const RAIL_ILLUMINATION_LAYER := preload("res://scripts/render/rail_illumination_layer.gd")
 const RAIL_HALO_SHADER := preload("res://scripts/render/rail_halo.gdshader")
+const MOTION_ANTIALIASING := preload("res://scripts/render/motion_antialiasing.gdshader")
 const CORRIDOR_WIDTH := 28.0
 # Headlight reach (cab offset + 50-unit beam + 14 width) plus shadow offset, rounded up.
 const TRAIN_DRAW_MARGIN := 96.0
 const LANE_EDGE_WIDTH := 8.0
 const RUNNING_LANE_WIDTH := 4.0
+const OVERVIEW_TRAIN_ZOOM := 0.8
+const OVERVIEW_BLEND_START := 0.5
+const OVERVIEW_TRAIN_WIDTH := 1.5
+const TRAIL_LIFETIME := 1.0
 const PASSENGER_COATS := [Color("#526b79"), Color("#b98260"), Color("#798468"), Color("#8f7180"), Color("#647e83")]
+
+class TrainTrail:
+	var times := PackedFloat64Array()
+	var distances := PackedFloat64Array()
+	var direction := 1
+	var head := 0.0
 
 var graph: TransitGraph
 var lines: Array[TransitLine] = []
@@ -60,6 +71,11 @@ var _preview_hint := ""
 var _backdrop: Node2D
 var _static_tracks: StaticTrackLayer
 var _rail_illumination: RailIlluminationLayer
+var _train_layers: Dictionary[int, Node2D] = {}
+var _overview_layers: Dictionary[int, Node2D] = {}
+var _train_trails: Dictionary[int, TrainTrail] = {}
+var _trail_clock := 0.0
+var _motion_antialiasing: CanvasLayer
 
 func _ready() -> void:
 	_backdrop = BACKDROP.new()
@@ -69,10 +85,14 @@ func _ready() -> void:
 	_static_tracks.show_behind_parent = true
 	add_child(_static_tracks)
 	_static_tracks.set_network(lines, _routes)
+	_refresh_train_layers()
 	_static_tracks.set_shadows(_track_shadow_meshes, _track_shadows)
 	_static_tracks.set_shadow_state(BACKDROP.shadow_opacity(time_of_day), BACKDROP.shadow_offset(time_of_day))
+	if graph != null:
+		_refresh_illumination()
 
 func set_network(transit_graph: TransitGraph, transit_lines: Array[TransitLine], route_data: Dictionary = {}) -> void:
+	_train_trails.clear()
 	graph = transit_graph
 	lines = transit_lines
 	_routes = route_data
@@ -82,21 +102,25 @@ func set_network(transit_graph: TransitGraph, transit_lines: Array[TransitLine],
 			_routes[line.id] = TrackGeometry.circuit(graph, line, lines, corridors)
 	if _static_tracks != null:
 		_static_tracks.set_network(lines, _routes)
+		_refresh_train_layers()
 	_refresh_illumination()
 	queue_redraw()
 
 func refresh_geometry() -> void:
+	_train_trails.clear()
 	_routes.clear()
 	var corridors := TrackGeometry.corridor_layout(graph, lines)
 	for line: TransitLine in lines:
 		_routes[line.id] = TrackGeometry.circuit(graph, line, lines, corridors)
 	if _static_tracks != null:
 		_static_tracks.set_network(lines, _routes)
+		_refresh_train_layers()
 	_refresh_illumination()
 	queue_redraw()
 
-func set_dynamic_state(train_list: Array[Metro], center: Vector2, zoom: Vector2, phase: float, visits: Array[StationVisit] = []) -> void:
+func set_dynamic_state(train_list: Array[Metro], center: Vector2, zoom: Vector2, phase: float, visits: Array[StationVisit] = [], delta: float = 0.0) -> void:
 	metros = train_list
+	_update_train_trails(delta)
 	station_visits = visits
 	view_center = center
 	view_zoom = zoom
@@ -113,6 +137,82 @@ func set_dynamic_state(train_list: Array[Metro], center: Vector2, zoom: Vector2,
 		_backdrop.call("set_view", center, zoom, phase)
 	queue_redraw()
 
+func _refresh_train_layers() -> void:
+	for layer: Node2D in _overview_layers.values():
+		layer.get_parent().remove_child(layer)
+		layer.queue_free()
+	_overview_layers.clear()
+	for layer: Node2D in _train_layers.values():
+		if is_instance_valid(layer):
+			layer.get_parent().remove_child(layer)
+			layer.queue_free()
+	_train_layers.clear()
+	for line: TransitLine in lines:
+		var layer := Node2D.new()
+		layer.draw.connect(_draw_line_trains.bind(layer, line))
+		_static_tracks.line_layer(line.id).add_child(layer)
+		_train_layers[line.id] = layer
+		var overview := Node2D.new()
+		overview.draw.connect(_draw_line_overviews.bind(overview, line))
+		_static_tracks.line_layer(line.id).add_child(overview)
+		_overview_layers[line.id] = overview
+
+func overview_opacity(zoom: float) -> float:
+	return 1.0 - smoothstep(OVERVIEW_BLEND_START, OVERVIEW_TRAIN_ZOOM, zoom)
+
+func _update_train_trails(delta: float) -> void:
+	_trail_clock += maxf(delta, 0.0)
+	var active: Dictionary = {}
+	for train: Metro in metros:
+		var id := train.get_instance_id()
+		active[id] = true
+		if not _routes.has(train.line_id):
+			continue
+		var route := TrackGeometry.route_for_direction(_routes[train.line_id], train.travel_direction)
+		var total: float = route["length"]
+		if total < 1.0:
+			continue
+		var head := fposmod(train.render_distance if train.render_pose_valid else train.distance, total)
+		var trail: TrainTrail = _train_trails.get(id)
+		var advance := 0.0 if trail == null else fposmod(head - trail.head, total)
+		# Cab reversal jumps the logical head forward; it is not travelled track.
+		var reversed := trail != null and route.has("terminal_insets") and (head < float(route["outbound_end"])) != (trail.head < float(route["outbound_end"]))
+		if trail == null or trail.direction != train.travel_direction or reversed or advance > total * 0.5:
+			trail = TrainTrail.new()
+			trail.direction = train.travel_direction
+			trail.times.append(_trail_clock)
+			trail.distances.append(head)
+			_train_trails[id] = trail
+		elif advance > 0.000001:
+			var distance := trail.distances[trail.distances.size() - 1] + advance
+			if trail.times[trail.times.size() - 1] < _trail_clock - delta - 0.000001:
+				trail.times.append(_trail_clock - delta)
+				trail.distances.append(trail.distances[trail.distances.size() - 1])
+			if trail.times.size() > 1 and _trail_clock - trail.times[trail.times.size() - 2] < 1.0 / 30.0:
+				trail.times[trail.times.size() - 1] = _trail_clock
+				trail.distances[trail.distances.size() - 1] = distance
+			else:
+				trail.times.append(_trail_clock)
+				trail.distances.append(distance)
+		trail.head = head
+		while trail.times.size() > 1 and trail.times[1] < _trail_clock - TRAIL_LIFETIME:
+			trail.times.remove_at(0)
+			trail.distances.remove_at(0)
+	for id: int in _train_trails.keys():
+		if not active.has(id):
+			_train_trails.erase(id)
+
+func _draw_line_overviews(layer: Node2D, line: TransitLine) -> void:
+	if not _routes.has(line.id) or overview_opacity(view_zoom.x) <= 0.0:
+		return
+	for train: Metro in metros:
+		if train.line_id != line.id:
+			continue
+		var route := TrackGeometry.route_for_direction(_routes[line.id], train.travel_direction)
+		var poses := _build_train_poses(train, route)
+		if poses.has("overview_path") and _poses_visible(poses):
+			_draw_overview_train(poses["overview_path"], layer)
+
 func set_stroke_preview(points: PackedVector2Array, color: Color, error: String = "", hint: String = "") -> void:
 	_preview = TrackGeometry.round_corners(points)
 	_preview_color = color if error.is_empty() else Color("#d45c64")
@@ -120,29 +220,34 @@ func set_stroke_preview(points: PackedVector2Array, color: Color, error: String 
 	_preview_hint = hint
 	queue_redraw()
 
+func set_motion_antialiasing(enabled: bool) -> void:
+	if _motion_antialiasing == null:
+		if not enabled:
+			return
+		_motion_antialiasing = CanvasLayer.new()
+		_motion_antialiasing.layer = 1
+		add_child(_motion_antialiasing)
+		var surface := ColorRect.new()
+		surface.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		surface.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		var shader_material := ShaderMaterial.new()
+		shader_material.shader = MOTION_ANTIALIASING
+		surface.material = shader_material
+		_motion_antialiasing.add_child(surface)
+	_motion_antialiasing.visible = enabled
+
 func _draw() -> void:
 	if graph == null:
 		return
+	for layer: Node2D in _train_layers.values():
+		layer.modulate.a = 1.0 - overview_opacity(view_zoom.x)
+		layer.queue_redraw()
+	for layer: Node2D in _overview_layers.values():
+		layer.modulate.a = overview_opacity(view_zoom.x)
+		layer.queue_redraw()
 	# The Compatibility renderer's line fringe scales in world units; omit it at close zoom.
 	var night := _night_strength()
 	_visible_world = get_global_transform_with_canvas().affine_inverse() * get_viewport_rect()
-	var train_poses: Dictionary = {}
-	for metro: Metro in metros:
-		if _routes.has(metro.line_id):
-			var route := TrackGeometry.route_for_direction(_routes[metro.line_id], metro.travel_direction)
-			var poses := _build_train_poses(metro, route)
-			if _poses_visible(poses):
-				train_poses[metro.get_instance_id()] = poses
-	_draw_sun_shadows(train_poses)
-	if view_zoom.x > 1.5:
-		for visit: StationVisit in station_visits:
-			_draw_station_visit(visit)
-	for metro: Metro in metros:
-		if train_poses.has(metro.get_instance_id()):
-			_draw_headlights(train_poses[metro.get_instance_id()])
-	for metro: Metro in metros:
-		if train_poses.has(metro.get_instance_id()):
-			_draw_train(metro, lines[metro.line_id].color, train_poses[metro.get_instance_id()])
 	for station: Station in graph.stations:
 		_draw_network_station(station)
 		if interaction_overlays_visible and station.id == selected_station_id:
@@ -158,6 +263,29 @@ func _draw() -> void:
 			_draw_station(station_preview_position, Color(1.0, 1.0, 1.0, 0.22), Color(Color("#34464f").lerp(Color("#c5dce5"), night), 0.38))
 		_draw_gizmos()
 
+func _draw_line_trains(layer: Node2D, line: TransitLine) -> void:
+	if graph == null or not _routes.has(line.id) or overview_opacity(view_zoom.x) >= 1.0:
+		return
+	_visible_world = get_global_transform_with_canvas().affine_inverse() * get_viewport_rect()
+	var train_poses: Dictionary = {}
+	for metro: Metro in metros:
+		if metro.line_id == line.id:
+			var route := TrackGeometry.route_for_direction(_routes[line.id], metro.travel_direction)
+			var poses := _build_train_poses(metro, route)
+			if _poses_visible(poses):
+				train_poses[metro.get_instance_id()] = poses
+	_draw_sun_shadows(train_poses, layer)
+	if view_zoom.x > 1.5:
+		for visit: StationVisit in station_visits:
+			if visit.line_id == line.id:
+				_draw_station_visit(visit, layer)
+	for metro: Metro in metros:
+		if train_poses.has(metro.get_instance_id()):
+			_draw_headlights(train_poses[metro.get_instance_id()], layer)
+	for metro: Metro in metros:
+		if train_poses.has(metro.get_instance_id()):
+			_draw_train(metro, line.color, train_poses[metro.get_instance_id()], layer)
+
 func _build_train_poses(metro: Metro, route: Dictionary) -> Dictionary:
 	var positions := PackedVector2Array()
 	var axes := PackedVector2Array()
@@ -171,9 +299,55 @@ func _build_train_poses(metro: Metro, route: Dictionary) -> Dictionary:
 		var distance := head_distance - float(car) * TrackGeometry.CAR_PITCH
 		positions.append(TrackGeometry.point_at_distance(points, fposmod(distance, total), cumulative))
 		axes.append(TrackGeometry.car_axis(points, total, distance, head_distance, cumulative))
-	return {"positions": positions, "axes": axes}
+	var poses := {"positions": positions, "axes": axes}
+	if view_zoom.x < OVERVIEW_TRAIN_ZOOM:
+		var trail := overview_train_trail(metro, route, view_zoom.x)
+		poses["overview_path"] = trail["path"]
+	return poses
 
-# Drawing-only culling: the margin covers car shells, sun shadows and the full headlight beam.
+func overview_train_path(metro: Metro, route: Dictionary, zoom: float) -> PackedVector2Array:
+	return overview_train_trail(metro, route, zoom)["path"]
+
+func overview_train_trail(metro: Metro, route: Dictionary, _zoom: float) -> Dictionary:
+	var points: PackedVector2Array = route["points"]
+	var cumulative: PackedFloat64Array = route["cumulative_lengths"]
+	var total: float = route["length"]
+	var head := fposmod(metro.render_distance if metro.render_pose_valid else metro.distance, total)
+	var trail: TrainTrail = _train_trails.get(metro.get_instance_id())
+	if trail == null or trail.times.size() < 2 or trail.times[trail.times.size() - 1] <= _trail_clock - TRAIL_LIFETIME:
+		return {"path": PackedVector2Array([TrackGeometry.point_at_distance(points, head, cumulative)]), "ages": PackedFloat64Array([0.0])}
+	var oldest := trail.distances[0]
+	if trail.times[0] < _trail_clock - TRAIL_LIFETIME:
+		oldest = lerpf(oldest, trail.distances[1], inverse_lerp(trail.times[0], trail.times[1], _trail_clock - TRAIL_LIFETIME))
+	var latest := trail.distances[trail.distances.size() - 1]
+	var maximum_length := minf(TrackGeometry.train_length(metro.wagon_count) * 1.5, total)
+	var idle := _trail_clock - trail.times[trail.times.size() - 1]
+	var length := minf(maximum_length * (1.0 - smoothstep(0.0, TRAIL_LIFETIME, idle)), latest - oldest)
+	var marks := PackedFloat64Array()
+	for step in range(41):
+		marks.append(head - length + length * float(step) / 40.0)
+	# Include route vertices so even a short bend cannot be cut by a screen-sized sample.
+	for vertex_distance: float in cumulative:
+		var behind := fposmod(head - vertex_distance, total)
+		if behind > 0.0 and behind < length:
+			marks.append(head - behind)
+	marks.sort()
+	var path := PackedVector2Array()
+	var ages := PackedFloat64Array()
+	var sample := 1
+	for mark: float in marks:
+		var point := TrackGeometry.point_at_distance(points, fposmod(mark, total), cumulative)
+		if path.is_empty() or point.distance_squared_to(path[path.size() - 1]) > 0.000001:
+			path.append(point)
+			var distance := latest - (head - mark)
+			while sample < trail.distances.size() - 1 and trail.distances[sample] <= distance:
+				sample += 1
+			var span := trail.distances[sample] - trail.distances[sample - 1]
+			var fraction := (distance - trail.distances[sample - 1]) / span if span > 0.000001 else 1.0
+			ages.append(_trail_clock - lerpf(trail.times[sample - 1], trail.times[sample], clampf(fraction, 0.0, 1.0)))
+	return {"path": path, "ages": ages}
+
+# Include the comet even when its real cars lie outside the viewport.
 func _poses_visible(poses: Dictionary) -> bool:
 	var positions: PackedVector2Array = poses["positions"]
 	if positions.is_empty():
@@ -181,7 +355,10 @@ func _poses_visible(poses: Dictionary) -> bool:
 	var bounds := Rect2(positions[0], Vector2.ZERO)
 	for position: Vector2 in positions:
 		bounds = bounds.expand(position)
-	return bounds.grow(TRAIN_DRAW_MARGIN).intersects(_visible_world)
+	if poses.has("overview_path"):
+		for point: Vector2 in poses["overview_path"]:
+			bounds = bounds.expand(point)
+	return bounds.grow(maxf(TRAIN_DRAW_MARGIN, 5.0 / view_zoom.x)).intersects(_visible_world)
 
 func station_handle_position(station: Station, direction: Vector2) -> Vector2:
 	return station.position + direction * maxf(station_radius(station) + 12.0, 32.0 / view_zoom.x)
@@ -341,7 +518,7 @@ func _refresh_illumination() -> void:
 		add_child(_rail_illumination)
 	else:
 		move_child(_rail_illumination, get_child_count() - 1)
-	_rail_illumination.set_network(lines, _illuminated_paths, _illumination_strengths)
+	_rail_illumination.set_network(lines, _illuminated_paths, _illumination_strengths, _static_tracks)
 	_rail_illumination.set_night_strength(_night_strength())
 	_rail_illumination.set_antialiased(view_zoom.x < 1.5)
 
@@ -571,7 +748,7 @@ func _draw_handle(position: Vector2, color: Color, symbol: String, scale: float)
 			draw_polyline(PackedVector2Array([tip + Vector2(-2.0 * direction, -2.0) * scale, tip, tip + Vector2(-2.0 * direction, 2.0) * scale]), color, 1.5 * scale, true)
 
 
-func _draw_station_visit(visit: StationVisit) -> void:
+func _draw_station_visit(visit: StationVisit, target: Node2D) -> void:
 	var alpha := smoothstep(1.5, 3.0, view_zoom.x) * visit.platform_alpha()
 	if alpha <= 0.001:
 		return
@@ -582,18 +759,18 @@ func _draw_station_visit(visit: StationVisit) -> void:
 	if not visit.platform.is_empty():
 		var fill := Color("#d8dfdd").lerp(Color("#33464f"), night)
 		fill.a = alpha * 0.96
-		draw_colored_polygon(visit.platform, fill)
+		target.draw_colored_polygon(visit.platform, fill)
 		var outline := visit.platform.duplicate()
 		outline.append(outline[0])
-		draw_polyline(outline, Color(Color("#7b8d8c").lerp(Color("#8ba0a7"), night), alpha * 0.6), 0.22, false)
+		target.draw_polyline(outline, Color(Color("#7b8d8c").lerp(Color("#8ba0a7"), night), alpha * 0.6), 0.22, false)
 		var seam := Color(Color("#899b99").lerp(Color("#82979e"), night), alpha * 0.28)
 		for index in range(0, visit.platform_seams.size(), 2):
-			draw_line(visit.platform_seams[index], visit.platform_seams[index + 1], seam, 0.13, false)
-		draw_polyline(visit.platform_edge, Color(Color("#647b7b").lerp(Color("#acbfc4"), night), alpha * 0.8), 0.25, false)
+			target.draw_line(visit.platform_seams[index], visit.platform_seams[index + 1], seam, 0.13, false)
+		target.draw_polyline(visit.platform_edge, Color(Color("#647b7b").lerp(Color("#acbfc4"), night), alpha * 0.8), 0.25, false)
 		var safety := Color(Color("#ddc798").lerp(Color("#dac9a1"), night), alpha * 0.85)
-		draw_polyline(visit.platform_safety_edge, safety, 0.65, false)
+		target.draw_polyline(visit.platform_safety_edge, safety, 0.65, false)
 		for dot: Vector2 in visit.tactile_dots:
-			draw_circle(dot, 0.09, Color(Color("#826d48"), alpha * 0.65), true, -1.0, false)
+			target.draw_circle(dot, 0.09, Color(Color("#826d48"), alpha * 0.65), true, -1.0, false)
 	for entering: bool in [false, true]:
 		var count := visit.boarding if entering else visit.alighting
 		for index in range(count):
@@ -608,29 +785,30 @@ func _draw_station_visit(visit: StationVisit) -> void:
 				continue
 			var coat: Color = PASSENGER_COATS[(index + (1 if entering else 0)) % PASSENGER_COATS.size()].lerp(Color("#c1cfd2"), night * 0.55)
 			coat.a = opacity
-			draw_circle(position, StationVisit.PASSENGER_RADIUS, coat, true, -1.0, view_zoom.x < 3.0)
+			target.draw_circle(position, StationVisit.PASSENGER_RADIUS, coat, true, -1.0, view_zoom.x < 3.0)
 			var skin := Color("#dfb993") if index % 3 == 0 else Color("#b68968") if index % 3 == 1 else Color("#ead1b0")
 			skin.a = opacity
-			draw_circle(position + normal * (0.1 if not entering else -0.1), 0.15, skin, true, -1.0, view_zoom.x < 3.0)
+			target.draw_circle(position + normal * (0.1 if not entering else -0.1), 0.15, skin, true, -1.0, view_zoom.x < 3.0)
 
-func _draw_train(metro: Metro, color: Color, poses: Dictionary) -> void:
+func _draw_train(metro: Metro, color: Color, poses: Dictionary, target: Node2D) -> void:
 	var positions: PackedVector2Array = poses["positions"]
 	var axes: PackedVector2Array = poses["axes"]
 	if positions.is_empty():
 		return
+	if overview_opacity(view_zoom.x) >= 1.0:
+		return
 	for car in range(1, metro.wagon_count + 1):
-		draw_set_transform(Vector2.ZERO)
-
+		target.draw_set_transform(Vector2.ZERO)
 		var edges := _gangway_edges(positions, axes, car)
 		# A compressed connector can fold across itself on a tight bend.
 		for triangle: PackedVector2Array in [PackedVector2Array([edges[0], edges[1], edges[2]]), PackedVector2Array([edges[0], edges[2], edges[3]])]:
 			if absf((triangle[1] - triangle[0]).cross(triangle[2] - triangle[0])) > 0.0001:
-				draw_colored_polygon(triangle, Color("#344b53"))
+				target.draw_colored_polygon(triangle, Color("#344b53"))
 		if view_zoom.x > 1.5:
 			var detail := smoothstep(1.5, 3.0, view_zoom.x)
 			for fold in range(1, 5):
 				var fraction := float(fold) / 5.0
-				draw_line(edges[0].lerp(edges[1], fraction), edges[3].lerp(edges[2], fraction), Color(0.58, 0.65, 0.66, detail * 0.65), 0.22, false)
+				target.draw_line(edges[0].lerp(edges[1], fraction), edges[3].lerp(edges[2], fraction), Color(0.58, 0.65, 0.66, detail * 0.65), 0.22, false)
 	var body_vertices := PackedVector2Array()
 	var body_colors := PackedColorArray()
 	var body_indices := PackedInt32Array()
@@ -649,13 +827,31 @@ func _draw_train(metro: Metro, color: Color, poses: Dictionary) -> void:
 			_cache_shape(nose_key, nose)
 			_append_cached_shape(body_vertices, body_colors, body_indices, nose_key, positions[car], axes[car], Color("#344f5c"))
 	if not body_indices.is_empty():
-		draw_set_transform(Vector2.ZERO)
-		RenderingServer.canvas_item_add_triangle_array(get_canvas_item(), body_indices, body_vertices, body_colors)
+		target.draw_set_transform(Vector2.ZERO)
+		RenderingServer.canvas_item_add_triangle_array(target.get_canvas_item(), body_indices, body_vertices, body_colors)
 	var doors_open := metro.at_station and metro.visit != null and metro.visit.elapsed >= metro.visit.opening_duration
 	for car in range(metro.wagon_count, -1, -1):
-		draw_set_transform(positions[car], axes[car].angle(), Vector2(TrackGeometry.CAR_SCALE, 1.0))
-		_draw_car(color, car == 0, car == metro.wagon_count, doors_open)
-	draw_set_transform(Vector2.ZERO)
+		target.draw_set_transform(positions[car], axes[car].angle(), Vector2(TrackGeometry.CAR_SCALE, 1.0))
+		_draw_car(color, car == 0, car == metro.wagon_count, doors_open, target)
+	target.draw_set_transform(Vector2.ZERO)
+
+func _draw_overview_train(path: PackedVector2Array, target: Node2D) -> void:
+	if path.is_empty():
+		return
+	if path.size() >= 2:
+		var cumulative := TrackGeometry.cumulative_lengths(path)
+		var colors := PackedColorArray()
+		var glow := PackedColorArray()
+		for distance: float in cumulative:
+			var alpha := pow(distance / cumulative[cumulative.size() - 1], 1.4)
+			colors.append(Color(1.0, 1.0, 1.0, alpha * 0.8))
+			glow.append(Color(0.8, 0.93, 1.0, alpha * 0.18))
+		target.draw_polyline_colors(path, glow, 4.0 / view_zoom.x, true)
+		target.draw_polyline_colors(path, colors, OVERVIEW_TRAIN_WIDTH / view_zoom.x, true)
+	var head := path[path.size() - 1]
+	target.draw_circle(head, 4.0 / view_zoom.x, Color(0.8, 0.93, 1.0, 0.12), true, -1.0, true)
+	target.draw_circle(head, 3.2 / view_zoom.x, Color("#17232c"), true, -1.0, true)
+	target.draw_circle(head, 2.2 / view_zoom.x, Color.WHITE, true, -1.0, true)
 
 func _append_car_mesh(vertices: PackedVector2Array, colors: PackedColorArray, indices: PackedInt32Array, position: Vector2, axis: Vector2, key: Vector3, color: Color) -> void:
 	var polygon: PackedVector2Array
@@ -733,7 +929,9 @@ func _polygon_mesh(polygon: PackedVector2Array) -> Mesh:
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	return mesh if mesh.get_surface_count() > 0 else null
 
-func _draw_sun_shadows(train_poses: Dictionary) -> void:
+func _draw_sun_shadows(train_poses: Dictionary, target: Node2D) -> void:
+	if overview_opacity(view_zoom.x) >= 1.0:
+		return
 	var opacity := BACKDROP.shadow_opacity(time_of_day)
 	if opacity < 0.001:
 		return
@@ -748,10 +946,10 @@ func _draw_sun_shadows(train_poses: Dictionary) -> void:
 		if positions.is_empty():
 			continue
 		for car in range(metro.wagon_count + 1):
-			draw_set_transform(positions[car] + offset * 0.65, axes[car].angle(), Vector2(TrackGeometry.CAR_SCALE, 1.0))
+			target.draw_set_transform(positions[car] + offset * 0.65, axes[car].angle(), Vector2(TrackGeometry.CAR_SCALE, 1.0))
 			for spread: float in [0.15, 0.45]:
-				_draw_car_shell(5.9 + spread, 3.3 + spread, color, 1 if car == 0 else (-1 if car == metro.wagon_count else 0))
-	draw_set_transform(Vector2.ZERO)
+				_draw_car_shell(5.9 + spread, 3.3 + spread, color, 1 if car == 0 else (-1 if car == metro.wagon_count else 0), target)
+	target.draw_set_transform(Vector2.ZERO)
 
 func _gangway_edges(positions: PackedVector2Array, axes: PackedVector2Array, car: int) -> PackedVector2Array:
 	var front_axis := axes[car - 1]
@@ -762,7 +960,9 @@ func _gangway_edges(positions: PackedVector2Array, axes: PackedVector2Array, car
 	var back_normal := back_axis.orthogonal() * 2.0
 	return PackedVector2Array([front + front_normal, back + back_normal, back - back_normal, front - front_normal])
 
-func _draw_headlights(poses: Dictionary) -> void:
+func _draw_headlights(poses: Dictionary, target: Node2D) -> void:
+	if overview_opacity(view_zoom.x) >= 1.0:
+		return
 	var positions: PackedVector2Array = poses["positions"]
 	var axes: PackedVector2Array = poses["axes"]
 	if positions.is_empty():
@@ -772,14 +972,14 @@ func _draw_headlights(poses: Dictionary) -> void:
 		return
 	if strength != _beam_strength:
 		_rebuild_beams(strength)
-	draw_set_transform(positions[0], axes[0].angle())
+	target.draw_set_transform(positions[0], axes[0].angle())
 	for side_index in range(2):
 		var source := Vector2(5.0 * TrackGeometry.CAR_SCALE, (side_index * 2 - 1) * 2.0)
 		for radius: float in [5.0, 3.5, 2.0]:
-			draw_circle(source, radius, Color(1.0, 0.91, 0.69, strength * 0.22), true, -1.0, true)
+			target.draw_circle(source, radius, Color(1.0, 0.91, 0.69, strength * 0.22), true, -1.0, true)
 		var beam: Array = _beams[side_index]
-		RenderingServer.canvas_item_add_triangle_array(get_canvas_item(), beam[2], beam[0], beam[1])
-	draw_set_transform(Vector2.ZERO)
+		RenderingServer.canvas_item_add_triangle_array(target.get_canvas_item(), beam[2], beam[0], beam[1])
+	target.draw_set_transform(Vector2.ZERO)
 
 # One fading beam per side, shared by every train. Raw triangle arrays keep float vertex
 # colors (ArrayMesh would quantize the faint alpha) and match draw_polygon's triangulation.
@@ -809,14 +1009,14 @@ func _rebuild_beams(strength: float) -> void:
 				colors.append_array(PackedColorArray([Color(1.0, 0.91, 0.69, alpha_a), Color(1.0, 0.91, 0.69, alpha_b), Color(1.0, 0.91, 0.69, 0.0), Color(1.0, 0.91, 0.69, 0.0)]))
 		_beams.append([vertices, colors, indices])
 
-func _draw_car(color: Color, leading_cab: bool, trailing_cab: bool, doors_open: bool = false) -> void:
+func _draw_car(color: Color, leading_cab: bool, trailing_cab: bool, doors_open: bool, target: Node2D) -> void:
 	var antialias := view_zoom.x < 1.5
 	var cab_end := 1 if leading_cab else (-1 if trailing_cab else 0)
 	var detail := smoothstep(1.5, 3.0, view_zoom.x)
 	var fine_detail := smoothstep(3.0, 4.5, view_zoom.x)
 	var roof_start := -3.35 if trailing_cab else -4.8
 	var roof_end := 3.35 if leading_cab else 4.8
-	draw_rect(Rect2(roof_start, -1.75, roof_end - roof_start, 3.5), Color("#dde3e2"))
+	target.draw_rect(Rect2(roof_start, -1.75, roof_end - roof_start, 3.5), Color("#dde3e2"))
 	if detail > 0.0:
 		var glazing := Color("#45636d").lerp(Color("#f1d8a2"), _night_strength() * 0.8)
 		glazing.a = detail
@@ -824,27 +1024,27 @@ func _draw_car(color: Color, leading_cab: bool, trailing_cab: bool, doors_open: 
 			for window_x: float in [-3.6, -0.7, 2.2]:
 				if (leading_cab and window_x > 2.0) or (trailing_cab and window_x < -3.0):
 					continue
-				draw_line(Vector2(window_x, side * 2.3), Vector2(window_x + 1.4, side * 2.3), glazing, 0.6, antialias)
+				target.draw_line(Vector2(window_x, side * 2.3), Vector2(window_x + 1.4, side * 2.3), glazing, 0.6, antialias)
 			for door_x: float in [-1.75, 1.15]:
 				var door := Color(0.78, 0.84, 0.84, detail)
-				draw_rect(Rect2(door_x - 0.5, side * 2.3 - 0.35, 1.0, 0.7), door)
+				target.draw_rect(Rect2(door_x - 0.5, side * 2.3 - 0.35, 1.0, 0.7), door)
 				if doors_open and side > 0.0:
-					draw_rect(Rect2(door_x - 0.28, side * 2.3 - 0.35, 0.56, 0.7), Color(0.25, 0.34, 0.37, detail))
+					target.draw_rect(Rect2(door_x - 0.28, side * 2.3 - 0.35, 0.56, 0.7), Color(0.25, 0.34, 0.37, detail))
 				else:
-					draw_line(Vector2(door_x, side * 2.3 - 0.35), Vector2(door_x, side * 2.3 + 0.35), Color(0.25, 0.34, 0.37, fine_detail), 0.18, false)
+					target.draw_line(Vector2(door_x, side * 2.3 - 0.35), Vector2(door_x, side * 2.3 + 0.35), Color(0.25, 0.34, 0.37, fine_detail), 0.18, false)
 		for equipment_x: float in [-1.9, 1.5]:
-			draw_rect(Rect2(equipment_x - 0.65, -0.85, 1.3, 1.7), Color(0.63, 0.69, 0.70, detail))
+			target.draw_rect(Rect2(equipment_x - 0.65, -0.85, 1.3, 1.7), Color(0.63, 0.69, 0.70, detail))
 			for slat in range(3):
 				var x := equipment_x - 0.4 + slat * 0.4
-				draw_line(Vector2(x, -0.6), Vector2(x, 0.6), Color(0.36, 0.43, 0.45, fine_detail), 0.18, false)
-		draw_line(Vector2(0.0, -1.65), Vector2(0.0, 1.65), Color(0.57, 0.64, 0.65, fine_detail * 0.5), 0.18, false)
-		draw_line(Vector2(roof_start + 0.3, -1.35), Vector2(roof_end - 0.3, -1.35), Color(1.0, 1.0, 1.0, detail * 0.55), 0.25, false)
+				target.draw_line(Vector2(x, -0.6), Vector2(x, 0.6), Color(0.36, 0.43, 0.45, fine_detail), 0.18, false)
+		target.draw_line(Vector2(0.0, -1.65), Vector2(0.0, 1.65), Color(0.57, 0.64, 0.65, fine_detail * 0.5), 0.18, false)
+		target.draw_line(Vector2(roof_start + 0.3, -1.35), Vector2(roof_end - 0.3, -1.35), Color(1.0, 1.0, 1.0, detail * 0.55), 0.25, false)
 	if cab_end != 0:
 		for side: float in [-1.0, 1.0]:
-			draw_circle(Vector2(cab_end * 5.0, side * 1.9), 0.4, Color("#fff3c9") if leading_cab else Color("#d84e55"), true, -1.0, antialias)
+			target.draw_circle(Vector2(cab_end * 5.0, side * 1.9), 0.4, Color("#fff3c9") if leading_cab else Color("#d84e55"), true, -1.0, antialias)
 
 
-func _draw_car_shell(half_length: float, half_width: float, color: Color, cab_end: int = 0) -> void:
+func _draw_car_shell(half_length: float, half_width: float, color: Color, cab_end: int, target: Node2D) -> void:
 	var key := Vector3(half_length, half_width, cab_end)
 	var mesh: Mesh = _shape_meshes.get(key)
 	if mesh == null:
@@ -858,7 +1058,7 @@ func _draw_car_shell(half_length: float, half_width: float, color: Color, cab_en
 		])
 		_cache_shape(key, polygon)
 		mesh = _shape_meshes.get(key)
-	draw_mesh(mesh, null, Transform2D.IDENTITY, color)
+	target.draw_mesh(mesh, null, Transform2D.IDENTITY, color)
 
 func _night_strength() -> float:
 	return clampf((cos(time_of_day * TAU) + 0.3) / 1.3, 0.0, 1.0)
