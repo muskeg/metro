@@ -1,6 +1,6 @@
 # Metro - repository memory
 
-Last updated: 2026-11-11.
+Last updated: 2026-11-13.
 
 ## Read first
 
@@ -153,10 +153,21 @@ Detailed controls and commands: [docs/guide.md](./docs/guide.md). Decisions and 
 - Connect the endpoints of a line with at least three stations to close a loop.
   Both directions run continuously around it; deleting a station reconnects
   the loop until fewer than three stations remain. Deleting a rail opens it.
-- No Station tool/mode: clicking empty space places a station; clicking rails
+- Desktop has no Station tool/mode: clicking empty space places a station; clicking rails
   or their + inserts one. A translucent ghost previews the exact grid-snapped
   empty-space position, hidden over existing objects/UI or during gestures.
   Insertion updates every shared line, including reversed station order.
+- Touch has deliberate, separate controls: one-finger drag pans, pinch zooms,
+  taps select stations/rails without creating anything. Persistent 48px actions
+  expose Move/Connect/Delete or Insert/Reshape/Delete; Add station appears with
+  no selection. Add/Move/Reshape use Confirm/Cancel, with movement cancellation
+  restoring original incident paths. Connect offers Undo step/Flip bend/Cancel.
+  Train taps still follow; panning restores editing. Never pass emulated mouse
+  events to world editing, even before the first ScreenTouch: Web emits its
+  emulated press first. Genuine mouse input returns to desktop controls.
+  Portrait and landscape rotate with mobile sensors; resizing preserves camera
+  center/zoom. Native/CSS safe areas bound the HUD; settings/help/save sheets
+  scroll vertically when needed. See [docs/guide.md](./docs/guide.md).
 - Deletion requires confirmation in a borderless paper card with consistent
   rectangular body/buttons and action-specific text. Removing a station joins
   its neighbors per serving line, preserving oriented paths and anchors.
@@ -258,10 +269,11 @@ Detailed controls and commands: [docs/guide.md](./docs/guide.md). Decisions and 
   content (max 300px), with 1/2/3/5 columns at <620/620/760/1366px. Same-tab
   click folds controls; switching lines keeps them open. Redundant Line settings
   button removed. Menu/help/layouts use mutually exclusive centered sheets.
-  Settings use a direct content-sized stack, without scrolling. Help may scroll
-  on narrow displays. Top-left launch branding is a 248x60px vector mark/wordmark
+  Settings/help/layouts scroll within the safe viewport height when needed.
+  Top-left launch branding is a 248x60px vector mark/wordmark
   row, stays opaque for 10s, fades smoothly until 30s,
-  then never returns during that launch. Its timer runs independently of pause,
+  then never returns during that launch. Open sheets hide the branding to avoid
+  overlapping controls in short landscape views. Its timer runs independently of pause,
   watch mode and HUD idle opacity; resizing/waking never restores it.
   Collapse/restore use icon-only 44px buttons: outlined bottom panel with a
   down/up arrow and translated tooltips at the identical bottom-right position.
@@ -276,8 +288,10 @@ Detailed controls and commands: [docs/guide.md](./docs/guide.md). Decisions and 
   Phone details scroll vertically, leaving tabs accessible. Line overflow
   scrolls to the selection. See [DESIGN.md](./DESIGN.md) for rationale.
 - macOS/Web display density drives canvas-items scaling, not reduced font sizes.
-  Native startup is 1180 x 740 logical pixels, constrained to usable screen;
-  minimum is 760 x 520 logical pixels. The old 1x rendering on a 2x Retina
+  Desktop startup is 1180 x 740 logical pixels, constrained to usable screen;
+  minimum is 320 x 320 logical pixels to allow portrait resizing. Mobile uses
+  its device window/orientation rather than applying desktop window sizing.
+  The old 1x rendering on a 2x Retina
   screen made text half its intended apparent size.
 - Per-line ColorPicker keeps free hue selection, hex input and presets, with
   RGB/mode/sampler controls hidden to fit small screens. No alpha. Recolor
@@ -634,6 +648,50 @@ godot --headless --path . --export-release "Web" dist/web/index.html
   Windows log-file path if specifying one.
 
 ## Recent work and verification record
+
+### Deliberate mobile editing and rotating portrait/landscape (2026-11-13)
+
+- [main.gd](./scripts/main.gd) separates touch navigation/selection from desktop
+  editing. Persistent context actions and explicit single-station confirmation
+  prevent stray stations. Move cancellation restores incident paths; rail edits
+  reuse existing geometry validation; delete retains confirmation.
+  [world_view.gd](./scripts/render/world_view.gd) highlights touch selections
+  at readable screen-space sizes and hides hover-only handles on touch.
+- [project.godot](./project.godot) uses sensor orientation (both portrait and
+  landscape) and 320px minimum dimensions; native mobile startup no longer
+  applies desktop window sizing. Android scales controls using DPI as needed.
+  `_resize_interface` respects native/CSS safe areas, bounds scrollable sheets,
+  and preserves manual camera center/zoom across rotation. Selecting a station
+  reveals it above the touch panel. Guide/design and EN/FR text are updated.
+- Browser verification exposed Web's emulated mouse press arriving *before*
+  ScreenTouch. `_input` now recognizes emulation without requiring touch mode
+  to be active already; GUI still receives emulated mouse input, world editing
+  never does. The focused regression reproduces this ordering.
+- Passed with `./dist/Godot_v4.7.2-stable_linux.x86_64`:
+  `--headless --path . --editor --import --quit`;
+  `--headless --path . --script res://tests/interface_smoke.gd`;
+  `--path . --script res://tests/interface_smoke.gd --audio-driver Dummy`;
+  `for test in editing localization screensaver idle_render layout; do ./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --script "res://tests/${test}_smoke.gd" || exit; done`.
+  Intentional bad-layout diagnostics occur in layout/
+  screensaver tests; graphical llvmpipe emits its usual unsupported VSync warning.
+  Interface coverage includes first-touch ordering, one/two-finger navigation,
+  confirm/cancel movement/placement/reshaping, rail insertion, route undo/flip,
+  deletion, train following, actual GUI emulated input, and portrait/landscape.
+- Local Web export was exercised in the integrated browser at 390x844 and
+  844x390, with synthetic touch events; no accidental first-tap station after
+  the ordering fix. Touch opens the real menu; it remains usable when rotating
+  with the menu open. A short-landscape branding overlap found in that check
+  is fixed by hiding launch branding while sheets are open.
+- Fresh release exports all succeeded:
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "Windows Desktop" dist/Metro.exe`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "macOS" dist/Metro-macOS.zip`;
+  `./dist/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "Web" dist/web/index.html`.
+  No export errors/warnings. `unzip -t dist/Metro-macOS.zip` verified archive
+  integrity; `./dist/Metro.exe --headless --quit-after 10 --audio-driver Dummy`
+  launched successfully through WSL. `git diff --check` passed.
+- Limitations: no physical Android/iOS sensor/notch test, Mac launch or
+  Gatekeeper check; Android/iOS packages not rebuilt locally. Full long-running
+  simulation suite not run for this UI change.
 
 ### Android release APK signing in Actions (2026-11-11)
 

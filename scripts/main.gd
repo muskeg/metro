@@ -57,6 +57,17 @@ var _touch_world_pending := false
 var _touch_world_interaction_started := false
 var _touch_world_index := -1
 var _touch_pending_position := Vector2.ZERO
+var _touch_mode := false
+var _touch_ui_mouse_sequence := false
+var _touch_action := ""
+var _touch_track_id := -1
+var _touch_edit_position := Vector2.ZERO
+var _touch_panel: PanelContainer
+var _touch_label: Label
+var _touch_actions: GridContainer
+var _touch_buttons: Dictionary[String, Button] = {}
+var _safe_rect := Rect2()
+var _web_safe_insets := Vector4.ZERO
 var _followed_train: Metro = null
 var _screensaver_active := false
 var _screensaver_shot := 0
@@ -153,6 +164,7 @@ var _idle_render_generation := 0
 var _first_connection_completed := false
 var _help_label: Label
 var _navigation_help: Label
+var _touch_help: Label
 var _dispatch_slider: HSlider
 var _dwell_slider: HSlider
 var _velocity_slider: HSlider
@@ -253,11 +265,12 @@ func _load_startup_layout() -> Dictionary:
 
 func _configure_display() -> void:
 	var window := get_window()
+	_touch_mode = OS.has_feature("mobile")
 	window.content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
 	window.content_scale_size = Vector2i.ZERO
 	_update_display_density()
 	window.dpi_changed.connect(_update_display_density)
-	if OS.has_feature("web") or DisplayServer.get_name() == "headless":
+	if OS.has_feature("web") or OS.has_feature("mobile") or DisplayServer.get_name() == "headless":
 		return
 	var usable := DisplayServer.screen_get_usable_rect()
 	var desired := Vector2i(Vector2(1180.0, 740.0) * window.content_scale_factor)
@@ -266,10 +279,32 @@ func _configure_display() -> void:
 
 func _update_display_density() -> void:
 	var scale := maxf(1.0, DisplayServer.screen_get_scale())
+	if OS.has_feature("android"):
+		scale = maxf(scale, DisplayServer.screen_get_dpi() / 160.0)
 	if not is_equal_approx(get_window().content_scale_factor, scale):
 		get_window().content_scale_factor = scale
 	if not OS.has_feature("web") and DisplayServer.get_name() != "headless":
-		get_window().min_size = Vector2i(Vector2(760.0, 520.0) * scale)
+		get_window().min_size = Vector2i(Vector2(320.0, 320.0) * scale)
+	if OS.has_feature("web"):
+		var result: Variant = JavaScriptBridge.eval("""JSON.stringify((() => {
+			const viewport = document.querySelector('meta[name="viewport"]');
+			if (viewport && !viewport.content.includes('viewport-fit')) viewport.content += ', viewport-fit=cover';
+			const probe = document.createElement('div');
+			probe.style.cssText = 'position:fixed;pointer-events:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)';
+			document.body.appendChild(probe);
+			const style = getComputedStyle(probe);
+			const insets = [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft].map(parseFloat);
+			probe.remove();
+			return insets;
+		})())""")
+		if result is String:
+			var insets: Variant = JSON.parse_string(result)
+			if insets is Array and insets.size() == 4:
+				_web_safe_insets = Vector4(insets[0], insets[1], insets[2], insets[3])
+			else:
+				push_warning("Cannot read browser safe-area insets: invalid response.")
+		else:
+			push_warning("Cannot read browser safe-area insets: JavaScript unavailable.")
 
 func _process(delta: float) -> void:
 	if _idle_render_disabled:
@@ -298,7 +333,7 @@ func _process(delta: float) -> void:
 	_update_interaction_overlays()
 	world_view.set_dynamic_state(dispatcher.metros, camera.get_screen_center_position(), camera.zoom, time_of_day, dispatcher.visits, 0.0 if paused else delta)
 	_update_connection_guidance()
-	if _connect_drag_source_id < 0 and _dragging_station_id < 0 and _editing_track_id < 0:
+	if not _touch_mode and _connect_drag_source_id < 0 and _dragging_station_id < 0 and _editing_track_id < 0:
 		if _pointer_inside and not _ui_hidden and not _any_sheet_open() and not _space_down and get_viewport().gui_get_hovered_control() == null and not _panning:
 			_update_hover(world_view.get_global_transform_with_canvas().affine_inverse() * _pointer_position)
 		else:
@@ -421,9 +456,26 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventScreenDrag:
 		_handle_screen_drag(event as InputEventScreenDrag)
 		return
+	if event is InputEventMouse and event.device == InputEvent.DEVICE_ID_EMULATION:
+		if not _touch_mode:
+			_cancel_gesture()
+			_touch_mode = true
+			_clear_hover()
+			_resize_interface.call_deferred()
+		var ui_sequence := _touch_ui_mouse_sequence
+		if event is InputEventMouseButton and not event.pressed:
+			_touch_ui_mouse_sequence = false
+		if not ui_sequence and not _screen_point_over_ui(event.position):
+			get_viewport().set_input_as_handled()
+		return
 	if (_touch_navigation_sequence or _touch_world_sequence) and event is InputEventMouse:
 		get_viewport().set_input_as_handled()
 		return
+	if event is InputEventMouse and _touch_mode:
+		_cancel_gesture()
+		_touch_mode = false
+		_touch_track_id = -1
+		_resize_interface()
 	if event is InputEventKey and event.pressed and not event.echo and _ui_hidden and event.keycode in [KEY_H, KEY_ESCAPE]:
 		_toggle_ui()
 		get_viewport().set_input_as_handled()
@@ -493,9 +545,17 @@ func _event_world_position(event: InputEventMouse) -> Vector2:
 	return world_view.get_global_transform_with_canvas().affine_inverse() * event.position
 
 func _handle_screen_touch(event: InputEventScreenTouch) -> void:
+	var world_event := _touch_world_sequence and event.index == _touch_world_index
 	if event.pressed:
+		if _touch_points.is_empty():
+			_touch_ui_mouse_sequence = _screen_point_over_ui(event.position)
+		if not _touch_mode:
+			_cancel_gesture()
+			_touch_mode = true
+			_clear_hover()
+			_resize_interface.call_deferred()
 		_touch_points[event.index] = event.position
-		if _touch_points.size() == 1 and not _screen_point_over_ui(event.position):
+		if _touch_points.size() == 1 and not _screen_point_over_ui(event.position) and not _quit_dialog.visible and not _delete_dialog.visible and not _layout_dialog.visible:
 			_touch_world_sequence = true
 			_touch_world_pending = true
 			_touch_world_interaction_started = false
@@ -516,17 +576,21 @@ func _handle_screen_touch(event: InputEventScreenTouch) -> void:
 				_touch_world_pending = false
 				_touch_world_interaction_started = false
 				_touch_world_index = -1
-				_cancel_gesture()
+				if not _touch_action.is_empty():
+					_cancel_gesture()
 				_stop_following()
 	elif _touch_points.has(event.index):
 		_touch_points.erase(event.index)
 		if _touch_world_sequence and event.index == _touch_world_index:
 			var world_position := _screen_to_world_position(event.position)
-			if _touch_world_pending:
-				_begin_world_interaction(_screen_to_world_position(_touch_pending_position))
-				_touch_world_interaction_started = true
-			if _touch_world_interaction_started:
-				_end_world_interaction(world_position)
+			if event.canceled:
+				_cancel_gesture()
+			elif not _screen_point_over_ui(event.position):
+				if _touch_world_pending:
+					_touch_tap(world_position)
+				elif _touch_world_interaction_started:
+					_update_touch_world_interaction(world_position)
+			_panning = false
 			_touch_world_sequence = false
 			_touch_world_pending = false
 			_touch_world_interaction_started = false
@@ -539,19 +603,24 @@ func _handle_screen_touch(event: InputEventScreenTouch) -> void:
 				_touch_navigation_sequence = false
 				_touch_pair = Vector2i(-1, -1)
 				_touch_previous_distance = 0.0
-	if _touch_navigation_sequence:
+	if _touch_navigation_sequence or _touch_world_sequence or world_event:
 		get_viewport().set_input_as_handled()
 
 func _handle_screen_drag(event: InputEventScreenDrag) -> void:
 	if not _touch_points.has(event.index):
 		return
+	var previous: Vector2 = _touch_points[event.index]
 	_touch_points[event.index] = event.position
 	if _touch_world_sequence and event.index == _touch_world_index:
 		if _touch_world_pending and event.position.distance_to(_touch_pending_position) >= 8.0:
-			_begin_world_interaction(_screen_to_world_position(_touch_pending_position))
 			_touch_world_pending = false
-			_touch_world_interaction_started = true
-		if _touch_world_interaction_started:
+			_touch_world_interaction_started = not _touch_action.is_empty() and _touch_action != "connect"
+			_panning = not _touch_world_interaction_started
+			if _panning:
+				_stop_following()
+		if _panning:
+			camera.position -= (event.position - previous) / camera.zoom
+		elif _touch_world_interaction_started and not _screen_point_over_ui(event.position):
 			_update_touch_world_interaction(_screen_to_world_position(event.position))
 	if _touch_navigation_active and (_touch_pair.x == event.index or _touch_pair.y == event.index):
 		var first_position: Vector2 = _touch_points[_touch_pair.x]
@@ -565,18 +634,181 @@ func _handle_screen_drag(event: InputEventScreenDrag) -> void:
 			_zoom_camera_at(distance / _touch_previous_distance, center)
 		_touch_previous_center = center
 		_touch_previous_distance = distance
-	if _touch_navigation_sequence:
+	if _touch_navigation_sequence or _touch_world_sequence:
 		get_viewport().set_input_as_handled()
 
 func _update_touch_world_interaction(world_position: Vector2) -> void:
-	if _editing_track_id >= 0:
+	_touch_edit_position = world_position
+	if _touch_action == "add":
+		world_view.station_preview_position = _station_placement_position(world_position)
+		world_view.station_preview_visible = true
+	elif _editing_track_id >= 0:
 		_update_track_edit(world_position - _edit_pointer_offset)
 	elif _dragging_station_id >= 0:
 		_move_station_to(_dragging_station_id, world_position)
-	elif _connect_drag_source_id >= 0:
-		world_view.hover_pointer = world_position
-		if not _route_click_mode or not _near_handle(world_position, world_view.route_flip_position()):
-			_extend_stroke(world_position)
+
+func _touch_tap(position: Vector2) -> void:
+	if _any_sheet_open():
+		_close_sheets()
+		return
+	if _ui_hidden or _followed_train != null:
+		var train := _train_near(position)
+		if train != null:
+			_follow_train(train)
+		return
+	if _touch_action == "connect":
+		var destination := _station_near(position, 24.0 / camera.zoom.x)
+		if destination != null and destination.id != _connect_drag_source_id:
+			_extend_stroke(destination.position)
+			_end_world_interaction(destination.position)
+		else:
+			_pin_route_bend(position)
+	elif not _touch_action.is_empty():
+		_update_touch_world_interaction(position)
+	else:
+		_clear_hover()
+		var station := _station_near(position, 24.0 / camera.zoom.x)
+		selected_station_id = station.id if station != null else -1
+		_touch_track_id = -1
+		if station == null:
+			var train := _train_near(position)
+			if train != null:
+				_follow_train(train)
+				return
+			var best_distance := 24.0 / camera.zoom.x
+			for track: Track in graph.tracks:
+				var cache: Dictionary = _hover_track_cache.get(track.id, {})
+				var points: PackedVector2Array = cache.get("points", PackedVector2Array())
+				if points.is_empty():
+					continue
+				var distance := TrackGeometry.closest_point(points, position).distance_to(position)
+				if distance < best_distance:
+					best_distance = distance
+					_touch_track_id = track.id
+			if _touch_track_id >= 0:
+				world_view.set_rail_anchor(TrackGeometry.anchors(graph, graph.tracks[_touch_track_id]), position)
+	_resize_interface()
+	_update_interaction_overlays()
+	if selected_station_id >= 0:
+		_reveal_touch_selection.call_deferred()
+
+func _start_touch_action(action: String) -> void:
+	_close_sheets()
+	_cancel_gesture()
+	_touch_action = action
+	_touch_edit_position = _screen_to_world_position(Vector2(_safe_rect.get_center().x, _safe_rect.position.y + _safe_rect.size.y * 0.35))
+	if action == "add":
+		selected_station_id = -1
+		_touch_track_id = -1
+		_update_touch_world_interaction(_touch_edit_position)
+	elif action == "move":
+		_dragging_station_id = selected_station_id
+		_drag_start_position = graph.stations[selected_station_id].position
+		_touch_edit_position = _drag_start_position
+		for track: Track in graph.tracks:
+			if track.a == selected_station_id or track.b == selected_station_id:
+				_drag_start_paths[track.id] = TrackGeometry.anchors(graph, track)
+	elif action == "connect":
+		_connect_drag_source_id = selected_station_id
+		_route_pins = PackedVector2Array([graph.stations[selected_station_id].position])
+		_route_diagonal_first = true
+		_route_click_mode = true
+		_route_press_position = _route_pins[0]
+		world_view.route_active = true
+		world_view.route_source_id = selected_station_id
+		_extend_stroke(_route_pins[0])
+	elif action == "reshape":
+		_editing_track_id = _touch_track_id
+		_editing_bend_index = -1
+		_editing_segment_index = world_view.rail_segment_index
+		_edit_original = TrackGeometry.anchors(graph, graph.tracks[_touch_track_id])
+		for index in range(1, _edit_original.size() - 1):
+			if _edit_original[index].distance_to(world_view.rail_anchor) <= 24.0 / camera.zoom.x:
+				_editing_bend_index = index
+				break
+		_edit_pointer_offset = Vector2.ZERO
+		_touch_edit_position = world_view.rail_anchor
+		world_view.route_active = true
+		_update_track_edit(_touch_edit_position)
+	_resize_interface()
+	_reveal_touch_selection.call_deferred()
+
+func _confirm_touch_edit() -> void:
+	if _touch_action == "add":
+		var count := graph.stations.size()
+		_place_station(_touch_edit_position)
+		if graph.stations.size() == count:
+			return
+	elif _touch_action == "move":
+		_dragging_station_id = -1
+		_drag_start_paths.clear()
+	elif _touch_action == "reshape":
+		var error := _track_edit_error()
+		if not error.is_empty():
+			_set_status(error)
+			return
+		_end_world_interaction(_touch_edit_position)
+	_cancel_gesture()
+	_resize_interface()
+
+func _cancel_touch_edit() -> void:
+	_cancel_gesture()
+	_resize_interface()
+
+func _clear_touch_selection() -> void:
+	_cancel_gesture()
+	selected_station_id = -1
+	_touch_track_id = -1
+	_resize_interface()
+
+func _delete_touch_selection() -> void:
+	_request_delete(selected_station_id, _touch_track_id)
+
+func _insert_touch_station() -> void:
+	_insert_station(_touch_track_id, world_view.rail_anchor)
+	_touch_track_id = -1
+	_resize_interface()
+
+func _undo_touch_route() -> void:
+	if not _route_history.is_empty():
+		_route_pins = _route_history.pop_back()
+		_extend_stroke(_route_pins[_route_pins.size() - 1])
+
+func _refresh_touch_controls() -> void:
+	world_view.touch_controls = _touch_mode
+	_touch_help.visible = _touch_mode
+	_help_label.visible = not _touch_mode
+	_navigation_help.visible = not _touch_mode
+	_touch_panel.visible = _touch_mode and not _ui_hidden and _followed_train == null and not _any_sheet_open()
+	var actions: Array[String] = []
+	var hint := "Un doigt déplace la vue. Touchez une station ou un rail pour le sélectionner."
+	if _touch_action == "connect":
+		hint = "Touchez la destination ou la carte pour fixer un coude."
+		actions.assign(["undo", "flip", "cancel"])
+	elif not _touch_action.is_empty():
+		hint = "Touchez ou glissez sur la carte, puis confirmez."
+		actions.assign(["confirm", "cancel"])
+	elif selected_station_id >= 0:
+		actions.assign(["move", "connect", "delete", "close"])
+	elif _touch_track_id >= 0:
+		actions.assign(["insert", "reshape", "delete", "close"])
+	else:
+		actions.assign(["add"])
+	_touch_label.size.x = minf(520.0, _safe_rect.size.x - 32.0) - _touch_panel.get_theme_stylebox("panel").get_minimum_size().x
+	_touch_label.text = hint
+	for key: String in _touch_buttons:
+		_touch_buttons[key].visible = actions.has(key)
+	_touch_actions.columns = mini(actions.size(), 2 if _safe_rect.size.x < 460.0 else 4)
+
+func _reveal_touch_selection() -> void:
+	if selected_station_id < 0:
+		return
+	var position := graph.stations[selected_station_id].position
+	var screen := world_view.get_global_transform_with_canvas() * position
+	var visible := Rect2(_safe_rect.position + Vector2(24, 76), Vector2(_safe_rect.size.x - 48, _touch_panel.position.y - _safe_rect.position.y - 100))
+	camera.position += (screen - screen.clamp(visible.position, visible.end)) / camera.zoom
+	camera.reset_smoothing()
+	camera.force_update_scroll()
 
 func _screen_to_world_position(screen_position: Vector2) -> Vector2:
 	return world_view.get_global_transform_with_canvas().affine_inverse() * screen_position
@@ -599,6 +831,9 @@ func _control_tree_contains_point(node: Node, screen_position: Vector2) -> bool:
 	return false
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouse and event.device == InputEvent.DEVICE_ID_EMULATION:
+		get_viewport().set_input_as_handled()
+		return
 	if event is InputEventKey:
 		var key_event := event as InputEventKey
 		if key_event.keycode == KEY_SPACE:
@@ -761,6 +996,37 @@ func _create_interface() -> void:
 		button.size_flags_horizontal = Control.SIZE_SHRINK_END
 		_zoom_controls.add_child(button)
 
+	_touch_panel = _make_sheet(ui_root)
+	_touch_panel.minimum_size_changed.connect(_resize_interface.call_deferred)
+	var touch_stack := VBoxContainer.new()
+	_touch_panel.add_child(touch_stack)
+	_touch_label = _label("", 16, UI_MUTED)
+	_touch_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	touch_stack.add_child(_touch_label)
+	_touch_actions = GridContainer.new()
+	_touch_actions.add_theme_constant_override("h_separation", 8)
+	_touch_actions.add_theme_constant_override("v_separation", 8)
+	touch_stack.add_child(_touch_actions)
+	var touch_definitions := [
+		["add", "Ajouter une station", _start_touch_action.bind("add")],
+		["move", "Déplacer", _start_touch_action.bind("move")],
+		["connect", "Relier", _start_touch_action.bind("connect")],
+		["insert", "Insérer", _insert_touch_station],
+		["reshape", "Remodeler", _start_touch_action.bind("reshape")],
+		["delete", "Supprimer", _delete_touch_selection],
+		["close", "Fermer", _clear_touch_selection],
+		["confirm", "Confirmer", _confirm_touch_edit],
+		["undo", "Annuler l'étape", _undo_touch_route],
+		["flip", "Inverser", _flip_route_posture],
+		["cancel", "Annuler", _cancel_touch_edit]
+	]
+	for definition: Array in touch_definitions:
+		var button := _button(definition[1], definition[2])
+		button.custom_minimum_size = Vector2(48, 48)
+		button.hide()
+		_touch_actions.add_child(button)
+		_touch_buttons[definition[0]] = button
+
 	var details_stack := VBoxContainer.new()
 	details_stack.add_theme_constant_override("separation", 12)
 	_line_popup.add_child(details_stack)
@@ -845,24 +1111,26 @@ func _create_interface() -> void:
 	_navigation_help = _label("Vue : molette/pincer pour zoomer ; deux doigts ou Espace + glisser pour déplacer\nÉchap / clic droit : annuler", 16, UI_MUTED)
 	_navigation_help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	help_stack.add_child(_navigation_help)
+	_touch_help = _label("Un doigt : déplacer la vue ; pincer : zoomer.\nTouchez une station ou un rail, puis choisissez une action.\nAjouter une station : positionner, puis Confirmer.\nRelier : toucher la destination ou fixer des coudes ; Annuler l'étape et Inverser ajustent le tracé.", 16, UI_MUTED)
+	_touch_help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	help_stack.add_child(_touch_help)
 	var watch_help := _label("H : masquer · K : veille · Échap : revenir", 16, UI_MUTED)
 	watch_help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	help_stack.add_child(watch_help)
 
 	_settings_popup = _make_sheet(ui_root)
-	var settings_stack := _sheet_stack(_settings_popup, false)
+	var settings_stack := _sheet_stack(_settings_popup)
 	_settings_popup.minimum_size_changed.connect(_resize_interface.call_deferred)
-	var settings_heading := _sheet_heading(settings_stack, "RÉGLAGES")
+	_sheet_heading(settings_stack, "RÉGLAGES")
 	_screensaver_button = _button("Veille (K)", _start_screensaver)
 	_screensaver_button.tooltip_text = "Vues automatiques en plein écran ; Échap ou clic/toucher pour revenir"
 	_screensaver_button.size_flags_horizontal = Control.SIZE_SHRINK_END
-	settings_heading.add_child(_screensaver_button)
-	settings_heading.move_child(_screensaver_button, 1)
 	_settings_grid = GridContainer.new()
 	_settings_grid.columns = 2
 	_settings_grid.add_theme_constant_override("h_separation", 28)
 	_settings_grid.add_theme_constant_override("v_separation", 16)
 	settings_stack.add_child(_settings_grid)
+	_settings_grid.add_child(_screensaver_button)
 	var language_cell := VBoxContainer.new()
 	language_cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_settings_grid.add_child(language_cell)
@@ -888,7 +1156,7 @@ func _create_interface() -> void:
 	_settings_grid.add_child(_hide_ui_button)
 	if not OS.has_feature("web"):
 		_settings_grid.add_child(_button("Quitter le jeu", _confirm_quit))
-	var layout_controls := HBoxContainer.new()
+	var layout_controls := HFlowContainer.new()
 	layout_controls.add_theme_constant_override("separation", 8)
 	_settings_grid.add_child(layout_controls)
 	var save_layout_button := _button("Enregistrer", _open_layouts.bind(true))
@@ -911,7 +1179,7 @@ func _create_interface() -> void:
 	transfer_controls.add_child(_import_layout_button)
 
 	_layout_popup = _make_sheet(ui_root)
-	var layout_stack := _sheet_stack(_layout_popup, false)
+	var layout_stack := _sheet_stack(_layout_popup)
 	_sheet_heading(layout_stack, "RÉSEAUX")
 	_layout_heading = _label("Nom du réseau", 16, UI_MUTED)
 	layout_stack.add_child(_layout_heading)
@@ -958,39 +1226,69 @@ func _create_interface() -> void:
 
 func _on_viewport_resized() -> void:
 	_wake_render_loop()
+	if _touch_world_sequence or _touch_navigation_sequence:
+		_cancel_gesture()
+		_touch_points.clear()
+		_touch_world_sequence = false
+		_touch_navigation_sequence = false
+		_touch_navigation_active = false
+		_touch_world_pending = false
+		_touch_world_interaction_started = false
+		_touch_world_index = -1
+		_panning = false
 	if OS.has_feature("web"):
 		_update_display_density()
 	_resize_interface()
 
+func _interface_safe_rect() -> Rect2:
+	var bounds := get_viewport_rect()
+	if OS.has_feature("web"):
+		bounds.position += Vector2(_web_safe_insets.w, _web_safe_insets.x)
+		bounds.size -= Vector2(_web_safe_insets.w + _web_safe_insets.y, _web_safe_insets.x + _web_safe_insets.z)
+	if OS.has_feature("mobile") and not OS.has_feature("web"):
+		var safe := DisplayServer.get_display_safe_area()
+		if safe.has_area():
+			var scale := get_window().content_scale_factor
+			bounds = bounds.intersection(Rect2(Vector2(safe.position - get_window().position) / scale, Vector2(safe.size) / scale))
+	return bounds
+
 func _resize_interface() -> void:
 	var viewport_size := get_viewport_rect().size
-	var width := maxf(0.0, viewport_size.x - 32.0)
-	var narrow := viewport_size.x < 620.0
-	_brand.visible = not narrow and not _ui_hidden and _title_seconds < 30.0
-	_brand.position = Vector2(16.0, 16.0)
+	_safe_rect = _interface_safe_rect()
+	var width := maxf(0.0, _safe_rect.size.x - 32.0)
+	var narrow := _safe_rect.size.x < 620.0
+	_brand.visible = not narrow and not _ui_hidden and not _any_sheet_open() and _title_seconds < 30.0
+	_brand.position = _safe_rect.position + Vector2(16.0, 16.0)
 	_brand.size = _brand.get_combined_minimum_size()
-	_toolbar.position = Vector2(16.0, 16.0)
+	_toolbar.position = _safe_rect.position + Vector2(16.0, 16.0)
 	_toolbar.size = Vector2(width, 44.0)
 	_line_grid.columns = 1 if narrow else (5 if viewport_size.x >= 1366.0 else (3 if viewport_size.x >= 760.0 else 2))
 	_settings_grid.columns = 1 if narrow else 2
 	_settings_grid.add_theme_constant_override("v_separation", 8 if narrow else 16)
 	var desired_height := minf(300.0, _line_stack.get_combined_minimum_size().y + _close_line_button.get_combined_minimum_size().y + 20.0)
-	var details_height := minf(desired_height, maxf(0.0, viewport_size.y - 148.0)) if _line_popup.visible else 0.0
+	var details_height := minf(desired_height, maxf(0.0, _safe_rect.size.y - 148.0)) if _line_popup.visible else 0.0
 	_line_popup.custom_minimum_size.y = details_height
-	_main_panel.size = Vector2(viewport_size.x, 60.0 + (details_height + 8.0 if _line_popup.visible else 0.0))
-	_main_panel.position = Vector2(0.0, viewport_size.y - _main_panel.size.y)
+	_main_panel.size = Vector2(_safe_rect.size.x, 60.0 + (details_height + 8.0 if _line_popup.visible else 0.0))
+	_main_panel.position = Vector2(_safe_rect.position.x, _safe_rect.end.y - _main_panel.size.y)
+	_refresh_touch_controls()
+	var dock_top := _safe_rect.end.y - 60.0 if _dock_collapsed else _main_panel.position.y
+	_touch_panel.size = Vector2(minf(520.0, width), 0.0)
+	_touch_panel.position = Vector2(_safe_rect.get_center().x - _touch_panel.size.x * 0.5, dock_top - _touch_panel.size.y - 8.0)
 	_zoom_controls.size = _zoom_controls.get_combined_minimum_size()
-	var zoom_bottom := viewport_size.y - 60.0 if _dock_collapsed else _main_panel.position.y
-	_zoom_controls.position = Vector2(viewport_size.x - _zoom_controls.size.x - 16.0, zoom_bottom - _zoom_controls.size.y - 4.0)
+	var zoom_bottom := _touch_panel.position.y if _touch_panel.visible else dock_top
+	_zoom_controls.position = Vector2(_safe_rect.end.x - _zoom_controls.size.x - 16.0, zoom_bottom - _zoom_controls.size.y - 4.0)
 	for handle: Button in [_collapsed_dock_button, _restore_ui_button]:
 		handle.size = handle.get_combined_minimum_size()
-		var x := viewport_size.x - handle.size.x - 16.0 if handle == _collapsed_dock_button else (viewport_size.x - handle.size.x) * 0.5
-		handle.position = Vector2(x, viewport_size.y - handle.size.y - 8.0)
+		var x := _safe_rect.end.x - handle.size.x - 16.0 if handle == _collapsed_dock_button else _safe_rect.get_center().x - handle.size.x * 0.5
+		handle.position = Vector2(x, _safe_rect.end.y - handle.size.y - 8.0)
 	var sheet_width := minf(640.0, width)
 	for sheet: PanelContainer in [_settings_popup, _help_popup, _layout_popup]:
-		var sheet_height := sheet.get_combined_minimum_size().y if sheet != _help_popup else minf(340.0, maxf(0.0, viewport_size.y - 32.0))
+		var scroll := sheet.get_child(0) as ScrollContainer
+		var content := scroll.get_child(0) as Control
+		var desired := content.get_combined_minimum_size().y + sheet.get_theme_stylebox("panel").get_minimum_size().y
+		var sheet_height := minf(340.0 if sheet == _help_popup else desired, maxf(0.0, _safe_rect.size.y - 32.0))
 		sheet.size = Vector2(sheet_width, sheet_height)
-		sheet.position = (viewport_size - sheet.size) * 0.5
+		sheet.position = _safe_rect.get_center() - sheet.size * 0.5
 	_resize_notification()
 
 func _update_title_fade(delta: float) -> void:
@@ -1004,13 +1302,13 @@ func _resize_notification() -> void:
 	var font_size := _panel_status.get_theme_font_size("normal_font_size")
 	var style := _status_panel.get_theme_stylebox("panel")
 	var margins := style.get_minimum_size()
-	var max_width := minf(520.0, get_viewport_rect().size.x - 32.0) - margins.x
+	var max_width := minf(520.0, _safe_rect.size.x - 32.0) - margins.x
 	var text_width := minf(font.get_string_size(_panel_status.text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x, max_width)
 	var text_size := font.get_multiline_string_size(_panel_status.text, HORIZONTAL_ALIGNMENT_LEFT, maxf(1.0, text_width), font_size)
 	_panel_status.position = Vector2(style.get_content_margin(SIDE_LEFT), style.get_content_margin(SIDE_TOP))
 	_panel_status.size = Vector2(text_width, text_size.y)
 	_status_panel.size = Vector2(text_width, text_size.y) + margins
-	_status_panel.position = Vector2((get_viewport_rect().size.x - _status_panel.size.x) * 0.5, 76.0)
+	_status_panel.position = Vector2(_safe_rect.get_center().x - _status_panel.size.x * 0.5, _safe_rect.position.y + 76.0)
 
 func _toggle_dock() -> void:
 	_wake_interface()
@@ -1025,7 +1323,7 @@ func _wake_interface() -> void:
 	_ui_root.modulate.a = 1.0
 
 func _update_ui_idle(delta: float) -> void:
-	if _ui_hidden or _any_sheet_open() or _quit_dialog.visible or _delete_dialog.visible or _layout_dialog.visible or _line_color_picker.get_popup().visible or _connect_drag_source_id >= 0 or _dragging_station_id >= 0 or _editing_track_id >= 0 or _panning or _space_down:
+	if _ui_hidden or _any_sheet_open() or (_touch_mode and (selected_station_id >= 0 or _touch_track_id >= 0 or not _touch_action.is_empty())) or _quit_dialog.visible or _delete_dialog.visible or _layout_dialog.visible or _line_color_picker.get_popup().visible or _connect_drag_source_id >= 0 or _dragging_station_id >= 0 or _editing_track_id >= 0 or _panning or _space_down:
 		_wake_interface()
 		return
 	var fade_delta := maxf(0.0, _ui_idle_seconds + delta - UI_IDLE_SECONDS) - maxf(0.0, _ui_idle_seconds - UI_IDLE_SECONDS)
@@ -1366,6 +1664,7 @@ func _select_line(line_id: int) -> void:
 	_line_color_picker.get_popup().hide()
 	active_line = lines[line_id]
 	selected_station_id = -1
+	_touch_track_id = -1
 	_refresh_line_selector()
 	_update_configuration_ui()
 
@@ -1618,6 +1917,7 @@ func _end_world_interaction(world_position: Vector2) -> void:
 			_route_click_mode = true
 
 func _cancel_gesture() -> void:
+	_touch_action = ""
 	if _dragging_station_id >= 0:
 		graph.stations[_dragging_station_id].position = _drag_start_position
 		for track_id: int in _drag_start_paths:
@@ -1644,6 +1944,8 @@ func _cancel_gesture() -> void:
 		world_view.reshape_anchors.clear()
 		world_view.valid_connection_targets.clear()
 		world_view.set_stroke_preview(_drawn_points, Color.WHITE)
+	if _touch_panel != null:
+		_resize_interface.call_deferred()
 
 func _extend_stroke(world_position: Vector2) -> void:
 	if _route_pins.is_empty():
@@ -1870,6 +2172,7 @@ func _stop_following() -> void:
 	if _followed_train != null:
 		_followed_train = null
 		_update_interaction_overlays()
+		_resize_interface()
 
 func _follow_train(train: Metro) -> void:
 	_cancel_gesture()
@@ -1879,6 +2182,7 @@ func _follow_train(train: Metro) -> void:
 	_update_follow_camera(train)
 	_update_interaction_overlays()
 	_update_connection_guidance()
+	_resize_interface()
 
 func _train_render_position(train: Metro) -> Vector2:
 	var route := TrackGeometry.route_for_direction(dispatcher.routes[train.line_id], train.travel_direction)
@@ -1895,6 +2199,7 @@ func _update_interaction_overlays() -> void:
 	var editing_visible := not _ui_hidden and _followed_train == null
 	world_view.interaction_overlays_visible = editing_visible
 	world_view.selected_station_id = selected_station_id if editing_visible else -1
+	world_view.selected_track_id = _touch_track_id if editing_visible and _touch_mode else -1
 	if not editing_visible:
 		_clear_hover()
 	world_view.queue_redraw()
@@ -2105,6 +2410,7 @@ func _apply_delete() -> void:
 	_delete_track_id = -1
 	_delete_line_id = -1
 	selected_station_id = -1
+	_touch_track_id = -1
 	_clear_hover()
 	dispatcher.lines.assign(lines)
 	_refresh_network()
@@ -2434,6 +2740,7 @@ func _replace_layout(restored: Dictionary, fit_view: bool = false) -> void:
 	_delete_track_id = -1
 	_delete_line_id = -1
 	selected_station_id = -1
+	_touch_track_id = -1
 	_clear_hover()
 	graph = restored["graph"]
 	lines.assign(restored["lines"])
@@ -2477,7 +2784,9 @@ func _fit_layout_to_window() -> void:
 		return
 	var bounds := _layout_bounds()
 	var viewport_size := get_viewport_rect().size
-	var usable := Rect2(Vector2(32, 80), (viewport_size - Vector2(64, 192)).max(Vector2.ONE))
+	var usable := Rect2(_safe_rect.position + Vector2(32, 80), (_safe_rect.size - Vector2(64, 192)).max(Vector2.ONE))
+	if _touch_mode and _touch_panel.visible:
+		usable.size.y = maxf(1.0, _touch_panel.position.y - usable.position.y - 56.0)
 	camera.zoom = Vector2.ONE * minf(6.0, minf(usable.size.x / bounds.size.x, usable.size.y / bounds.size.y))
 	camera.position = bounds.get_center() - (usable.get_center() - viewport_size * 0.5) / camera.zoom
 	_minimum_camera_zoom = minf(0.08, camera.zoom.x)

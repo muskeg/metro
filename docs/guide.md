@@ -205,8 +205,8 @@ n'est pas persistant ; cette détection ne garantit pas sa conservation.
 Les commandes restent lisibles sur écran Retina et dans le navigateur.
 Les réglages et l'aide s'ouvrent à la demande ; **Close / Échap** les referme
 sans interrompre le réseau.
-Ces panneaux sont centrés sur l'écran ; tous les réglages restent visibles
-sans barre de défilement. Le titre Metro commence à disparaître après
+Ces panneaux sont centrés dans la zone utilisable de l'écran ; leur contenu
+défile si la hauteur disponible ne suffit pas. Le titre Metro commence à disparaître après
 10 secondes et s'efface complètement à 30 secondes, sans revenir.
 Son grand format évoque un titre d'ouverture plutôt qu'un élément du menu.
 Les lignes occupent un rail fin sur toute la largeur du bas. Leurs réglages
@@ -225,6 +225,39 @@ les commandes s'estompent doucement. Un mouvement ou un toucher les réveille ;
 les menus ouverts et les gestes en cours restent visibles.
 
 ## Commandes
+
+### Écran tactile et mode portrait
+
+Le jeu accepte le portrait et le paysage, avec rotation automatique sur mobile.
+Les commandes évitent les encoches et la zone du geste d'accueil. Tourner
+l'appareil conserve le centre et le zoom de la carte, sans ajustement automatique.
+
+- **Glisser un doigt** déplace la vue ; **pincer à deux doigts** zoome.
+  Ni un déplacement de la vue ni un toucher sur un espace libre ne crée de station.
+- **Toucher une station** la sélectionne et affiche des actions persistantes :
+  **Déplacer**, **Relier**, **Supprimer** et **Fermer**. Les cibles tactiles
+  restent larges même quand la carte est dézoomée.
+- **Déplacer** : toucher ou glisser vers la nouvelle position, puis
+  **Confirmer**. **Annuler** restaure la station et ses voies.
+- **Ajouter une station**, disponible quand rien n'est sélectionné :
+  positionner l'aperçu par toucher/glissement, puis **Confirmer**.
+  Une seule station est ajoutée ; le placement se termine automatiquement.
+- **Relier** : toucher la station d'arrivée, ou toucher la carte pour fixer
+  des coudes avant de terminer sur une station. **Annuler l'étape** retire
+  le dernier coude, **Inverser** change sa posture et **Annuler** abandonne.
+  Un glissement continue de déplacer la vue pendant le tracé.
+- **Toucher un rail** le sélectionne sans ajouter de station. **Insérer**
+  ajoute une station à l'endroit choisi ; **Remodeler** prévisualise un
+  changement à confirmer ou annuler.
+- **Supprimer** demande toujours confirmation. Toucher ailleurs ou **Fermer**
+  quitte la sélection. Un pincement abandonne un placement/déplacement/tracé
+  en cours avant de naviguer ; un toucher interrompu par le système est annulé.
+
+Les onglets des lignes défilent horizontalement ; menus et réglages restent
+accessibles en portrait grâce au défilement vertical. Les commandes à la souris
+ci-dessous sont inchangées.
+
+### Souris et clavier
 
 | Action | Geste |
 | --- | --- |

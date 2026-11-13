@@ -28,6 +28,8 @@ var lines: Array[TransitLine] = []
 var metros: Array[Metro] = []
 var station_visits: Array[StationVisit] = []
 var selected_station_id: int = -1
+var selected_track_id := -1
+var touch_controls := false
 var hovered_station_id: int = -1
 var hovered_track_id: int = -1
 var hovered_bend_index: int = -1
@@ -251,7 +253,10 @@ func _draw() -> void:
 	for station: Station in graph.stations:
 		_draw_network_station(station)
 		if interaction_overlays_visible and station.id == selected_station_id:
-			draw_arc(station.position, station_radius(station) + 3.0, 0.0, TAU, 40, Color("#f9c27b"), 1.5, true)
+			var radius := maxf(station_radius(station) + 3.0, 20.0 / view_zoom.x) if touch_controls else station_radius(station) + 3.0
+			draw_arc(station.position, radius, 0.0, TAU, 40, Color("#f9c27b"), 1.5 / view_zoom.x if touch_controls else 1.5, true)
+	if interaction_overlays_visible and selected_track_id >= 0 and selected_track_id < graph.tracks.size():
+		draw_polyline(TrackGeometry.sample(graph, graph.tracks[selected_track_id]), Color("#f9c27b"), 2.0 / view_zoom.x, true)
 	if interaction_overlays_visible and _preview.size() > 1:
 		draw_polyline(_preview, _preview_color, CORRIDOR_WIDTH, view_zoom.x < 1.5)
 		for offset: float in [-TrackGeometry.LANE_OFFSET, TrackGeometry.LANE_OFFSET]:
@@ -654,8 +659,9 @@ func _draw_gizmos() -> void:
 			draw_arc(station.position, maxf(station_radius(station) + 5.0, 17.0 * scale), 0.0, TAU, 40, Color(accent, 0.5), 1.5 * scale, true)
 		if route_source_id >= 0 and route_source_id < graph.stations.size():
 			_draw_network_station(graph.stations[route_source_id])
-			_draw_handle(route_flip_position(), ink, "swap", scale)
-			if hover_pointer.distance_to(route_flip_position()) <= 11.0 * scale:
+			if not touch_controls:
+				_draw_handle(route_flip_position(), ink, "swap", scale)
+			if not touch_controls and hover_pointer.distance_to(route_flip_position()) <= 11.0 * scale:
 				_draw_caption(route_flip_position() + Vector2(-12.0, 28.0) * scale, "Inverser le coude", scale)
 		for pin: Vector2 in route_pins:
 			_draw_handle(pin, ink, "diamond", scale)
@@ -678,6 +684,8 @@ func _draw_gizmos() -> void:
 		if not feedback.is_empty() and _preview.size() > 1:
 			var anchor := route_pins[0] if route_source_id < 0 and not route_pins.is_empty() else _preview[_preview.size() - 1]
 			_draw_caption(anchor + Vector2(32.0, 28.0) * scale, feedback, scale)
+		return
+	if touch_controls:
 		return
 	if connection_hint_station_id >= 0 and connection_hint_station_id < graph.stations.size() and hovered_station_id != connection_hint_station_id:
 		var station := graph.stations[connection_hint_station_id]

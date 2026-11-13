@@ -14,6 +14,8 @@ func _run() -> void:
 	await _test_quiet_guidance()
 	await _test_interchange_input()
 	await _test_large_map_navigation()
+	await _test_touch_editing()
+	await _test_touch_routes()
 	await _test_line_deletion()
 	var main: Node = load("res://scenes/main.tscn").instantiate()
 	main.set("startup_layout_enabled", false)
@@ -328,7 +330,7 @@ func _test_large_map_navigation() -> void:
 	_check(graph.stations.size() == station_count, "A single touch must wait for release before placing its station.")
 	tap.pressed = false
 	main.call("_input", tap)
-	_check(graph.stations.size() == station_count + 1, "A single-finger tap must still place a station.")
+	_check(graph.stations.size() == station_count, "An empty-space touch must never place a station.")
 	main.call("_zoom_camera", 1000.0)
 	_check(camera.zoom.is_equal_approx(Vector2.ONE * 6.0), "Expanded overview must preserve existing close-up zoom.")
 	main.queue_free()
@@ -336,8 +338,225 @@ func _test_large_map_navigation() -> void:
 	root.size = window_size
 	await process_frame
 
+func _test_touch_editing() -> void:
+	var main: Node = load("res://scenes/main.tscn").instantiate()
+	main.set("startup_layout_enabled", false)
+	root.add_child(main)
+	main.set_process(false)
+	root.content_scale_factor = 1.0
+	root.min_size = Vector2i.ZERO
+	root.size = Vector2i(390, 844)
+	await process_frame
+	await process_frame
+	var camera: Camera2D = main.get("camera")
+	camera.position_smoothing_enabled = false
+	camera.zoom = Vector2.ONE
+	camera.position = Vector2.ZERO
+	camera.force_update_scroll()
+	var graph: TransitGraph = main.get("graph")
+	graph.add_station(Vector2.ZERO)
+	graph.add_station(Vector2(576, 0))
+	main.call("_connect_stations", 0, 1)
+	var buttons: Dictionary = main.get("_touch_buttons")
+	var origin := Vector2(195, 300)
+	var first_emulated := InputEventMouseButton.new()
+	first_emulated.device = InputEvent.DEVICE_ID_EMULATION
+	first_emulated.button_index = MOUSE_BUTTON_LEFT
+	first_emulated.pressed = true
+	first_emulated.position = origin
+	root.push_input(first_emulated, true)
+	first_emulated = first_emulated.duplicate()
+	first_emulated.pressed = false
+	root.push_input(first_emulated, true)
+	_check(graph.stations.size() == 2, "An emulated mouse press arriving before the first touch event must not edit the map.")
+	await process_frame
+	await process_frame
+	await _touch_map(main, origin, origin + Vector2(60, 30))
+	_check(graph.stations.size() == 2 and camera.position != Vector2.ZERO, "One-finger navigation must pan without leaving stations or inserting on tracks.")
+	var emulated := InputEventMouseButton.new()
+	emulated.button_index = MOUSE_BUTTON_LEFT
+	emulated.device = InputEvent.DEVICE_ID_EMULATION
+	emulated.position = Vector2(60, 180)
+	emulated.pressed = true
+	root.push_input(emulated, true)
+	emulated = emulated.duplicate()
+	emulated.pressed = false
+	root.push_input(emulated, true)
+	_check(graph.stations.size() == 2, "Emulated mouse releases after touch must not create stations.")
+	var panel: Control = main.get("_touch_panel")
+	_check(root.get_visible_rect().encloses(panel.get_global_rect()), "The mobile action panel must fit a portrait screen.")
+	buttons["add"].pressed.emit()
+	await process_frame
+	await _touch_map(main, Vector2(70, 180), Vector2(90, 210))
+	_check(graph.stations.size() == 2 and main.get("world_view").station_preview_visible, "Placement must remain a preview until explicitly confirmed.")
+	buttons["cancel"].pressed.emit()
+	_check(graph.stations.size() == 2 and not main.get("world_view").station_preview_visible, "Canceling placement must leave no station.")
+	buttons["add"].pressed.emit()
+	await _touch_map(main, Vector2(70, 180), Vector2(70, 180))
+	buttons["confirm"].pressed.emit()
+	_check(graph.stations.size() == 3 and main.get("_touch_action").is_empty(), "Confirm must place exactly one station and leave placement mode.")
+	await _touch_map(main, Vector2(100, 160), Vector2(100, 160))
+	_check(graph.stations.size() == 3, "Subsequent empty taps must not repeat placement.")
+	camera.position = Vector2.ZERO
+	camera.force_update_scroll()
+	var station_screen: Vector2 = main.get("world_view").get_global_transform_with_canvas() * graph.stations[0].position
+	await _touch_map(main, station_screen + Vector2(20, 0), station_screen + Vector2(20, 0))
+	_check(main.get("selected_station_id") == 0 and buttons["move"].visible and buttons["delete"].visible, "A near miss within a 48px target must select the station and retain its actions.")
+	var original := graph.stations[0].position
+	var original_path := graph.tracks[0].waypoints.duplicate()
+	buttons["move"].pressed.emit()
+	await _touch_map(main, station_screen, station_screen + Vector2(0, -96))
+	_check(graph.stations[0].position != original, "Explicit Move must move the selected station.")
+	buttons["cancel"].pressed.emit()
+	_check(graph.stations[0].position == original and graph.tracks[0].waypoints == original_path, "Cancel Move must restore the station and its original incident geometry.")
+	buttons["move"].pressed.emit()
+	await _touch_map(main, station_screen, station_screen + Vector2(0, -48))
+	buttons["confirm"].pressed.emit()
+	_check(graph.stations[0].position != original and main.get("_dragging_station_id") == -1, "Confirm Move must retain the change and end the edit.")
+	var moved := graph.stations[0].position
+	buttons["delete"].pressed.emit()
+	_check(main.get("_delete_dialog").visible and graph.stations.size() == 3, "Mobile Delete must request confirmation rather than immediately deleting.")
+	main.get("_delete_dialog").hide()
+	main.get("_delete_dialog").canceled.emit()
+	_check(graph.stations[0].position == moved and graph.stations.size() == 3, "Cancel Delete must preserve the station.")
+	main.get("_delete_dialog").confirmed.emit()
+	_check(graph.stations.size() == 2 and main.get("_touch_track_id") == -1, "Confirmed Delete must remove the selected station and clear stale selection.")
+	for viewport: Vector2i in [Vector2i(320, 568), Vector2i(390, 844), Vector2i(844, 390)]:
+		root.size = viewport
+		await process_frame
+		await process_frame
+		var before := camera.position
+		main.call("_resize_interface")
+		var bounds := Rect2(Vector2.ZERO, Vector2(viewport))
+		for name: String in ["_touch_panel", "_toolbar", "_main_panel", "_zoom_controls"]:
+			_check(bounds.encloses(main.get(name).get_global_rect()), "Touch HUD must fit portrait and landscape: %s %s." % [name, viewport])
+		_check(camera.position == before, "Rotation must not refit or reset the manual camera.")
+		if DisplayServer.get_name() != "headless":
+			await RenderingServer.frame_post_draw
+			var suffix := "landscape" if viewport.x > viewport.y else "portrait"
+			_check(root.get_texture().get_image().save_png("/tmp/metro-mobile-%s.png" % suffix) == OK, "Mobile HUD screenshot must be saved.")
+	main.queue_free()
+	await process_frame
+
+func _test_touch_routes() -> void:
+	var main: Node = load("res://scenes/main.tscn").instantiate()
+	main.set("startup_layout_enabled", false)
+	root.add_child(main)
+	main.set_process(false)
+	root.content_scale_factor = 1.0
+	root.size = Vector2i(760, 900)
+	await process_frame
+	await process_frame
+	var camera: Camera2D = main.get("camera")
+	camera.position_smoothing_enabled = false
+	camera.position = Vector2.ZERO
+	camera.zoom = Vector2.ONE * 0.75
+	camera.force_update_scroll()
+	var graph: TransitGraph = main.get("graph")
+	for position: Vector2 in [Vector2(-288, 0), Vector2(288, 0), Vector2(288, -288)]:
+		graph.add_station(position)
+	main.call("_connect_stations", 0, 1)
+	var view: WorldView = main.get("world_view")
+	var buttons: Dictionary = main.get("_touch_buttons")
+	var track_screen := Vector2(380, 450)
+	await _touch_map(main, track_screen, track_screen)
+	_check(main.get("_touch_track_id") == 0 and graph.stations.size() == 3 and buttons["insert"].visible, "Tapping a rail must select it without inserting a station.")
+	var original := graph.tracks[0].waypoints.duplicate()
+	buttons["reshape"].pressed.emit()
+	await _touch_map(main, track_screen, track_screen + Vector2(0, -72))
+	_check(graph.tracks[0].waypoints == original and view.route_active, "Rail reshaping must preview without committing geometry.")
+	buttons["cancel"].pressed.emit()
+	_check(graph.tracks[0].waypoints == original and not view.route_active, "Cancel Reshape must leave the rail unchanged.")
+	buttons["reshape"].pressed.emit()
+	await _touch_map(main, track_screen, track_screen + Vector2(0, -72))
+	buttons["confirm"].pressed.emit()
+	_check(graph.tracks[0].waypoints != original and main.get("_touch_action").is_empty(), "Confirm Reshape must commit the preview and finish editing.")
+	var destination_screen := view.get_global_transform_with_canvas() * graph.stations[1].position
+	await _touch_map(main, destination_screen, destination_screen)
+	buttons["connect"].pressed.emit()
+	var pin_screen := view.get_global_transform_with_canvas() * Vector2(432, -144)
+	await _touch_map(main, pin_screen, pin_screen)
+	_check(main.get("_route_history").size() == 1, "Touch Connect must pin a bend on an empty-space tap.")
+	buttons["undo"].pressed.emit()
+	_check(main.get("_route_history").is_empty() and main.get("_route_pins").size() == 1, "Touch Undo step must remove the most recent pinned bend.")
+	var diagonal_first: bool = main.get("_route_diagonal_first")
+	buttons["flip"].pressed.emit()
+	_check(main.get("_route_diagonal_first") != diagonal_first, "Touch Flip bend must change route posture without a keyboard.")
+	destination_screen = view.get_global_transform_with_canvas() * graph.stations[2].position
+	await _touch_map(main, destination_screen, destination_screen)
+	_check(graph.tracks.size() == 2 and main.get("_touch_action").is_empty(), "Touching a destination must complete a valid connection.")
+	main.call("_clear_touch_selection")
+	camera.position = Vector2.ZERO
+	camera.force_update_scroll()
+	track_screen = view.get_global_transform_with_canvas() * ((graph.stations[1].position + graph.stations[2].position) * 0.5)
+	await _touch_map(main, track_screen, track_screen)
+	_check(main.get("_touch_track_id") == 1, "A newly connected rail must remain selectable.")
+	buttons["insert"].pressed.emit()
+	_check(graph.stations.size() == 4 and graph.tracks.size() == 3, "Explicit Insert must split the selected rail exactly once.")
+	var selected := graph.stations[main.get("selected_station_id")]
+	var original_position := selected.position
+	buttons["move"].pressed.emit()
+	var press := InputEventScreenTouch.new()
+	press.index = 3
+	press.position = Vector2(300, 240)
+	press.pressed = true
+	root.push_input(press, true)
+	var canceled := InputEventScreenTouch.new()
+	canceled.index = 3
+	canceled.position = Vector2(300, 240)
+	canceled.canceled = true
+	root.push_input(canceled, true)
+	_check(main.get("_touch_action").is_empty() and selected.position == original_position, "A canceled OS touch must not commit an edit or leave a gesture active.")
+	main.call("_clear_touch_selection")
+	await process_frame
+	await process_frame
+	var add_button: Button = buttons["add"]
+	for pressed: bool in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.device = InputEvent.DEVICE_ID_EMULATION
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.position = add_button.get_global_rect().get_center()
+		event.pressed = pressed
+		root.push_input(event, true)
+		await process_frame
+	_check(main.get("_touch_mode") and main.get("_touch_action") == "add", "Actual GUI input from emulated touch mouse events must activate mobile buttons without switching to desktop.")
+	buttons["cancel"].pressed.emit()
+	var dispatcher: TransitDispatcher = main.get("dispatcher")
+	dispatcher.process(1.0, false)
+	var train: Metro = dispatcher.metros[0]
+	train.distance = dispatcher.routes[train.line_id]["length"] * 0.4
+	camera.zoom = Vector2.ONE
+	camera.position = main.call("_train_render_position", train)
+	camera.force_update_scroll()
+	var train_screen := root.get_visible_rect().get_center()
+	await _touch_map(main, train_screen, train_screen)
+	_check(main.get("_followed_train") == train and not main.get("_touch_panel").visible, "Tapping a train on a rail must still follow it rather than selecting its underlying rail.")
+	await _touch_map(main, Vector2(300, 240), Vector2(340, 260))
+	_check(main.get("_followed_train") == null and main.get("_touch_panel").visible, "Panning away from a followed train must restore the mobile editing controls.")
+	main.queue_free()
+	await process_frame
+
+func _touch_map(main: Node, start: Vector2, finish: Vector2) -> void:
+	var press := InputEventScreenTouch.new()
+	press.index = 0
+	press.position = start
+	press.pressed = true
+	root.push_input(press, true)
+	if start != finish:
+		var drag := InputEventScreenDrag.new()
+		drag.index = 0
+		drag.position = finish
+		drag.relative = finish - start
+		root.push_input(drag, true)
+	var release := InputEventScreenTouch.new()
+	release.index = 0
+	release.position = finish
+	root.push_input(release, true)
+	await process_frame
+	await process_frame
+
 func _test_responsive_layout(main: Node) -> void:
-	for viewport_size: Vector2i in [Vector2i(3840, 2160), Vector2i(1366, 768), Vector2i(1180, 740), Vector2i(1024, 600), Vector2i(760, 520), Vector2i(390, 640)]:
+	for viewport_size: Vector2i in [Vector2i(3840, 2160), Vector2i(1366, 768), Vector2i(1180, 740), Vector2i(1024, 600), Vector2i(760, 520), Vector2i(390, 640), Vector2i(320, 568)]:
 		root.size = viewport_size
 		main.call("_resize_interface")
 		await process_frame
@@ -356,6 +575,7 @@ func _test_responsive_layout(main: Node) -> void:
 			_check_dock_overflow(main)
 			var sheet: PanelContainer = main.get(name)
 			_check(bounds.encloses(sheet.get_global_rect()), "%s must fit %s: %s" % [name, viewport_size, sheet.get_global_rect()])
+			_check(not main.get("_brand").visible, "Launch branding must not cover an open sheet, including short landscape screens.")
 			if name == "_line_popup":
 				_check(main.get("_main_panel").get_global_rect().encloses(sheet.get_global_rect()), "Line controls must be inside the bottom rail, not in a floating popup.")
 				_check(sheet.get_global_rect().end.y <= main.get("_dock_row").get_global_rect().position.y, "Integrated controls must leave the line tabs accessible.")
@@ -370,9 +590,8 @@ func _test_responsive_layout(main: Node) -> void:
 			else:
 				_check(sheet.get_global_rect().get_center().is_equal_approx(main.get_viewport_rect().size * 0.5), "%s must be centered on the actual viewport: %s." % [name, sheet.get_global_rect()])
 				if name == "_settings_popup":
-					_check(sheet.get_child(0) is VBoxContainer, "Settings must contain its full contents directly, without a scroll container.")
-					var stack: VBoxContainer = sheet.get_child(0)
-					_check(sheet.get_global_rect().encloses(stack.get_global_rect()), "Every settings control must fit inside the panel without scrolling.")
+					var scroll: ScrollContainer = sheet.get_child(0)
+					_check(sheet.get_global_rect().encloses(scroll.get_global_rect()), "Settings must provide bounded scrolling on narrow or short screens.")
 		var slider: HSlider = main.get("_dispatch_slider")
 		_check(slider.size.y >= 32.0, "Sliders need a usable pointer target.")
 		_check(main.get("_dispatch_value").get_theme_font_size("font_size") >= 16, "Values must not shrink on small viewports.")
@@ -712,9 +931,9 @@ func _test_help_feedback_layout(main: Node) -> void:
 			await process_frame
 			await process_frame
 			var settings: PanelContainer = main.get("_settings_popup")
-			var settings_stack: VBoxContainer = settings.get_child(0)
+			var settings_scroll: ScrollContainer = settings.get_child(0)
 			_check(Rect2(Vector2.ZERO, Vector2(viewport)).encloses(settings.get_global_rect()), "All settings must fit onscreen in both languages.")
-			_check(settings.get_global_rect().encloses(settings_stack.get_global_rect()), "Translated settings must be fully visible without scrolling.")
+			_check(settings.get_global_rect().encloses(settings_scroll.get_global_rect()), "Translated settings must keep their scrollable viewport onscreen.")
 			_check(settings.get_global_rect().get_center().is_equal_approx(main.get_viewport_rect().size * 0.5), "Translated settings must remain centered.")
 			main.call("_close_sheets")
 			main.call("_toggle_line_settings")

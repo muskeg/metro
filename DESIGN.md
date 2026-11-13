@@ -594,10 +594,10 @@ hors station ne sont pas une simulation de passages a niveau.
   notifications sont termines, la boucle de rendu s'arrete. Une entree ou un
   redimensionnement la relance ; le mode contemplation conserve son animation.
   La pause fige aussi l'ambiance jour/nuit, afin que l'image reste stable.
-- Aide et reglages sont centres sur la taille reelle de la vue, independamment
-  du rail inferieur. Les reglages utilisent une pile directe sans ScrollContainer,
-  avec hauteur adaptee au contenu et aux traductions ; l'aide garde son defilement
-  sur petit ecran. Le titre Metro utilise 48px logiques en haut a gauche,
+- Aide et reglages sont centres sur la zone sure de la vue, independamment
+  du rail inferieur. Aide, reglages et sauvegardes ont un ScrollContainer
+  borne par la hauteur disponible, pour rester utilisables en portrait et avec
+  les traductions. Le titre Metro utilise 48px logiques en haut a gauche,
   reste opaque dix secondes, puis suit une
   courbe smoothstep jusqu'a disparaitre a trente secondes. Ce delai reel continue
   pendant la pause et le mode contemplation ; ni l'activite, ni les changements
@@ -620,6 +620,22 @@ hors station ne sont pas une simulation de passages a niveau.
   Sous 620 pixels, les feuilles passent a une colonne avec defilement ;
   les lignes debordantes defilent horizontalement vers la selection.
   Le bouton Reglages de ligne, redondant avec les onglets, est supprime.
+- Le tactile ne simule plus l'edition a la souris : un doigt deplace la vue,
+  deux doigts pincent/recadrent, un toucher selectionne. Un panneau persistant
+  expose Deplacer/Relier/Supprimer pour une station, Inserer/Remodeler/Supprimer
+  pour un rail, et Ajouter une station sans selection. Placement et remodelage
+  ont un apercu puis Confirmer ; Deplacer garde une restauration des voies
+  d'origine jusqu'a Confirmer. Annuler restaure l'etat, sans suppression implicite.
+  Relier utilise les memes chemins elastiques et validations que la souris,
+  avec actions tactiles Annuler l'etape/Inverser/Annuler. Aucune station n'est
+  creee par un toucher libre ou une navigation. Les evenements souris emules
+  restent disponibles au GUI, jamais a l'edition du monde. Les vrais evenements
+  souris retrouvent les commandes desktop.
+  Les actions font 48px, la selection des stations au moins 48px de diametre.
+  La selection d'une station la garde au-dessus du panneau sans changer le zoom.
+  Portrait et paysage suivent les capteurs mobiles ; les controles respectent
+  la zone sure native ou les insets CSS du navigateur. La rotation ne refait
+  pas le cadrage manuel et annule un geste tactile encore en contact.
 - Papier chaud, encre sombre, bordures fines et formes arrondies reprennent
   le vocabulaire des stations et des plans de transport, plutot que celui
   d'un tableau de bord logiciel. Les couleurs choisies restent originales ;
