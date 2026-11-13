@@ -560,9 +560,10 @@ Detailed controls and commands: [docs/guide.md](./docs/guide.md). Decisions and 
   separate from Pages. Validates MAJOR.MINOR.PATCH (optional v), rejects existing
   tags, tests once, then builds six targets using matching Godot/templates via
   [setup-godot](./.github/actions/setup-godot/action.yml). Only the publication
-  job has contents-write permission. Publishes all six assets and SHA256SUMS
-  via a draft, then makes it public after upload. No signing secrets used;
-  iOS requires the documented placeholder team ID for project-only export.
+  job has contents-write permission. Signs the Android APK with the configured
+  Actions keystore secrets and publishes all six assets plus SHA256SUMS via a
+  draft, then makes it public after upload. iOS requires the documented
+  placeholder team ID for project-only export.
 - Native CSV import has escaped keys enabled for multiline help. Dynamic/nested
   errors must be translated before formatting, not only static control labels.
   New elastic help uses standard quoted multiline CSV cells for version portability.
@@ -707,10 +708,18 @@ godot --headless --path . --export-release "Web" dist/web/index.html
   was created or accessed in this session.
 - Passed: PyYAML parsed `releases.yml`; `bash -n` passed for all 11 workflow
   `run` blocks; `git diff --check` passed. `actionlint` is unavailable.
-- Signing could not be exercised locally: `ANDROID_HOME` is unset and no GitHub
-  signing secrets are configured here. First GitHub release signing remains
-  pending secret setup and an Actions run. Windows/macOS builds were not run;
-  only workflow/documentation/memory files changed.
+- Release run 43099718227 built and uploaded all six artifacts, but publication
+  failed because its required-asset list expected
+  `Metro-<version>-android-unsigned.apk` although the Android signing step
+  uploads `Metro-<version>-android.apk`. Updated the publisher's expected
+  filename and release notes to match the signed APK. Android signing itself
+  succeeded in the run; local signing secrets are not available.
+- Passed: `ruby - <<'RUBY'` parsed `releases.yml`, `bash -n` checked all 11
+  workflow run blocks, and an isolated fixture ran the publish script with the
+  signed APK filename and stubbed `gh`, producing SHA256SUMS. `git diff --check`
+  passed. The initial PyYAML-based validation was unavailable because PyYAML
+  is not installed; Ruby's YAML parser was used instead. `actionlint` remains
+  unavailable. Workflow-only fix; no game exports were required.
 
 ### Saved custom layouts in Web startup links (2026-11-10)
 
